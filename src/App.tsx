@@ -685,6 +685,11 @@ export default function App() {
     return result;
   }, [videos, channels, activeGroupId, selectedChannelId, searchQuery, sortBy]);
 
+  const activeGroupChannels = useMemo(() => {
+    if (activeGroupId === 'all') return channels;
+    return channels.filter((c) => c.groupId === activeGroupId);
+  }, [channels, activeGroupId]);
+
   const activeGroup = groups.find((g) => g.id === activeGroupId) || groups[0];
   const selectedChannel = channels.find((c) => c.id === selectedChannelId);
 
@@ -873,6 +878,75 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {/* Channel List Inside Group (shown when group has > 1 channel) */}
+          {activeGroupChannels.length > 1 && (
+            <div className="p-3 rounded-2xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-1">
+                <span className="flex items-center gap-1.5">
+                  <Folder className="w-3.5 h-3.5 text-red-500" />
+                  <span>
+                    Channel dalam Grup "{groups.find((g) => g.id === activeGroupId)?.name || 'Semua'}" ({activeGroupChannels.length})
+                  </span>
+                </span>
+                {selectedChannelId && (
+                  <button
+                    onClick={() => setSelectedChannelId(null)}
+                    className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
+                  >
+                    Tampilkan Semua
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                <button
+                  onClick={() => setSelectedChannelId(null)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                    !selectedChannelId
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  Semua ({activeGroupChannels.length})
+                </button>
+
+                {activeGroupChannels.map((ch) => {
+                  const isSelected = selectedChannelId === ch.id;
+                  const chVideoCount = videos.filter((v) => v.channelId === ch.id).length;
+
+                  return (
+                    <button
+                      key={ch.id}
+                      onClick={() => setSelectedChannelId(isSelected ? null : ch.id)}
+                      className={`flex items-center gap-2 px-2.5 py-1 text-xs font-medium rounded-xl whitespace-nowrap shrink-0 transition-all cursor-pointer border ${
+                        isSelected
+                          ? 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 shadow-xs'
+                          : 'bg-slate-50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/70 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <img
+                        src={ch.avatar || `https://avatar.vercel.sh/${ch.id}?size=64`}
+                        alt={ch.title}
+                        referrerPolicy="no-referrer"
+                        className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
+                      />
+                      <span className="max-w-[160px] truncate">{ch.title}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                          isSelected
+                            ? 'bg-red-200/70 dark:bg-red-900/70 text-red-800 dark:text-red-200'
+                            : 'bg-slate-200/80 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {chVideoCount}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Search, Filter & Channel Focus Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
