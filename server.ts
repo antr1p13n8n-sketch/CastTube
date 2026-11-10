@@ -46,7 +46,13 @@ function parseYouTubeRss(xmlText: string): { channel: ChannelData; videos: Video
   const authorNameMatch = xmlText.match(/<author>[\s\S]*?<name>(.*?)<\/name>/);
   const authorUriMatch = xmlText.match(/<author>[\s\S]*?<uri>(.*?)<\/uri>/);
 
-  const channelId = channelIdMatch ? channelIdMatch[1].trim() : '';
+  const authorChannelMatch = authorUriMatch?.[1]?.match(/channel\/(UC[a-zA-Z0-9_-]{22})/i);
+  const rawChannelId = channelIdMatch ? channelIdMatch[1].trim() : '';
+  const channelId = authorChannelMatch
+    ? authorChannelMatch[1]
+    : rawChannelId && !rawChannelId.startsWith('UC') && rawChannelId.length === 22
+    ? `UC${rawChannelId}`
+    : rawChannelId;
   const channelTitle = authorNameMatch
     ? decodeXml(authorNameMatch[1].trim())
     : channelTitleMatch
@@ -311,6 +317,34 @@ function extractChannelFromHtml(html: string): { channelId: string; title?: stri
   };
 }
 
+async function readChannelFromResponse(
+  res: globalThis.Response
+): Promise<{ channelId: string; title?: string; handle?: string } | null> {
+  if (!res.body) {
+    const html = await res.text();
+    return extractChannelFromHtml(html);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let accumulated = '';
+  const maxBytes = 3_000_000;
+  try {
+    while (accumulated.length < maxBytes) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      accumulated += decoder.decode(value, { stream: true });
+      const extracted = extractChannelFromHtml(accumulated);
+      if (extracted) {
+        await reader.cancel().catch(() => {});
+        return extracted;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return extractChannelFromHtml(accumulated);
+}
+
 // Resolve handle / URL / ID to channel ID
 async function resolveYouTubeChannel(rawInput: string): Promise<{ channelId: string; handle?: string; title?: string }> {
   const cleaned = rawInput.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
@@ -419,8 +453,7 @@ async function resolveYouTubeChannel(rawInput: string): Promise<{ channelId: str
     try {
       const res = await fetchWithTimeout(targetUrl);
       if (res.ok) {
-        const html = await res.text();
-        const extracted = extractChannelFromHtml(html);
+        const extracted = await readChannelFromResponse(res);
         if (extracted) {
           return {
             channelId: extracted.channelId,

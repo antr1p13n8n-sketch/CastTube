@@ -506,7 +506,7 @@ export default function App() {
             const errData = await res.json();
             if (errData?.error) lastError = errData.error;
           } catch {
-            // ignore parse error
+            lastError = `Gagal menghubungi server (HTTP ${res.status}).`;
           }
           failed++;
         }
