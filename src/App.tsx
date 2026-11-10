@@ -51,6 +51,8 @@ import {
   saveLastVideoId,
   loadPendingSyncQueue,
   savePendingSyncQueue,
+  loadPlayerSessionState,
+  savePlayerSessionState,
 } from './utils/storage';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useBackgroundAudio } from './hooks/useBackgroundAudio';
@@ -83,7 +85,7 @@ export default function App() {
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title'>('newest');
-  const [activeTab, setActiveTab] = useState<'feed' | 'player'>('feed');
+  const [activeTab, setActiveTab] = useState<'feed' | 'player'>(() => loadPlayerSessionState().activeTab);
 
   // Connectivity & Background Sync States
   const isOnline = useOnlineStatus();
@@ -106,7 +108,7 @@ export default function App() {
     }
     return v.length > 0 ? v[0] : null;
   });
-  const [playerMode, setPlayerMode] = useState<PlayerMode>('audio');
+  const [playerMode, setPlayerMode] = useState<PlayerMode>(() => loadPlayerSessionState().playerMode);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(() => {
     const v = loadVideos();
@@ -628,6 +630,41 @@ export default function App() {
       cancelled = true;
     };
   }, [isOnline, pendingSyncQueue.length]);
+
+  // Persist player session & progress immediately when app is minimized or closed
+  useEffect(() => {
+    savePlayerSessionState({
+      playerMode,
+      activeTab,
+      wasPlaying: isPlaying,
+    });
+  }, [playerMode, activeTab, isPlaying]);
+
+  useEffect(() => {
+    const flushOnExit = () => {
+      savePlayerSessionState({
+        playerMode,
+        activeTab,
+        wasPlaying: isPlaying,
+      });
+      if (currentVideo && currentTime > 0) {
+        saveVideoPlaybackProgress(currentVideo.id, currentTime, duration);
+      }
+    };
+    const handleVisibilityFlush = () => {
+      if (document.visibilityState === 'hidden') {
+        flushOnExit();
+      }
+    };
+    window.addEventListener('pagehide', flushOnExit);
+    window.addEventListener('beforeunload', flushOnExit);
+    document.addEventListener('visibilitychange', handleVisibilityFlush);
+    return () => {
+      window.removeEventListener('pagehide', flushOnExit);
+      window.removeEventListener('beforeunload', flushOnExit);
+      document.removeEventListener('visibilitychange', handleVisibilityFlush);
+    };
+  }, [playerMode, activeTab, isPlaying, currentVideo?.id, currentTime, duration]);
 
   // Background audio & Media Session API (keeps audio playing when minimized)
   useBackgroundAudio({

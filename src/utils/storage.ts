@@ -1,4 +1,4 @@
-import { Channel, ChannelGroup, Video, ThemeMode, PlaybackProgress, PendingSyncTask } from '../types';
+import { Channel, ChannelGroup, Video, ThemeMode, PlaybackProgress, PendingSyncTask, PlayerMode } from '../types';
 
 export const INITIAL_GROUPS: ChannelGroup[] = [
   { id: 'all', name: 'Semua Channel', isDefault: true },
@@ -156,6 +156,7 @@ const STORAGE_KEYS = {
   PROGRESS: 'casttube_playback_progress_v1',
   LAST_VIDEO: 'casttube_last_video_v1',
   PENDING_SYNC: 'casttube_pending_sync_v1',
+  PLAYER_SESSION: 'casttube_player_session_v1',
 };
 
 export function loadGroups(): ChannelGroup[] {
@@ -328,6 +329,39 @@ export function loadPendingSyncQueue(): PendingSyncTask[] {
 export function savePendingSyncQueue(tasks: PendingSyncTask[]) {
   try {
     localStorage.setItem(STORAGE_KEYS.PENDING_SYNC, JSON.stringify(tasks));
+  } catch {
+    // ignore
+  }
+}
+
+export interface PlayerSessionState {
+  playerMode: PlayerMode;
+  activeTab: 'feed' | 'player';
+  wasPlaying: boolean;
+}
+
+export function loadPlayerSessionState(): PlayerSessionState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PLAYER_SESSION);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          playerMode: parsed.playerMode === 'video' ? 'video' : 'audio',
+          activeTab: parsed.activeTab === 'player' ? 'player' : 'feed',
+          wasPlaying: Boolean(parsed.wasPlaying),
+        };
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { playerMode: 'audio', activeTab: 'feed', wasPlaying: false };
+}
+
+export function savePlayerSessionState(state: PlayerSessionState) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.PLAYER_SESSION, JSON.stringify(state));
   } catch {
     // ignore
   }
