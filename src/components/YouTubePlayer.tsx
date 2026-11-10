@@ -44,6 +44,15 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const playerRef = useRef<any>(null);
   const isReadyRef = useRef<boolean>(false);
   const timeIntervalRef = useRef<any>(null);
+  const intendedPlayingRef = useRef<boolean>(isPlaying);
+  const hiddenResumeCountRef = useRef<number>(0);
+
+  useEffect(() => {
+    intendedPlayingRef.current = isPlaying;
+    if (isPlaying) {
+      hiddenResumeCountRef.current = 0;
+    }
+  }, [isPlaying]);
 
   // Poll current time when playing
   const startTimePolling = useCallback(() => {
@@ -118,9 +127,29 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           onStateChange: (event: any) => {
             // YT.PlayerState: -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 video cued
             if (event.data === 1) {
+              hiddenResumeCountRef.current = 0;
               onStateChange(true);
               startTimePolling();
             } else if (event.data === 2) {
+              // If browser auto-paused when window was minimized/backgrounded, immediately resume
+              if (
+                typeof document !== 'undefined' &&
+                document.visibilityState === 'hidden' &&
+                intendedPlayingRef.current &&
+                hiddenResumeCountRef.current < 3
+              ) {
+                hiddenResumeCountRef.current += 1;
+                setTimeout(() => {
+                  if (playerRef.current && isReadyRef.current && intendedPlayingRef.current) {
+                    try {
+                      playerRef.current.playVideo();
+                    } catch {
+                      // ignore
+                    }
+                  }
+                }, 200);
+                return;
+              }
               onStateChange(false);
               stopTimePolling();
             } else if (event.data === 0) {
@@ -186,6 +215,31 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       console.warn('Failed to switch video', e);
     }
   }, [currentVideo?.id]);
+
+  // Keep playing when window is minimized / tab goes to background
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState === 'hidden' &&
+        intendedPlayingRef.current &&
+        playerRef.current &&
+        isReadyRef.current
+      ) {
+        setTimeout(() => {
+          try {
+            const state = playerRef.current?.getPlayerState?.();
+            if (state === 2 && intendedPlayingRef.current) {
+              playerRef.current.playVideo();
+            }
+          } catch {
+            // ignore
+          }
+        }, 300);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
   // Handle play / pause toggle
   useEffect(() => {

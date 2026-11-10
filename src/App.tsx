@@ -53,6 +53,7 @@ import {
   savePendingSyncQueue,
 } from './utils/storage';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { useBackgroundAudio } from './hooks/useBackgroundAudio';
 import { Header } from './components/Header';
 import { OfflineBanner } from './components/OfflineBanner';
 import { VideoCard } from './components/VideoCard';
@@ -628,6 +629,22 @@ export default function App() {
     };
   }, [isOnline, pendingSyncQueue.length]);
 
+  // Background audio & Media Session API (keeps audio playing when minimized)
+  useBackgroundAudio({
+    currentVideo,
+    isPlaying,
+    currentTime,
+    duration,
+    playbackRate,
+    onPlay: () => setIsPlaying(true),
+    onPause: () => setIsPlaying(false),
+    onNext: handleNextTrack,
+    onPrev: handlePrevTrack,
+    onSeek: handleSeek,
+    onSkipBack: handleSkipBack,
+    onSkipForward: handleSkipForward,
+  });
+
   // 9. Filter and Sort Videos
   const filteredVideos = useMemo(() => {
     let result = [...videos];
@@ -738,7 +755,7 @@ export default function App() {
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : 'fixed -left-[9999px] -top-[9999px] w-1 h-1 opacity-0 pointer-events-none'
+                  : 'fixed bottom-0 right-0 w-[200px] h-[112px] opacity-[0.001] pointer-events-none -z-10 overflow-hidden'
               }
               aria-hidden={!(activeTab === 'player' && playerMode === 'video')}
             >
