@@ -237,7 +237,7 @@ export const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: Vid
 export async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
-  timeoutMs = 7000
+  timeoutMs = 12000
 ): Promise<globalThis.Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -245,11 +245,13 @@ export async function fetchWithTimeout(
     const res = await fetch(url, {
       ...options,
       signal: controller.signal,
+      redirect: 'follow',
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'id,en-US,en;q=0.9',
+        Cookie: 'SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg; CONSENT=YES+cb.20210328-17-p0.en+FX+667',
         ...(options.headers || {}),
       },
     });
@@ -261,90 +263,157 @@ export async function fetchWithTimeout(
   }
 }
 
+function extractChannelFromHtml(html: string): { channelId: string; title?: string; handle?: string } | null {
+  const idMatch =
+    html.match(/<meta itemprop="identifier" content="(UC[a-zA-Z0-9_-]{22})"/i) ||
+    html.match(/<meta itemprop="channelId" content="(UC[a-zA-Z0-9_-]{22})"/i) ||
+    html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/i) ||
+    html.match(/feeds\/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{22})/i) ||
+    html.match(/"externalId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
+    html.match(/"browseId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
+    html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/i);
+
+  if (!idMatch || !idMatch[1]) return null;
+
+  const titleMatch =
+    html.match(/<meta property="og:title" content="(.*?)"/i) ||
+    html.match(/<title>(.*?) - YouTube<\/title>/i);
+
+  const handleMatch = html.match(/https:\/\/www\.youtube\.com\/(@[a-zA-Z0-9_.-]+)/i);
+
+  return {
+    channelId: idMatch[1],
+    title: titleMatch ? decodeXml(titleMatch[1]) : undefined,
+    handle: handleMatch ? handleMatch[1] : undefined,
+  };
+}
+
 export async function resolveYouTubeChannel(
   rawInput: string
 ): Promise<{ channelId: string; handle?: string; title?: string }> {
-  const cleaned = rawInput.trim();
+  const cleaned = rawInput.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  if (!cleaned) {
+    throw new Error('Input link channel kosong.');
+  }
 
+  // 1. Direct Channel ID (UC...)
   if (/^UC[a-zA-Z0-9_-]{22}$/.test(cleaned)) {
     return { channelId: cleaned };
   }
 
+  // 2. URL with /channel/UC...
   const channelUrlMatch = cleaned.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/i);
   if (channelUrlMatch) {
     return { channelId: channelUrlMatch[1] };
   }
 
-  let handle = '';
-  const handleUrlMatch = cleaned.match(/youtube\.com\/(@[a-zA-Z0-9_.-]+)/i);
-  if (handleUrlMatch) {
-    handle = handleUrlMatch[1];
-  } else if (cleaned.startsWith('@')) {
-    handle = cleaned;
-  } else if (!cleaned.includes('/') && !cleaned.includes('.')) {
-    handle = `@${cleaned}`;
-  }
-
-  if (handle) {
-    try {
-      const pageUrl = `https://www.youtube.com/${handle}`;
-      const res = await fetchWithTimeout(pageUrl);
-      if (res.ok) {
-        const html = await res.text();
-        const idMatch =
-          html.match(/<meta itemprop="identifier" content="(UC[a-zA-Z0-9_-]{22})"/i) ||
-          html.match(
-            /<link rel="alternate" type="application\/rss\+xml" title="RSS" href="https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{22})"/i
-          ) ||
-          html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
-          html.match(/"externalId":"(UC[a-zA-Z0-9_-]{22})"/i);
-
-        const titleMatch =
-          html.match(/<meta property="og:title" content="(.*?)"/i) ||
-          html.match(/<title>(.*?) - YouTube<\/title>/i);
-
-        if (idMatch && idMatch[1]) {
-          return {
-            channelId: idMatch[1],
-            handle,
-            title: titleMatch ? decodeXml(titleMatch[1]) : undefined,
-          };
-        }
-      }
-    } catch {
-      // ignore and try fallback
-    }
-  }
-
+  // 3. Check preset channels first for instant match
   for (const [id, data] of Object.entries(PRESET_CHANNELS)) {
     if (
       cleaned.toLowerCase().includes(id.toLowerCase()) ||
-      (data.channel.handle && cleaned.toLowerCase().includes(data.channel.handle.toLowerCase())) ||
-      (data.channel.title && cleaned.toLowerCase().includes(data.channel.title.toLowerCase()))
+      (data.channel.handle && cleaned.toLowerCase().includes(data.channel.handle.toLowerCase()))
     ) {
       return { channelId: id, handle: data.channel.handle, title: data.channel.title };
     }
   }
 
-  const videoMatch = cleaned.match(/(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  // 4. Video / Shorts / Live URL -> resolve via oEmbed or watch page
+  const videoMatch = cleaned.match(
+    /(?:watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/live\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/i
+  );
   if (videoMatch) {
+    const videoId = videoMatch[1];
     try {
-      const videoPageUrl = `https://www.youtube.com/watch?v=${videoMatch[1]}`;
+      const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+      const oembedRes = await fetchWithTimeout(oembedUrl, {}, 8000);
+      if (oembedRes.ok) {
+        const oembed = (await oembedRes.json()) as { author_url?: string; author_name?: string };
+        if (oembed.author_url) {
+          const resolvedFromAuthor = await resolveYouTubeChannel(oembed.author_url);
+          return {
+            ...resolvedFromAuthor,
+            title: resolvedFromAuthor.title || oembed.author_name,
+          };
+        }
+      }
+    } catch {
+      // fallback to watch HTML
+    }
+
+    try {
+      const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`;
       const res = await fetchWithTimeout(videoPageUrl);
       if (res.ok) {
         const html = await res.text();
-        const idMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/i);
-        if (idMatch && idMatch[1]) {
-          return { channelId: idMatch[1] };
-        }
+        const extracted = extractChannelFromHtml(html);
+        if (extracted) return extracted;
       }
     } catch {
       // continue
     }
   }
 
+  // 5. Handle (@username), /c/name, /user/name, or bare youtube.com/name
+  let targetUrl = '';
+  let handle: string | undefined;
+
+  const handleUrlMatch = cleaned.match(/youtube\.com\/(@[^/\s?#&]+)/i);
+  const customUrlMatch = cleaned.match(/youtube\.com\/(c|user)\/([^/\s?#&]+)/i);
+  const bareUrlMatch = cleaned.match(/youtube\.com\/([^/\s?#&]+)/i);
+
+  if (handleUrlMatch) {
+    handle = decodeURIComponent(handleUrlMatch[1]);
+    targetUrl = `https://www.youtube.com/${handle}`;
+  } else if (customUrlMatch) {
+    const kind = customUrlMatch[1].toLowerCase();
+    const name = decodeURIComponent(customUrlMatch[2]);
+    targetUrl = `https://www.youtube.com/${kind}/${name}`;
+    if (kind === 'user') {
+      try {
+        const rssRes = await fetchWithTimeout(`https://www.youtube.com/feeds/videos.xml?user=${encodeURIComponent(name)}`, {}, 8000);
+        if (rssRes.ok) {
+          const xml = await rssRes.text();
+          const parsed = parseYouTubeRss(xml);
+          if (parsed.channel.id) {
+            return { channelId: parsed.channel.id, title: parsed.channel.title };
+          }
+        }
+      } catch {
+        // fallback to HTML fetch
+      }
+    }
+  } else if (cleaned.startsWith('@')) {
+    handle = cleaned.split(/[/?#\s]/)[0];
+    targetUrl = `https://www.youtube.com/${handle}`;
+  } else if (bareUrlMatch && !['watch', 'shorts', 'live', 'playlist', 'results', 'feed'].includes(bareUrlMatch[1].toLowerCase())) {
+    const slug = decodeURIComponent(bareUrlMatch[1]);
+    targetUrl = `https://www.youtube.com/${slug}`;
+  } else if (!cleaned.includes('/') && !cleaned.includes('.')) {
+    handle = `@${cleaned}`;
+    targetUrl = `https://www.youtube.com/${handle}`;
+  }
+
+  if (targetUrl) {
+    try {
+      const res = await fetchWithTimeout(targetUrl);
+      if (res.ok) {
+        const html = await res.text();
+        const extracted = extractChannelFromHtml(html);
+        if (extracted) {
+          return {
+            channelId: extracted.channelId,
+            handle: handle || extracted.handle,
+            title: extracted.title,
+          };
+        }
+      }
+    } catch {
+      // ignore and throw clear message below
+    }
+  }
+
   throw new Error(
-    `Tidak dapat menemukan Channel ID untuk input: "${rawInput}". Coba gunakan format link lengkap (contoh: https://youtube.com/@username atau https://youtube.com/channel/UC...).`
+    `Tidak dapat menemukan Channel ID untuk input: "${rawInput}". Pastikan link channel valid (contoh: https://www.youtube.com/@username atau https://www.youtube.com/channel/UC...).`
   );
 }
 

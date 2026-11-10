@@ -17,7 +17,7 @@ interface AddChannelModalProps {
   isOpen: boolean;
   onClose: () => void;
   groups: ChannelGroup[];
-  onAddChannels: (inputs: string[], targetGroupId: string) => Promise<{ success: number; failed: number }>;
+  onAddChannels: (inputs: string[], targetGroupId: string) => Promise<{ success: number; failed: number; lastError?: string }>;
   initialPastedText?: string;
 }
 
@@ -170,7 +170,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       } else {
         setFeedback({
           type: 'error',
-          message: 'Tidak dapat menemukan channel. Pastikan link atau handle benar.',
+          message: result.lastError || 'Tidak dapat menemukan channel. Pastikan link atau handle benar.',
         });
       }
     } catch (err: unknown) {

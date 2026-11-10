@@ -442,7 +442,7 @@ export default function App() {
   const handleAddChannels = async (
     inputs: string[],
     targetGroupId: string
-  ): Promise<{ success: number; failed: number }> => {
+  ): Promise<{ success: number; failed: number; lastError?: string }> => {
     if (!navigator.onLine) {
       const task: PendingSyncTask = {
         id: `sync_${Date.now()}`,
@@ -457,6 +457,7 @@ export default function App() {
 
     let success = 0;
     let failed = 0;
+    let lastError: string | undefined;
 
     const newChannels: Channel[] = [];
     const newVideos: Video[] = [];
@@ -501,9 +502,16 @@ export default function App() {
             failed++;
           }
         } else {
+          try {
+            const errData = await res.json();
+            if (errData?.error) lastError = errData.error;
+          } catch {
+            // ignore parse error
+          }
           failed++;
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof Error) lastError = err.message;
         failed++;
       }
     }
@@ -531,7 +539,7 @@ export default function App() {
       }
     }
 
-    return { success, failed };
+    return { success, failed, lastError };
   };
 
   // 8. Refresh Feeds from Server (queues for background sync if offline)
