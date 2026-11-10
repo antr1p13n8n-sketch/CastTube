@@ -1,0 +1,251 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profil pengguna terautentikasi untuk menyimpan preferensi aplikasi.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID unik pengguna Firebase Auth."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Nama tampilan pengguna."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 256,
+          "description": "Email pengguna."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "URL foto profil pengguna."
+        },
+        "themePreference": {
+          "type": "string",
+          "enum": ["system", "dark", "light"],
+          "maxLength": 16,
+          "description": "Preferensi tema tampilan."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembuatan profil."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan terakhir."
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "ChannelGroup": {
+      "title": "ChannelGroup",
+      "description": "Grup atau kategori pengelompokan channel YouTube milik pengguna.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID unik grup."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Nama grup yang dapat diganti pengguna."
+        },
+        "isDefault": {
+          "type": "boolean",
+          "description": "Penanda grup bawaan."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID pemilik grup."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembuatan grup."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan grup."
+        }
+      },
+      "required": ["id", "name", "ownerId", "createdAt", "updatedAt"]
+    },
+    "Channel": {
+      "title": "Channel",
+      "description": "Channel YouTube yang disimpan pengguna beserta pengelompokan grupnya.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "YouTube Channel ID (UC...)."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Nama channel YouTube."
+        },
+        "handle": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Handle YouTube (misal @mkbhd)."
+        },
+        "avatar": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "URL avatar channel."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Deskripsi singkat channel."
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "URL channel YouTube."
+        },
+        "groupId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID grup tempat channel berada."
+        },
+        "addedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO timestamp saat channel ditambahkan."
+        },
+        "videoCount": {
+          "type": "number",
+          "description": "Jumlah video terbaru yang terindeks."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID pemilik channel."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembuatan dokumen."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan dokumen."
+        }
+      },
+      "required": ["id", "title", "url", "groupId", "addedAt", "ownerId", "createdAt", "updatedAt"]
+    },
+    "Video": {
+      "title": "Video",
+      "description": "Daftar video terbaru dari channel yang diikuti pengguna.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "YouTube Video ID."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Judul video."
+        },
+        "publishedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Waktu publikasi video."
+        },
+        "thumbnail": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "URL thumbnail video."
+        },
+        "channelId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID channel sumber video."
+        },
+        "channelTitle": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Nama channel sumber video."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 5000,
+          "description": "Deskripsi video."
+        },
+        "views": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Jumlah tayangan terformat."
+        },
+        "duration": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Durasi video."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID pemilik data."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembuatan dokumen."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan dokumen."
+        }
+      },
+      "required": ["id", "title", "publishedAt", "thumbnail", "channelId", "channelTitle", "description", "ownerId", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Menyimpan profil dan preferensi tema pengguna."
+    },
+    "/users/{userId}/groups/{groupId}": {
+      "schema": { "$ref": "#/entities/ChannelGroup" },
+      "description": "Menyimpan daftar grup channel milik pengguna."
+    },
+    "/users/{userId}/channels/{channelId}": {
+      "schema": { "$ref": "#/entities/Channel" },
+      "description": "Menyimpan daftar channel YouTube yang diikuti pengguna."
+    },
+    "/users/{userId}/videos/{videoId}": {
+      "schema": { "$ref": "#/entities/Video" },
+      "description": "Menyimpan cache daftar video terbaru dari channel pengguna."
+    }
+  }
+}

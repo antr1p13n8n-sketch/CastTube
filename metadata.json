@@ -1,0 +1,6 @@
+{
+  "name": "CastTube - YouTube Channel & Podcast Hub",
+  "description": "Aplikasi kurasi channel YouTube multi-feed dengan pemutar Video & Audio Podcast visualizer, pengelompokan grup channel kustom, dan mode gelap otomatis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

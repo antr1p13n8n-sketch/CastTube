@@ -1,0 +1,193 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    // --- Entity Validation Helpers ---
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoURL', 'themePreference', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 && data.uid == request.auth.uid
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 256
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 120))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000))
+        && (!('themePreference' in data) || (data.themePreference is string && data.themePreference in ['system', 'dark', 'light']))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChannelGroup(data) {
+      return data.keys().hasAll(['id', 'name', 'ownerId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'isDefault', 'ownerId', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && (!('isDefault' in data) || data.isDefault is bool)
+        && data.ownerId is string && data.ownerId.size() <= 128 && data.ownerId == request.auth.uid
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChannel(data) {
+      return data.keys().hasAll(['id', 'title', 'url', 'groupId', 'addedAt', 'ownerId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'title', 'handle', 'avatar', 'description', 'url', 'groupId', 'addedAt', 'videoCount', 'ownerId', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && (!('handle' in data) || (data.handle is string && data.handle.size() <= 100))
+        && (!('avatar' in data) || (data.avatar is string && data.avatar.size() <= 1000))
+        && (!('description' in data) || (data.description is string && data.description.size() <= 2000))
+        && data.url is string && data.url.size() > 0 && data.url.size() <= 1000
+        && isValidId(data.groupId)
+        && data.addedAt is string && data.addedAt.size() > 0 && data.addedAt.size() <= 64
+        && (!('videoCount' in data) || (data.videoCount is number && data.videoCount >= 0 && data.videoCount <= 100000))
+        && data.ownerId is string && data.ownerId.size() <= 128 && data.ownerId == request.auth.uid
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidVideo(data) {
+      return data.keys().hasAll(['id', 'title', 'publishedAt', 'thumbnail', 'channelId', 'channelTitle', 'description', 'ownerId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'title', 'publishedAt', 'thumbnail', 'channelId', 'channelTitle', 'description', 'views', 'duration', 'ownerId', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 300
+        && data.publishedAt is string && data.publishedAt.size() > 0 && data.publishedAt.size() <= 64
+        && data.thumbnail is string && data.thumbnail.size() > 0 && data.thumbnail.size() <= 1000
+        && isValidId(data.channelId)
+        && data.channelTitle is string && data.channelTitle.size() >= 1 && data.channelTitle.size() <= 200
+        && data.description is string && data.description.size() <= 5000
+        && (!('views' in data) || (data.views is string && data.views.size() <= 64))
+        && (!('duration' in data) || (data.duration is string && data.duration.size() <= 32))
+        && data.ownerId is string && data.ownerId.size() <= 128 && data.ownerId == request.auth.uid
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // 1. User Profile Document (/users/{userId})
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'themePreference', 'updatedAt']);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // 2. Channel Groups (/users/{userId}/groups/{groupId})
+      match /groups/{groupId} {
+        allow get: if isOwner(userId) && isValidId(groupId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isOwner(userId)
+          && isValidId(groupId)
+          && isValidChannelGroup(incoming())
+          && incoming().id == groupId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isOwner(userId)
+          && isValidId(groupId)
+          && isValidChannelGroup(incoming())
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(groupId);
+      }
+
+      // 3. Channels (/users/{userId}/channels/{channelId})
+      match /channels/{channelId} {
+        allow get: if isOwner(userId) && isValidId(channelId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isOwner(userId)
+          && isValidId(channelId)
+          && isValidChannel(incoming())
+          && incoming().id == channelId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isOwner(userId)
+          && isValidId(channelId)
+          && isValidChannel(incoming())
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['groupId', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['title', 'handle', 'avatar', 'description', 'videoCount', 'updatedAt'])
+          );
+
+        allow delete: if isOwner(userId) && isValidId(channelId);
+      }
+
+      // 4. Cached Videos (/users/{userId}/videos/{videoId})
+      match /videos/{videoId} {
+        allow get: if isOwner(userId) && isValidId(videoId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isOwner(userId)
+          && isValidId(videoId)
+          && isValidVideo(incoming())
+          && incoming().id == videoId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isOwner(userId)
+          && isValidId(videoId)
+          && isValidVideo(incoming())
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'thumbnail', 'description', 'views', 'duration', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(videoId);
+      }
+    }
+  }
+}
