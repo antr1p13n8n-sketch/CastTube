@@ -1,4 +1,4 @@
-import { Channel, ChannelGroup, Video, ThemeMode } from '../types';
+import { Channel, ChannelGroup, Video, ThemeMode, PlaybackProgress, PendingSyncTask } from '../types';
 
 export const INITIAL_GROUPS: ChannelGroup[] = [
   { id: 'all', name: 'Semua Channel', isDefault: true },
@@ -153,6 +153,9 @@ const STORAGE_KEYS = {
   VIDEOS: 'casttube_videos_v1',
   THEME: 'casttube_theme_v1',
   FAVORITES: 'casttube_favorites_v1',
+  PROGRESS: 'casttube_playback_progress_v1',
+  LAST_VIDEO: 'casttube_last_video_v1',
+  PENDING_SYNC: 'casttube_pending_sync_v1',
 };
 
 export function loadGroups(): ChannelGroup[] {
@@ -249,6 +252,82 @@ export function loadFavorites(): string[] {
 export function saveFavorites(favs: string[]) {
   try {
     localStorage.setItem(STORAGE_KEYS.FAVORITES, JSON.stringify(favs));
+  } catch {
+    // ignore
+  }
+}
+
+export function loadPlaybackProgressMap(): Record<string, PlaybackProgress> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PROGRESS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+export function saveVideoPlaybackProgress(
+  videoId: string,
+  currentTime: number,
+  duration: number
+): Record<string, PlaybackProgress> {
+  const map = loadPlaybackProgressMap();
+  if (videoId && currentTime >= 0) {
+    map[videoId] = {
+      videoId,
+      currentTime,
+      duration,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(STORAGE_KEYS.PROGRESS, JSON.stringify(map));
+    } catch {
+      // ignore quota error
+    }
+  }
+  return map;
+}
+
+export function loadLastVideoId(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.LAST_VIDEO);
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastVideoId(videoId: string | null) {
+  try {
+    if (videoId) {
+      localStorage.setItem(STORAGE_KEYS.LAST_VIDEO, videoId);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.LAST_VIDEO);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function loadPendingSyncQueue(): PendingSyncTask[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PENDING_SYNC);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+export function savePendingSyncQueue(tasks: PendingSyncTask[]) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.PENDING_SYNC, JSON.stringify(tasks));
   } catch {
     // ignore
   }

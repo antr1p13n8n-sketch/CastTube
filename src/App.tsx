@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Folder,
   Radio,
@@ -10,7 +10,7 @@ import {
   Sparkles,
   Clipboard,
 } from 'lucide-react';
-import { User, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
 import {
   ensureUserProfile,
@@ -33,6 +33,8 @@ import {
   Video,
   PlayerMode,
   ThemeMode,
+  PlaybackProgress,
+  PendingSyncTask,
 } from './types';
 import {
   loadGroups,
@@ -43,8 +45,16 @@ import {
   saveVideos,
   loadThemePreference,
   saveThemePreference,
+  loadPlaybackProgressMap,
+  saveVideoPlaybackProgress,
+  loadLastVideoId,
+  saveLastVideoId,
+  loadPendingSyncQueue,
+  savePendingSyncQueue,
 } from './utils/storage';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { Header } from './components/Header';
+import { OfflineBanner } from './components/OfflineBanner';
 import { VideoCard } from './components/VideoCard';
 import { PodcastPlayer } from './components/PodcastPlayer';
 import { VideoPlayerView } from './components/VideoPlayerView';
@@ -74,15 +84,43 @@ export default function App() {
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title'>('newest');
   const [activeTab, setActiveTab] = useState<'feed' | 'player'>('feed');
 
-  // Player States
+  // Connectivity & Background Sync States
+  const isOnline = useOnlineStatus();
+  const [pendingSyncQueue, setPendingSyncQueue] = useState<PendingSyncTask[]>(loadPendingSyncQueue);
+  const [isBackgroundSyncing, setIsBackgroundSyncing] = useState<boolean>(false);
+
+  // Playback Progress Persistence Map
+  const [playbackProgressMap, setPlaybackProgressMap] = useState<Record<string, PlaybackProgress>>(
+    loadPlaybackProgressMap
+  );
+  const lastSavedProgressTimeRef = useRef<number>(0);
+
+  // Player States (Restores last played video and saved progress offline/online)
   const [currentVideo, setCurrentVideo] = useState<Video | null>(() => {
     const v = loadVideos();
+    const lastId = loadLastVideoId();
+    if (lastId) {
+      const found = v.find((item) => item.id === lastId);
+      if (found) return found;
+    }
     return v.length > 0 ? v[0] : null;
   });
   const [playerMode, setPlayerMode] = useState<PlayerMode>('audio');
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [currentTime, setCurrentTime] = useState<number>(0);
-  const [duration, setDuration] = useState<number>(0);
+  const [currentTime, setCurrentTime] = useState<number>(() => {
+    const v = loadVideos();
+    const lastId = loadLastVideoId() || (v.length > 0 ? v[0].id : null);
+    if (!lastId) return 0;
+    const map = loadPlaybackProgressMap();
+    return map[lastId]?.currentTime || 0;
+  });
+  const [duration, setDuration] = useState<number>(() => {
+    const v = loadVideos();
+    const lastId = loadLastVideoId() || (v.length > 0 ? v[0].id : null);
+    if (!lastId) return 0;
+    const map = loadPlaybackProgressMap();
+    return map[lastId]?.duration || 0;
+  });
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
   const [volume, setVolume] = useState<number>(85);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -207,8 +245,17 @@ export default function App() {
   const handleSignIn = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error('Gagal masuk dengan Google:', error);
+    } catch (error: unknown) {
+      const code = (error as { code?: string })?.code;
+      if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr) {
+          console.warn('Gagal masuk dengan metode redirect:', redirectErr);
+        }
+      }
+      console.warn('Gagal masuk dengan Google:', error);
     }
   };
 
@@ -371,11 +418,43 @@ export default function App() {
     }
   };
 
-  // 7. Add Multiple Channels
+  // Persist pending sync queue
+  useEffect(() => {
+    savePendingSyncQueue(pendingSyncQueue);
+  }, [pendingSyncQueue]);
+
+  // Persist last active video ID
+  useEffect(() => {
+    saveLastVideoId(currentVideo?.id || null);
+  }, [currentVideo?.id]);
+
+  // Save playback progress helper
+  const persistProgress = useCallback(
+    (videoId: string, time: number, dur: number) => {
+      if (!videoId || time < 0) return;
+      const updated = saveVideoPlaybackProgress(videoId, time, dur);
+      setPlaybackProgressMap(updated);
+    },
+    []
+  );
+
+  // 7. Add Multiple Channels (queues for background sync if offline)
   const handleAddChannels = async (
     inputs: string[],
     targetGroupId: string
   ): Promise<{ success: number; failed: number }> => {
+    if (!navigator.onLine) {
+      const task: PendingSyncTask = {
+        id: `sync_${Date.now()}`,
+        type: 'ADD_CHANNELS',
+        inputs,
+        targetGroupId,
+        createdAt: new Date().toISOString(),
+      };
+      setPendingSyncQueue((prev) => [...prev, task]);
+      return { success: inputs.length, failed: 0 };
+    }
+
     let success = 0;
     let failed = 0;
 
@@ -455,9 +534,21 @@ export default function App() {
     return { success, failed };
   };
 
-  // 8. Refresh Feeds from Server
+  // 8. Refresh Feeds from Server (queues for background sync if offline)
   const handleRefreshFeeds = async () => {
     if (channels.length === 0) return;
+
+    if (!navigator.onLine) {
+      setPendingSyncQueue((prev) => {
+        if (prev.some((t) => t.type === 'REFRESH_FEEDS')) return prev;
+        return [
+          ...prev,
+          { id: `sync_${Date.now()}`, type: 'REFRESH_FEEDS', createdAt: new Date().toISOString() },
+        ];
+      });
+      return;
+    }
+
     setIsRefreshing(true);
     try {
       const channelIds = channels.map((c) => c.id);
@@ -481,11 +572,53 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.warn('Gagal memuat ulang feed:', e);
+      console.warn('Gagal memuat ulang feed, menjadwalkan sinkronisasi latar belakang:', e);
+      setPendingSyncQueue((prev) => {
+        if (prev.some((t) => t.type === 'REFRESH_FEEDS')) return prev;
+        return [
+          ...prev,
+          { id: `sync_${Date.now()}`, type: 'REFRESH_FEEDS', createdAt: new Date().toISOString() },
+        ];
+      });
     } finally {
       setIsRefreshing(false);
     }
   };
+
+  // Background Sync Processor: automatically runs when connection returns
+  useEffect(() => {
+    if (!isOnline || pendingSyncQueue.length === 0 || isBackgroundSyncing) return;
+
+    let cancelled = false;
+    const processQueue = async () => {
+      setIsBackgroundSyncing(true);
+      const tasks = [...pendingSyncQueue];
+      const remaining: PendingSyncTask[] = [];
+
+      for (const task of tasks) {
+        if (cancelled) break;
+        try {
+          if (task.type === 'REFRESH_FEEDS') {
+            await handleRefreshFeeds();
+          } else if (task.type === 'ADD_CHANNELS') {
+            await handleAddChannels(task.inputs, task.targetGroupId);
+          }
+        } catch {
+          remaining.push(task);
+        }
+      }
+
+      if (!cancelled) {
+        setPendingSyncQueue(remaining);
+        setIsBackgroundSyncing(false);
+      }
+    };
+
+    processQueue();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOnline, pendingSyncQueue.length]);
 
   // 9. Filter and Sort Videos
   const filteredVideos = useMemo(() => {
@@ -551,6 +684,13 @@ export default function App() {
         onSignOut={handleSignOut}
       />
 
+      {/* Offline & Background Sync Status Banner */}
+      <OfflineBanner
+        isOnline={isOnline}
+        isSyncing={isBackgroundSyncing}
+        pendingCount={pendingSyncQueue.length}
+      />
+
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 w-full flex-1 pt-6 sm:pt-8">
         {/* Active Player View (Podcast Audio or Video) */}
@@ -609,10 +749,18 @@ export default function App() {
                     playbackRate={playbackRate}
                     volume={volume}
                     isMuted={isMuted}
-                    onTimeUpdate={useCallback((cur, dur) => {
-                      setCurrentTime(cur);
-                      if (dur > 0) setDuration(dur);
-                    }, [])}
+                    initialSeekSeconds={playbackProgressMap[currentVideo.id]?.currentTime || 0}
+                    onTimeUpdate={useCallback(
+                      (cur, dur) => {
+                        setCurrentTime(cur);
+                        if (dur > 0) setDuration(dur);
+                        if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
+                          lastSavedProgressTimeRef.current = cur;
+                          persistProgress(currentVideo.id, cur, dur);
+                        }
+                      },
+                      [currentVideo.id, persistProgress]
+                    )}
                     onStateChange={useCallback((playing) => {
                       setIsPlaying(playing);
                     }, [])}
@@ -815,6 +963,7 @@ export default function App() {
                   video={video}
                   isCurrentlyPlaying={currentVideo?.id === video.id && isPlaying}
                   isInQueue={queue.some((q) => q.id === video.id)}
+                  progress={playbackProgressMap[video.id]}
                   onPlayVideo={(v) => handlePlayVideo(v, 'video')}
                   onPlayAudio={(v) => handlePlayVideo(v, 'audio')}
                   onToggleQueue={handleToggleQueue}

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { ThemeMode, PlayerMode } from '../types';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   theme: ThemeMode;
@@ -109,6 +110,8 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Zone 3: Actions + Theme Selector + Auth */}
         <div className="flex items-center gap-2.5 shrink-0">
+          <PWAInstallButton />
+
           {/* Firebase Cloud Sync Auth Button */}
           {!authLoading && (
             user ? (

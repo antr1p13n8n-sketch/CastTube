@@ -31,8 +31,28 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const [descExpanded, setDescExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const handleShare = () => {
-    navigator.clipboard.writeText(`https://www.youtube.com/watch?v=${currentVideo.id}`);
+  const handleShare = async () => {
+    const shareUrl = `https://www.youtube.com/watch?v=${currentVideo.id}`;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        throw new Error('Clipboard API unavailable');
+      }
+    } catch {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = shareUrl;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      } catch {
+        // ignore if blocked
+      }
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

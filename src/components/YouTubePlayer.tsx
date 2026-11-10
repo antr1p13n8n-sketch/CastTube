@@ -22,6 +22,7 @@ interface YouTubePlayerProps {
   onError?: (err: any) => void;
   seekCommand: number | null; // Triggered when user scrubs or skips
   onSeekHandled: () => void;
+  initialSeekSeconds?: number;
 }
 
 export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
@@ -38,6 +39,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   onError,
   seekCommand,
   onSeekHandled,
+  initialSeekSeconds = 0,
 }) => {
   const playerRef = useRef<any>(null);
   const isReadyRef = useRef<boolean>(false);
@@ -78,20 +80,34 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       playerRef.current = new window.YT.Player('yt-embedded-instance', {
         height: '100%',
         width: '100%',
+        host: 'https://www.youtube-nocookie.com',
         videoId: currentVideo ? currentVideo.id : '',
         playerVars: {
-          autoplay: 1,
+          autoplay: 0,
           controls: 1,
           modestbranding: 1,
           rel: 0,
           playsinline: 1,
           iv_load_policy: 3,
           fs: 1,
+          enablejsapi: 1,
           origin: window.location.origin,
         },
         events: {
           onReady: (event: any) => {
             isReadyRef.current = true;
+            try {
+              const iframe = event.target.getIframe?.() as HTMLIFrameElement | undefined;
+              if (iframe) {
+                iframe.setAttribute(
+                  'allow',
+                  'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
+                );
+                iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+              }
+            } catch {
+              // ignore
+            }
             event.target.setVolume(isMuted ? 0 : volume);
             event.target.setPlaybackRate(playbackRate);
             if (isPlaying && currentVideo) {
@@ -130,6 +146,11 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         const tag = document.createElement('script');
         tag.id = 'youtube-iframe-api-script';
         tag.src = 'https://www.youtube.com/iframe_api';
+        tag.async = true;
+        tag.onerror = () => {
+          console.warn('YouTube IFrame API gagal dimuat (mungkin diblokir oleh ekstensi atau jaringan).');
+          if (onError) onError('API_BLOCKED');
+        };
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag?.parentNode?.insertBefore(tag, firstScriptTag);
       }
@@ -154,7 +175,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       if (!currentUrl.includes(currentVideo.id)) {
         playerRef.current.loadVideoById({
           videoId: currentVideo.id,
-          startSeconds: 0,
+          startSeconds: Math.floor(initialSeekSeconds || 0),
         });
         if (isPlaying) {
           playerRef.current.playVideo();
@@ -224,7 +245,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       className={
         isVisible
           ? 'w-full h-full relative bg-black aspect-video rounded-xl overflow-hidden shadow-2xl'
-          : 'fixed -left-[9999px] -top-[9999px] w-1 h-1 opacity-0 pointer-events-none'
+          : 'fixed bottom-0 right-0 w-[200px] h-[112px] opacity-[0.001] pointer-events-none -z-10'
       }
       aria-hidden={!isVisible}
     >

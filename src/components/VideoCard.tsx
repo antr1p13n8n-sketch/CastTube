@@ -1,12 +1,13 @@
 import React from 'react';
 import { Play, Headphones, Plus, Check, ExternalLink } from 'lucide-react';
-import { Video } from '../types';
-import { formatRelativeTime } from '../utils/format';
+import { Video, PlaybackProgress } from '../types';
+import { formatRelativeTime, formatTime } from '../utils/format';
 
 interface VideoCardProps {
   video: Video;
   isCurrentlyPlaying: boolean;
   isInQueue: boolean;
+  progress?: PlaybackProgress;
   onPlayVideo: (video: Video) => void;
   onPlayAudio: (video: Video) => void;
   onToggleQueue: (video: Video) => void;
@@ -16,10 +17,15 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   video,
   isCurrentlyPlaying,
   isInQueue,
+  progress,
   onPlayVideo,
   onPlayAudio,
   onToggleQueue,
 }) => {
+  const progressPct =
+    progress && progress.duration > 0
+      ? Math.min(100, Math.max(0, (progress.currentTime / progress.duration) * 100))
+      : 0;
   return (
     <div
       className={`group relative flex flex-col rounded-2xl bg-white dark:bg-slate-900 border transition-all duration-200 overflow-hidden hover:shadow-lg ${
@@ -74,6 +80,16 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             {video.duration}
           </div>
         )}
+
+        {/* Saved Playback Progress Bar */}
+        {progressPct > 0 && (
+          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">
+            <div
+              className="h-full bg-red-600 transition-all duration-300"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Video Content Metadata */}
@@ -98,6 +114,14 @@ export const VideoCard: React.FC<VideoCardProps> = ({
               <>
                 <span aria-hidden="true">·</span>
                 <span>{video.views}</span>
+              </>
+            )}
+            {progress && progress.currentTime > 5 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono tabular-nums text-red-600 dark:text-red-400 font-medium">
+                  Lanjut {formatTime(progress.currentTime)}
+                </span>
               </>
             )}
           </div>

@@ -48,3 +48,14 @@ export interface PlayerState {
   sleepTimerMinutes: number | null; // null or minutes remaining
   sleepTimerExpiresAt: number | null; // timestamp ms
 }
+
+export interface PlaybackProgress {
+  videoId: string;
+  currentTime: number;
+  duration: number;
+  updatedAt: string;
+}
+
+export type PendingSyncTask =
+  | { id: string; type: 'REFRESH_FEEDS'; createdAt: string }
+  | { id: string; type: 'ADD_CHANNELS'; inputs: string[]; targetGroupId: string; createdAt: string };
