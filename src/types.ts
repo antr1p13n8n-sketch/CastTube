@@ -59,3 +59,12 @@ export interface PlaybackProgress {
 export type PendingSyncTask =
   | { id: string; type: 'REFRESH_FEEDS'; createdAt: string }
   | { id: string; type: 'ADD_CHANNELS'; inputs: string[]; targetGroupId: string; createdAt: string };
+
+export interface Playlist {
+  id: string;
+  name: string;
+  description?: string;
+  videoIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}

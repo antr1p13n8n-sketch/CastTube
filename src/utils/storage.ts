@@ -1,4 +1,4 @@
-import { Channel, ChannelGroup, Video, ThemeMode, PlaybackProgress, PendingSyncTask, PlayerMode } from '../types';
+import { Channel, ChannelGroup, Video, ThemeMode, PlaybackProgress, PendingSyncTask, PlayerMode, Playlist } from '../types';
 
 export const INITIAL_GROUPS: ChannelGroup[] = [
   { id: 'all', name: 'Semua Channel', isDefault: true },
@@ -157,6 +157,8 @@ const STORAGE_KEYS = {
   LAST_VIDEO: 'casttube_last_video_v1',
   PENDING_SYNC: 'casttube_pending_sync_v1',
   PLAYER_SESSION: 'casttube_player_session_v1',
+  PLAYLISTS: 'casttube_playlists_v1',
+  PLAYED_VIDEOS: 'casttube_played_videos_v1',
 };
 
 export function loadGroups(): ChannelGroup[] {
@@ -362,6 +364,48 @@ export function loadPlayerSessionState(): PlayerSessionState {
 export function savePlayerSessionState(state: PlayerSessionState) {
   try {
     localStorage.setItem(STORAGE_KEYS.PLAYER_SESSION, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+}
+
+export function loadPlaylists(): Playlist[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PLAYLISTS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+export function savePlaylists(playlists: Playlist[]) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.PLAYLISTS, JSON.stringify(playlists));
+  } catch {
+    // ignore
+  }
+}
+
+export function loadPlayedVideoIds(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PLAYED_VIDEOS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+export function savePlayedVideoIds(ids: string[]) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.PLAYED_VIDEOS, JSON.stringify(ids));
   } catch {
     // ignore
   }

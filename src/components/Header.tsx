@@ -10,6 +10,7 @@ import {
   LogIn,
   LogOut,
   Cloud,
+  ListMusic,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { ThemeMode, PlayerMode } from '../types';
@@ -21,6 +22,8 @@ interface HeaderProps {
   onOpenAddModal: () => void;
   onOpenGroupModal: () => void;
   onOpenChannelDrawer: () => void;
+  onOpenPlaylistModal: () => void;
+  playlistCount: number;
   playerMode: PlayerMode;
   onTogglePlayerMode: () => void;
   activeFilterGroup: string;
@@ -39,6 +42,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAddModal,
   onOpenGroupModal,
   onOpenChannelDrawer,
+  onOpenPlaylistModal,
+  playlistCount,
   playerMode,
   activeTab,
   onSelectTab,
@@ -105,6 +110,14 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <FolderTree className="w-4 h-4 text-slate-400" />
             <span>Grup Channel</span>
+          </button>
+
+          <button
+            onClick={onOpenPlaylistModal}
+            className="whitespace-nowrap shrink-0 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <ListMusic className="w-4 h-4 text-red-500" />
+            <span>Playlist{playlistCount > 0 ? ` (${playlistCount})` : ''}</span>
           </button>
         </nav>
 

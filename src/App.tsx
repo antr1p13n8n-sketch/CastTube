@@ -26,6 +26,12 @@ import {
   changeChannelGroupInFirestore,
   deleteChannelInFirestore,
   saveVideosInFirestore,
+  subscribeToUserPlaylists,
+  createPlaylistInFirestore,
+  updatePlaylistInFirestore,
+  deletePlaylistInFirestore,
+  subscribeToPlayedVideos,
+  updatePlayedVideosInFirestore,
 } from './services/firestoreService';
 import {
   Channel,
@@ -35,6 +41,7 @@ import {
   ThemeMode,
   PlaybackProgress,
   PendingSyncTask,
+  Playlist,
 } from './types';
 import {
   loadGroups,
@@ -53,6 +60,10 @@ import {
   savePendingSyncQueue,
   loadPlayerSessionState,
   savePlayerSessionState,
+  loadPlaylists,
+  savePlaylists,
+  loadPlayedVideoIds,
+  savePlayedVideoIds,
 } from './utils/storage';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useBackgroundAudio } from './hooks/useBackgroundAudio';
@@ -65,6 +76,7 @@ import { MiniPlayerBar } from './components/MiniPlayerBar';
 import { AddChannelModal } from './components/AddChannelModal';
 import { GroupManagerModal } from './components/GroupManagerModal';
 import { ChannelDrawer } from './components/ChannelDrawer';
+import { PlaylistModal } from './components/PlaylistModal';
 import { YouTubePlayer } from './components/YouTubePlayer';
 
 export default function App() {
@@ -79,6 +91,8 @@ export default function App() {
   const [groups, setGroups] = useState<ChannelGroup[]>(loadGroups);
   const [channels, setChannels] = useState<Channel[]>(loadChannels);
   const [videos, setVideos] = useState<Video[]>(loadVideos);
+  const [playlists, setPlaylists] = useState<Playlist[]>(loadPlaylists);
+  const [playedVideoIds, setPlayedVideoIds] = useState<string[]>(loadPlayedVideoIds);
 
   // Active Filter States
   const [activeGroupId, setActiveGroupId] = useState<string>('all');
@@ -142,6 +156,8 @@ export default function App() {
   const [pastedLinkForModal, setPastedLinkForModal] = useState<string>('');
   const [isGroupModalOpen, setIsGroupModalOpen] = useState<boolean>(false);
   const [isChannelDrawerOpen, setIsChannelDrawerOpen] = useState<boolean>(false);
+  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState<boolean>(false);
+  const [videoToAddToPlaylist, setVideoToAddToPlaylist] = useState<Video | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   // Quick Paste & Open Add Modal
@@ -238,10 +254,20 @@ export default function App() {
       setVideos(cloudVideos);
     });
 
+    const unsubPlaylists = subscribeToUserPlaylists(user.uid, (cloudPlaylists) => {
+      setPlaylists(cloudPlaylists);
+    });
+
+    const unsubPlayed = subscribeToPlayedVideos(user.uid, (cloudPlayedIds) => {
+      setPlayedVideoIds(cloudPlayedIds);
+    });
+
     return () => {
       unsubGroups();
       unsubChannels();
       unsubVideos();
+      unsubPlaylists();
+      unsubPlayed();
     };
   }, [user?.uid]);
 
@@ -666,6 +692,98 @@ export default function App() {
     };
   }, [playerMode, activeTab, isPlaying, currentVideo?.id, currentTime, duration]);
 
+  // Persist playlists & played videos locally
+  useEffect(() => {
+    savePlaylists(playlists);
+  }, [playlists]);
+
+  useEffect(() => {
+    savePlayedVideoIds(playedVideoIds);
+  }, [playedVideoIds]);
+
+  const handleTogglePlayed = useCallback(
+    (videoId: string) => {
+      setPlayedVideoIds((prev) => {
+        const exists = prev.includes(videoId);
+        const next = exists ? prev.filter((id) => id !== videoId) : [videoId, ...prev];
+        if (user) {
+          updatePlayedVideosInFirestore(user.uid, next).catch(console.error);
+        }
+        return next;
+      });
+    },
+    [user]
+  );
+
+  const handleMarkAsPlayed = useCallback(
+    (videoId: string) => {
+      setPlayedVideoIds((prev) => {
+        if (prev.includes(videoId)) return prev;
+        const next = [videoId, ...prev];
+        if (user) {
+          updatePlayedVideosInFirestore(user.uid, next).catch(console.error);
+        }
+        return next;
+      });
+    },
+    [user]
+  );
+
+  const handleCreatePlaylist = (name: string, description: string, initialVideoIds: string[]) => {
+    const now = new Date().toISOString();
+    const newPlaylist: Playlist = {
+      id: `pl_${Date.now()}`,
+      name,
+      description,
+      videoIds: initialVideoIds,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setPlaylists((prev) => [newPlaylist, ...prev]);
+    if (user) {
+      createPlaylistInFirestore(user.uid, newPlaylist).catch(console.error);
+    }
+  };
+
+  const handleUpdatePlaylist = (
+    playlistId: string,
+    updates: { name?: string; description?: string; videoIds?: string[] }
+  ) => {
+    const now = new Date().toISOString();
+    setPlaylists((prev) =>
+      prev.map((pl) =>
+        pl.id === playlistId
+          ? {
+              ...pl,
+              ...updates,
+              updatedAt: now,
+            }
+          : pl
+      )
+    );
+    if (user) {
+      updatePlaylistInFirestore(user.uid, playlistId, updates).catch(console.error);
+    }
+  };
+
+  const handleDeletePlaylist = (playlistId: string) => {
+    setPlaylists((prev) => prev.filter((pl) => pl.id !== playlistId));
+    if (user) {
+      deletePlaylistInFirestore(user.uid, playlistId).catch(console.error);
+    }
+  };
+
+  const handlePlayPlaylist = (orderedVideos: Video[], mode: PlayerMode) => {
+    if (orderedVideos.length === 0) return;
+    const [first, ...rest] = orderedVideos;
+    setCurrentVideo(first);
+    setQueue(rest);
+    setPlayerMode(mode);
+    setActiveTab('player');
+    setIsPlaying(true);
+    saveLastVideoId(first.id);
+  };
+
   // Background audio & Media Session API (keeps audio playing when minimized)
   useBackgroundAudio({
     currentVideo,
@@ -739,6 +857,11 @@ export default function App() {
         onOpenAddModal={() => setIsAddModalOpen(true)}
         onOpenGroupModal={() => setIsGroupModalOpen(true)}
         onOpenChannelDrawer={() => setIsChannelDrawerOpen(true)}
+        onOpenPlaylistModal={() => {
+          setVideoToAddToPlaylist(null);
+          setIsPlaylistModalOpen(true);
+        }}
+        playlistCount={playlists.length}
         playerMode={playerMode}
         onTogglePlayerMode={() => setPlayerMode(playerMode === 'video' ? 'audio' : 'video')}
         activeFilterGroup={activeGroupId}
@@ -832,8 +955,11 @@ export default function App() {
                       setIsPlaying(playing);
                     }, [])}
                     onEnded={useCallback(() => {
+                      if (currentVideo) {
+                        handleMarkAsPlayed(currentVideo.id);
+                      }
                       handleNextTrack();
-                    }, [queue])}
+                    }, [currentVideo?.id, handleMarkAsPlayed, queue])}
                     seekCommand={seekCommand}
                     onSeekHandled={() => setSeekCommand(null)}
                   />
@@ -1099,10 +1225,16 @@ export default function App() {
                   video={video}
                   isCurrentlyPlaying={currentVideo?.id === video.id && isPlaying}
                   isInQueue={queue.some((q) => q.id === video.id)}
+                  isPlayed={playedVideoIds.includes(video.id)}
                   progress={playbackProgressMap[video.id]}
                   onPlayVideo={(v) => handlePlayVideo(v, 'video')}
                   onPlayAudio={(v) => handlePlayVideo(v, 'audio')}
                   onToggleQueue={handleToggleQueue}
+                  onTogglePlayed={handleTogglePlayed}
+                  onAddToPlaylist={(v) => {
+                    setVideoToAddToPlaylist(v);
+                    setIsPlaylistModalOpen(true);
+                  }}
                 />
               ))}
             </div>
@@ -1204,6 +1336,21 @@ export default function App() {
           setSelectedChannelId(chId);
           setActiveGroupId('all');
         }}
+      />
+
+      <PlaylistModal
+        isOpen={isPlaylistModalOpen}
+        onClose={() => {
+          setIsPlaylistModalOpen(false);
+          setVideoToAddToPlaylist(null);
+        }}
+        playlists={playlists}
+        videos={videos}
+        initialVideoToAdd={videoToAddToPlaylist}
+        onCreatePlaylist={handleCreatePlaylist}
+        onUpdatePlaylist={handleUpdatePlaylist}
+        onDeletePlaylist={handleDeletePlaylist}
+        onPlayPlaylist={handlePlayPlaylist}
       />
     </div>
   );

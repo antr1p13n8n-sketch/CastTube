@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { Channel, ChannelGroup, Video, ThemeMode } from '../types';
+import { Channel, ChannelGroup, Video, ThemeMode, Playlist } from '../types';
 
 // Helper to truncate strings to blueprint maxLength
 function clampStr(val: string | undefined | null, maxLen: number): string {
@@ -60,6 +60,42 @@ export async function updateThemeInFirestore(userId: string, theme: ThemeMode): 
   try {
     await updateDoc(doc(db, 'users', userId), {
       themePreference: theme,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export function subscribeToPlayedVideos(
+  userId: string,
+  onData: (playedVideoIds: string[]) => void
+): Unsubscribe {
+  const path = `users/${userId}`;
+  return onSnapshot(
+    doc(db, 'users', userId),
+    (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (Array.isArray(data.playedVideoIds)) {
+          onData(data.playedVideoIds.filter((id): id is string => typeof id === 'string'));
+        }
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  );
+}
+
+export async function updatePlayedVideosInFirestore(
+  userId: string,
+  playedVideoIds: string[]
+): Promise<void> {
+  const path = `users/${userId}`;
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      playedVideoIds: playedVideoIds.filter(isValidDocId).slice(0, 1000),
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
@@ -393,5 +429,93 @@ export async function saveVideosInFirestore(userId: string, videos: Video[]): Pr
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeToUserPlaylists(
+  userId: string,
+  onData: (playlists: Playlist[]) => void
+): Unsubscribe {
+  const path = `users/${userId}/playlists`;
+  const q = query(collection(db, 'users', userId, 'playlists'), where('ownerId', '==', userId));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: Playlist[] = [];
+      snapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        const createdAt =
+          d.createdAt && typeof d.createdAt.toDate === 'function'
+            ? d.createdAt.toDate().toISOString()
+            : new Date().toISOString();
+        const updatedAt =
+          d.updatedAt && typeof d.updatedAt.toDate === 'function'
+            ? d.updatedAt.toDate().toISOString()
+            : createdAt;
+        list.push({
+          id: d.id,
+          name: d.name,
+          description: d.description || '',
+          videoIds: Array.isArray(d.videoIds) ? d.videoIds : [],
+          createdAt,
+          updatedAt,
+        });
+      });
+      list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      onData(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
+export async function createPlaylistInFirestore(userId: string, playlist: Playlist): Promise<void> {
+  if (!isValidDocId(playlist.id)) return;
+  const path = `users/${userId}/playlists/${playlist.id}`;
+  try {
+    await setDoc(doc(db, 'users', userId, 'playlists', playlist.id), {
+      id: playlist.id,
+      name: clampStr(playlist.name || 'Playlist Baru', 100),
+      ...(playlist.description ? { description: clampStr(playlist.description, 500) } : {}),
+      videoIds: playlist.videoIds.filter(isValidDocId).slice(0, 200),
+      ownerId: userId,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function updatePlaylistInFirestore(
+  userId: string,
+  playlistId: string,
+  updates: { name?: string; description?: string; videoIds?: string[] }
+): Promise<void> {
+  if (!isValidDocId(playlistId)) return;
+  const path = `users/${userId}/playlists/${playlistId}`;
+  try {
+    const payload: Record<string, unknown> = {
+      updatedAt: serverTimestamp(),
+    };
+    if (updates.name !== undefined) payload.name = clampStr(updates.name, 100);
+    if (updates.description !== undefined) payload.description = clampStr(updates.description, 500);
+    if (updates.videoIds !== undefined) {
+      payload.videoIds = updates.videoIds.filter(isValidDocId).slice(0, 200);
+    }
+    await updateDoc(doc(db, 'users', userId, 'playlists', playlistId), payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function deletePlaylistInFirestore(userId: string, playlistId: string): Promise<void> {
+  if (!isValidDocId(playlistId)) return;
+  const path = `users/${userId}/playlists/${playlistId}`;
+  try {
+    await deleteDoc(doc(db, 'users', userId, 'playlists', playlistId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
