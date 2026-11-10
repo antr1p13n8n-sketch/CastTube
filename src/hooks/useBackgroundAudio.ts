@@ -38,6 +38,7 @@ export function useBackgroundAudio({
 }: UseBackgroundAudioOptions) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const keepAliveStartedRef = useRef(false);
+  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const handlersRef = useRef({
     onPlay,
@@ -61,9 +62,31 @@ export function useBackgroundAudio({
     };
   }, [onPlay, onPause, onNext, onPrev, onSeek, onSkipBack, onSkipForward]);
 
-  // 1. Inaudible Web Audio keep-alive while playing
+  // 1. Real silent HTML5 <audio> + Web Audio keep-alive while playing
+  // (iOS Safari & Android Chrome require a top-level <audio> element to keep MediaSession alive when minimized)
   useEffect(() => {
     if (typeof window === 'undefined') return;
+
+    if (!silentAudioRef.current) {
+      try {
+        const audio = new Audio(
+          'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
+        );
+        audio.loop = true;
+        audio.volume = 0.01;
+        audio.setAttribute('playsinline', 'true');
+        silentAudioRef.current = audio;
+      } catch {
+        // ignore
+      }
+    }
+
+    if (isPlaying) {
+      silentAudioRef.current?.play().catch(() => {});
+    } else {
+      silentAudioRef.current?.pause();
+    }
+
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -101,6 +124,11 @@ export function useBackgroundAudio({
 
   useEffect(() => {
     return () => {
+      if (silentAudioRef.current) {
+        silentAudioRef.current.pause();
+        silentAudioRef.current.src = '';
+        silentAudioRef.current = null;
+      }
       if (audioCtxRef.current) {
         audioCtxRef.current.close().catch(() => {});
         audioCtxRef.current = null;

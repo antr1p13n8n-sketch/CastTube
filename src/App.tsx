@@ -760,7 +760,7 @@ export default function App() {
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : 'fixed bottom-0 right-0 w-[200px] h-[112px] opacity-[0.001] pointer-events-none -z-10 overflow-hidden'
+                  : 'fixed bottom-0 right-0 w-[240px] h-[135px] opacity-[0.02] pointer-events-none -z-50 overflow-hidden'
               }
               aria-hidden={!(activeTab === 'player' && playerMode === 'video')}
             >

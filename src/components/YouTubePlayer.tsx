@@ -136,18 +136,27 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 typeof document !== 'undefined' &&
                 document.visibilityState === 'hidden' &&
                 intendedPlayingRef.current &&
-                hiddenResumeCountRef.current < 3
+                hiddenResumeCountRef.current < 10
               ) {
                 hiddenResumeCountRef.current += 1;
-                setTimeout(() => {
-                  if (playerRef.current && isReadyRef.current && intendedPlayingRef.current) {
-                    try {
-                      playerRef.current.playVideo();
-                    } catch {
-                      // ignore
+                try {
+                  playerRef.current?.playVideo?.();
+                } catch {
+                  // ignore
+                }
+                [150, 600].forEach((delay) => {
+                  setTimeout(() => {
+                    if (playerRef.current && isReadyRef.current && intendedPlayingRef.current) {
+                      try {
+                        if (playerRef.current.getPlayerState?.() !== 1) {
+                          playerRef.current.playVideo();
+                        }
+                      } catch {
+                        // ignore
+                      }
                     }
-                  }
-                }, 200);
+                  }, delay);
+                });
                 return;
               }
               onStateChange(false);
@@ -299,7 +308,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       className={
         isVisible
           ? 'w-full h-full relative bg-black aspect-video rounded-xl overflow-hidden shadow-2xl'
-          : 'fixed bottom-0 right-0 w-[200px] h-[112px] opacity-[0.001] pointer-events-none -z-10'
+          : 'fixed bottom-0 right-0 w-[240px] h-[135px] opacity-[0.02] pointer-events-none -z-50'
       }
       aria-hidden={!isVisible}
     >
