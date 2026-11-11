@@ -2,6 +2,8 @@ import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Readable } from 'stream';
+import { resolveAudioStreamUrl } from './api/_youtube';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -817,6 +819,72 @@ async function startServer() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Gagal memproses batch feeds';
       res.status(500).json({ error: message });
+    }
+  });
+
+  // API: Stream native audio directly (for mobile background / lock-screen playback)
+  app.get('/api/youtube/audio-stream', async (req: Request, res: Response) => {
+    try {
+      const videoId = typeof req.query.videoId === 'string' ? req.query.videoId.trim() : '';
+      if (!videoId) {
+        res.status(400).json({ error: 'Parameter videoId diperlukan' });
+        return;
+      }
+
+      const streamInfo = await resolveAudioStreamUrl(videoId);
+      if (!streamInfo) {
+        res.status(404).json({ error: 'Audio stream tidak tersedia untuk video ini' });
+        return;
+      }
+
+      const headers: Record<string, string> = {
+        'User-Agent':
+          'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+      };
+      if (req.headers.range) {
+        headers['Range'] = String(req.headers.range);
+      }
+
+      const controller = new AbortController();
+      req.on('close', () => controller.abort());
+
+      const upstream = await fetch(streamInfo.url, {
+        headers,
+        signal: controller.signal,
+      });
+
+      if (!upstream.ok && upstream.status !== 206) {
+        res.status(502).json({ error: `Upstream audio status ${upstream.status}` });
+        return;
+      }
+
+      res.status(upstream.status);
+      res.setHeader('Content-Type', upstream.headers.get('content-type') || streamInfo.mimeType);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'no-store');
+
+      const contentLength = upstream.headers.get('content-length');
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+
+      const contentRange = upstream.headers.get('content-range');
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+
+      if (!upstream.body) {
+        res.status(502).end();
+        return;
+      }
+
+      const nodeStream = Readable.fromWeb(upstream.body as any);
+      nodeStream.on('error', () => {
+        if (!res.writableEnded) res.end();
+      });
+      nodeStream.pipe(res);
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      const message = err instanceof Error ? err.message : 'Gagal memutar stream audio';
+      if (!res.headersSent) {
+        res.status(500).json({ error: message });
+      }
     }
   });
 

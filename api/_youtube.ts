@@ -686,3 +686,86 @@ export async function fetchChannelRss(
     videos: [],
   };
 }
+
+const audioStreamCache = new Map<
+  string,
+  { url: string; mimeType: string; contentLength?: string; expiresAt: number }
+>();
+
+export async function resolveAudioStreamUrl(
+  videoId: string
+): Promise<{ url: string; mimeType: string; contentLength?: string } | null> {
+  if (!videoId || !/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) return null;
+
+  const cached = audioStreamCache.get(videoId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { url: cached.url, mimeType: cached.mimeType, contentLength: cached.contentLength };
+  }
+
+  try {
+    const res = await fetchWithTimeout(
+      'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent':
+            'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+        },
+        body: JSON.stringify({
+          videoId,
+          context: {
+            client: {
+              clientName: 'ANDROID_VR',
+              clientVersion: '1.60.19',
+              deviceMake: 'Oculus',
+              deviceModel: 'Quest 3',
+              osName: 'Android',
+              osVersion: '12L',
+              androidSdkVersion: 32,
+            },
+          },
+          contentCheckOk: true,
+          racyCheckOk: true,
+        }),
+      },
+      10000
+    );
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.playabilityStatus?.status !== 'OK') return null;
+
+    const formats: any[] = data?.streamingData?.adaptiveFormats || [];
+    const audioFormats = formats.filter(
+      (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('audio/') && typeof f.url === 'string'
+    );
+    if (audioFormats.length === 0) return null;
+
+    // Prefer audio/mp4 (AAC itag 140/139) for universal iOS Safari + Android Chrome compatibility
+    const selected =
+      audioFormats.find((f) => f.itag === 140) ||
+      audioFormats.find((f) => f.itag === 139) ||
+      audioFormats.find((f) => f.mimeType.startsWith('audio/mp4')) ||
+      audioFormats.find((f) => f.itag === 251) ||
+      audioFormats[0];
+
+    const mimeType = String(selected.mimeType).split(';')[0].trim() || 'audio/mp4';
+    const result = {
+      url: selected.url as string,
+      mimeType,
+      contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
+    };
+
+    audioStreamCache.set(videoId, {
+      ...result,
+      expiresAt: Date.now() + 30 * 60 * 1000,
+    });
+
+    return result;
+  } catch (err) {
+    console.warn(`Failed to resolve audio stream for ${videoId}:`, err);
+    return null;
+  }
+}
+

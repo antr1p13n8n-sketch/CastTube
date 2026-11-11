@@ -79,6 +79,7 @@ import { GroupManagerModal } from './components/GroupManagerModal';
 import { ChannelDrawer } from './components/ChannelDrawer';
 import { PlaylistModal } from './components/PlaylistModal';
 import { YouTubePlayer } from './components/YouTubePlayer';
+import { NativeAudioPlayer } from './components/NativeAudioPlayer';
 
 export default function App() {
   // Firebase Auth State
@@ -148,6 +149,23 @@ export default function App() {
     return v.length > 1 ? v.slice(1, 6) : [];
   });
   const [seekCommand, setSeekCommand] = useState<number | null>(null);
+  const [audioFallbackToIframe, setAudioFallbackToIframe] = useState<boolean>(false);
+
+  const useNativeAudio = Boolean(currentVideo && playerMode === 'audio' && !audioFallbackToIframe);
+  const prevUseNativeAudioRef = useRef<boolean>(useNativeAudio);
+
+  useEffect(() => {
+    setAudioFallbackToIframe(false);
+  }, [currentVideo?.id, playerMode]);
+
+  useEffect(() => {
+    // When switching from native <audio> back to YouTube IFrame (video or fallback),
+    // sync the iframe playback position to currentTime.
+    if (prevUseNativeAudioRef.current && !useNativeAudio && currentTime > 0) {
+      setSeekCommand(currentTime);
+    }
+    prevUseNativeAudioRef.current = useNativeAudio;
+  }, [useNativeAudio]);
 
   // Sleep Timer States
   const [sleepTimerMinutes, setSleepTimerMinutes] = useState<number | null>(null);
@@ -921,6 +939,40 @@ export default function App() {
               />
             </div>
 
+            {/* 1b. Native HTML5 <audio> Engine for Mode Audio Saja (stays alive when minimized or screen locked on mobile) */}
+            {useNativeAudio && currentVideo && (
+              <NativeAudioPlayer
+                currentVideo={currentVideo}
+                isPlaying={isPlaying}
+                playbackRate={playbackRate}
+                volume={volume}
+                isMuted={isMuted}
+                initialSeekSeconds={
+                  currentTime > 0
+                    ? currentTime
+                    : playbackProgressMap[currentVideo.id]?.currentTime || 0
+                }
+                seekCommand={seekCommand}
+                onSeekHandled={() => setSeekCommand(null)}
+                onTimeUpdate={(cur, dur) => {
+                  setCurrentTime(cur);
+                  if (dur > 0) setDuration(dur);
+                  if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
+                    lastSavedProgressTimeRef.current = cur;
+                    persistProgress(currentVideo.id, cur, dur);
+                  }
+                }}
+                onStateChange={(playing) => setIsPlaying(playing)}
+                onEnded={() => {
+                  if (currentVideo) {
+                    handleMarkAsPlayed(currentVideo.id);
+                  }
+                  handleNextTrack();
+                }}
+                onFallbackNeeded={() => setAudioFallbackToIframe(true)}
+              />
+            )}
+
             {/* 2. Video Player View (Hosts the actual YouTube iframe without unmounting) */}
             <div
               className={
@@ -939,7 +991,7 @@ export default function App() {
                 playerSlot={
                   <YouTubePlayer
                     currentVideo={currentVideo}
-                    isPlaying={isPlaying}
+                    isPlaying={useNativeAudio ? false : isPlaying}
                     mode={playerMode}
                     isVisible={activeTab === 'player' && playerMode === 'video'}
                     playbackRate={playbackRate}
@@ -948,6 +1000,7 @@ export default function App() {
                     initialSeekSeconds={playbackProgressMap[currentVideo.id]?.currentTime || 0}
                     onTimeUpdate={useCallback(
                       (cur, dur) => {
+                        if (useNativeAudio) return;
                         setCurrentTime(cur);
                         if (dur > 0) setDuration(dur);
                         if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
@@ -955,18 +1008,23 @@ export default function App() {
                           persistProgress(currentVideo.id, cur, dur);
                         }
                       },
-                      [currentVideo.id, persistProgress]
+                      [currentVideo.id, persistProgress, useNativeAudio]
                     )}
-                    onStateChange={useCallback((playing) => {
-                      setIsPlaying(playing);
-                    }, [])}
+                    onStateChange={useCallback(
+                      (playing) => {
+                        if (useNativeAudio) return;
+                        setIsPlaying(playing);
+                      },
+                      [useNativeAudio]
+                    )}
                     onEnded={useCallback(() => {
+                      if (useNativeAudio) return;
                       if (currentVideo) {
                         handleMarkAsPlayed(currentVideo.id);
                       }
                       handleNextTrack();
-                    }, [currentVideo?.id, handleMarkAsPlayed, queue])}
-                    seekCommand={seekCommand}
+                    }, [currentVideo?.id, handleMarkAsPlayed, queue, useNativeAudio])}
+                    seekCommand={useNativeAudio ? null : seekCommand}
                     onSeekHandled={() => setSeekCommand(null)}
                   />
                 }
