@@ -9,6 +9,7 @@ import {
   Layers,
   Sparkles,
   Clipboard,
+  Trash2,
 } from 'lucide-react';
 import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
@@ -97,6 +98,7 @@ export default function App() {
   // Active Filter States
   const [activeGroupId, setActiveGroupId] = useState<string>('all');
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+  const [channelToDelete, setChannelToDelete] = useState<Channel | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title'>('newest');
   const [activeTab, setActiveTab] = useState<'feed' | 'player'>(() => loadPlayerSessionState().activeTab);
@@ -432,6 +434,10 @@ export default function App() {
     setVideos((prev) => prev.filter((v) => v.channelId !== channelId));
     if (selectedChannelId === channelId) {
       setSelectedChannelId(null);
+    }
+    if (currentVideo?.channelId === channelId) {
+      setIsPlaying(false);
+      setCurrentVideo(null);
     }
     if (user) {
       deleteChannelInFirestore(user.uid, channelId, videoIdsToDelete).catch(console.error);
@@ -1079,32 +1085,46 @@ export default function App() {
                   const chVideoCount = videos.filter((v) => v.channelId === ch.id).length;
 
                   return (
-                    <button
+                    <div
                       key={ch.id}
-                      onClick={() => setSelectedChannelId(isSelected ? null : ch.id)}
-                      className={`flex items-center gap-2 px-2.5 py-1 text-xs font-medium rounded-xl whitespace-nowrap shrink-0 transition-all cursor-pointer border ${
+                      className={`group flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 text-xs font-medium rounded-xl whitespace-nowrap shrink-0 transition-all border ${
                         isSelected
                           ? 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 shadow-xs'
                           : 'bg-slate-50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/70 hover:bg-slate-100 dark:hover:bg-slate-800'
                       }`}
                     >
-                      <img
-                        src={ch.avatar || `https://avatar.vercel.sh/${ch.id}?size=64`}
-                        alt={ch.title}
-                        referrerPolicy="no-referrer"
-                        className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
-                      />
-                      <span className="max-w-[160px] truncate">{ch.title}</span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                          isSelected
-                            ? 'bg-red-200/70 dark:bg-red-900/70 text-red-800 dark:text-red-200'
-                            : 'bg-slate-200/80 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
-                        }`}
+                      <button
+                        onClick={() => setSelectedChannelId(isSelected ? null : ch.id)}
+                        className="flex items-center gap-2 cursor-pointer"
                       >
-                        {chVideoCount}
-                      </span>
-                    </button>
+                        <img
+                          src={ch.avatar || `https://avatar.vercel.sh/${ch.id}?size=64`}
+                          alt={ch.title}
+                          referrerPolicy="no-referrer"
+                          className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
+                        />
+                        <span className="max-w-[160px] truncate">{ch.title}</span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                            isSelected
+                              ? 'bg-red-200/70 dark:bg-red-900/70 text-red-800 dark:text-red-200'
+                              : 'bg-slate-200/80 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {chVideoCount}
+                        </span>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setChannelToDelete(ch);
+                        }}
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-100/70 dark:hover:text-red-400 dark:hover:bg-red-900/40 transition-colors cursor-pointer"
+                        title={`Hapus channel ${ch.title}`}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -1138,8 +1158,15 @@ export default function App() {
               <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 text-xs text-red-700 dark:text-red-300">
                 <span className="font-semibold">Fokus Channel: {selectedChannel.title}</span>
                 <button
+                  onClick={() => setChannelToDelete(selectedChannel)}
+                  className="p-0.5 rounded hover:bg-red-200/60 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 cursor-pointer"
+                  title="Hapus channel ini"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                <button
                   onClick={() => setSelectedChannelId(null)}
-                  className="font-bold hover:text-red-900 dark:hover:text-white"
+                  className="font-bold hover:text-red-900 dark:hover:text-white cursor-pointer"
                   title="Hapus filter channel"
                 >
                   ×
@@ -1352,6 +1379,51 @@ export default function App() {
         onDeletePlaylist={handleDeletePlaylist}
         onPlayPlaylist={handlePlayPlaylist}
       />
+
+      {/* Delete Channel Confirmation Modal */}
+      {channelToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <img
+                src={channelToDelete.avatar || `https://avatar.vercel.sh/${channelToDelete.id}?size=100`}
+                alt={channelToDelete.title}
+                referrerPolicy="no-referrer"
+                className="w-11 h-11 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
+              />
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                  Hapus Channel?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {channelToDelete.title}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Channel ini beserta semua daftar videonya akan dihapus dari koleksi Anda. Tindakan ini tidak dapat dibatalkan.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => setChannelToDelete(null)}
+                className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  handleDeleteChannel(channelToDelete.id);
+                  setChannelToDelete(null);
+                }}
+                className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Hapus Channel</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

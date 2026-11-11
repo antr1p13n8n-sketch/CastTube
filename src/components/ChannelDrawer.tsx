@@ -21,6 +21,8 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
   onChangeChannelGroup,
   onSelectChannelFilter,
 }) => {
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+
   if (!isOpen) return null;
 
   return (
@@ -57,7 +59,7 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
             </div>
           ) : (
             channels.map((channel) => {
-              const currentGroup = groups.find((g) => g.id === channel.groupId);
+              const isConfirming = confirmDeleteId === channel.id;
 
               return (
                 <div
@@ -90,26 +92,47 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
-                      <a
-                        href={channel.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
-                        title="Buka Channel di YouTube"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                      <button
-                        onClick={() => {
-                          if (confirm(`Hapus channel "${channel.title}" dari daftar Anda?`)) {
-                            onDeleteChannel(channel.id);
-                          }
-                        }}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
-                        title="Hapus Channel"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {isConfirming ? (
+                        <div className="flex items-center gap-1.5 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-lg px-2 py-1">
+                          <span className="text-[11px] font-semibold text-red-700 dark:text-red-300">
+                            Hapus?
+                          </span>
+                          <button
+                            onClick={() => {
+                              onDeleteChannel(channel.id);
+                              setConfirmDeleteId(null);
+                            }}
+                            className="px-2 py-0.5 text-[11px] font-bold rounded bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer"
+                          >
+                            Ya
+                          </button>
+                          <button
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="px-2 py-0.5 text-[11px] font-medium rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                          >
+                            Batal
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <a
+                            href={channel.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
+                            title="Buka Channel di YouTube"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                          <button
+                            onClick={() => setConfirmDeleteId(channel.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                            title="Hapus Channel"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
 
