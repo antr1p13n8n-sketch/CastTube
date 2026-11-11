@@ -470,20 +470,225 @@ async function resolveYouTubeChannel(rawInput: string): Promise<{ channelId: str
   throw new Error(`Tidak dapat menemukan Channel ID untuk input: "${rawInput}". Pastikan link channel valid (contoh: https://www.youtube.com/@username atau https://www.youtube.com/channel/UC...).`);
 }
 
+function relativeTimeToIso(relText: string | undefined, fallbackOffsetIndex: number): string {
+  const now = Date.now();
+  if (!relText) {
+    return new Date(now - (fallbackOffsetIndex + 16) * 86400_000).toISOString();
+  }
+  const lower = relText.toLowerCase();
+  const numMatch = lower.match(/(\d+)/);
+  const num = numMatch ? parseInt(numMatch[1], 10) : 1;
+
+  let ms = 86400_000 * (fallbackOffsetIndex + 16);
+  if (lower.includes('detik') || lower.includes('second')) ms = num * 1000;
+  else if (lower.includes('menit') || lower.includes('minute')) ms = num * 60_000;
+  else if (lower.includes('jam') || lower.includes('hour')) ms = num * 3600_000;
+  else if (lower.includes('hari') || lower.includes('day')) ms = num * 86400_000;
+  else if (lower.includes('minggu') || lower.includes('week')) ms = num * 7 * 86400_000;
+  else if (lower.includes('bulan') || lower.includes('month')) ms = num * 30 * 86400_000;
+  else if (lower.includes('tahun') || lower.includes('year')) ms = num * 365 * 86400_000;
+
+  return new Date(now - ms - fallbackOffsetIndex * 1000).toISOString();
+}
+
+function parseBrowseVideoItems(
+  items: any[],
+  channelId: string,
+  channelTitle: string,
+  startIndex: number
+): { videos: VideoItem[]; continuationToken: string | null } {
+  const videos: VideoItem[] = [];
+  let continuationToken: string | null = null;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item?.continuationItemRenderer) {
+      const token =
+        item.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+      if (token) continuationToken = token;
+      continue;
+    }
+
+    const lockup = item?.richItemRenderer?.content?.lockupViewModel;
+    if (lockup && lockup.contentId) {
+      const videoId = String(lockup.contentId);
+      const title =
+        lockup.metadata?.lockupMetadataViewModel?.title?.content || 'Untitled Video';
+      const sources = lockup.contentImage?.thumbnailViewModel?.image?.sources || [];
+      const thumbnail =
+        sources[sources.length - 1]?.url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+      const rows =
+        lockup.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel
+          ?.metadataRows || [];
+      const parts = rows[0]?.metadataParts || [];
+      const viewsText = parts[0]?.text?.content;
+      const relText = parts[1]?.text?.content;
+
+      videos.push({
+        id: videoId,
+        title,
+        publishedAt: relativeTimeToIso(relText, startIndex + i),
+        thumbnail,
+        channelId,
+        channelTitle,
+        description: '',
+        views: viewsText,
+      });
+      continue;
+    }
+
+    const vr = item?.richItemRenderer?.content?.videoRenderer || item?.gridVideoRenderer;
+    if (vr && vr.videoId) {
+      const videoId = String(vr.videoId);
+      const title =
+        vr.title?.runs?.[0]?.text || vr.title?.simpleText || 'Untitled Video';
+      const thumbs = vr.thumbnail?.thumbnails || [];
+      const thumbnail =
+        thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+      const viewsText = vr.shortViewCountText?.simpleText || vr.viewCountText?.simpleText;
+      const relText = vr.publishedTimeText?.simpleText;
+
+      videos.push({
+        id: videoId,
+        title,
+        publishedAt: relativeTimeToIso(relText, startIndex + i),
+        thumbnail,
+        channelId,
+        channelTitle,
+        description: '',
+        views: viewsText,
+      });
+    }
+  }
+
+  return { videos, continuationToken };
+}
+
+async function fetchPaginatedChannelVideos(
+  channelId: string,
+  channelTitle: string,
+  maxPages = 5
+): Promise<{ videos: VideoItem[]; avatar?: string; resolvedTitle?: string }> {
+  const allVideos: VideoItem[] = [];
+  let avatar: string | undefined;
+  let resolvedTitle: string | undefined;
+
+  try {
+    const res = await fetchWithTimeout(
+      `https://www.youtube.com/channel/${channelId}/videos`,
+      {},
+      10000
+    );
+    if (!res.ok) return { videos: allVideos };
+    const html = await res.text();
+    const match = html.match(/var ytInitialData = (\{[\s\S]*?\});<\/script>/);
+    if (!match) return { videos: allVideos };
+
+    const data = JSON.parse(match[1]);
+    avatar =
+      data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources?.slice(-1)?.[0]?.url ||
+      data?.header?.c4TabbedHeaderRenderer?.avatar?.thumbnails?.slice(-1)?.[0]?.url;
+    resolvedTitle =
+      data?.metadata?.channelMetadataRenderer?.title ||
+      data?.header?.pageHeaderRenderer?.pageTitle;
+
+    const effectiveTitle = resolvedTitle || channelTitle;
+    const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+    const videosTab =
+      tabs.find((t: any) => t.tabRenderer?.selected) ||
+      tabs.find((t: any) => t.tabRenderer?.content?.richGridRenderer);
+    const items = videosTab?.tabRenderer?.content?.richGridRenderer?.contents || [];
+
+    const firstPage = parseBrowseVideoItems(items, channelId, effectiveTitle, 0);
+    allVideos.push(...firstPage.videos);
+
+    let token = firstPage.continuationToken;
+    let page = 1;
+    while (token && page < maxPages) {
+      const apiRes = await fetchWithTimeout(
+        'https://www.youtube.com/youtubei/v1/browse?prettyPrint=false',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            context: {
+              client: { clientName: 'WEB', clientVersion: '2.20240501.00.00', hl: 'id' },
+            },
+            continuation: token,
+          }),
+        },
+        7000
+      );
+      if (!apiRes.ok) break;
+      const apiJson = await apiRes.json();
+      const contItems =
+        apiJson?.onResponseReceivedActions?.[0]?.appendContinuationItemsAction
+          ?.continuationItems || [];
+      if (contItems.length === 0) break;
+
+      const nextPage = parseBrowseVideoItems(
+        contItems,
+        channelId,
+        effectiveTitle,
+        allVideos.length
+      );
+      allVideos.push(...nextPage.videos);
+      token = nextPage.continuationToken;
+      page++;
+    }
+  } catch (err) {
+    console.warn(`Pagination fetch skipped for ${channelId}:`, err);
+  }
+
+  return { videos: allVideos, avatar, resolvedTitle };
+}
+
 async function fetchChannelRss(channelId: string): Promise<{ channel: ChannelData; videos: VideoItem[] }> {
   const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
 
-  try {
-    const res = await fetchWithTimeout(rssUrl, {}, 8000);
-    if (res.ok) {
-      const xml = await res.text();
-      const parsed = parseYouTubeRss(xml);
-      if (parsed.channel.id) {
-        return parsed;
+  const [rssResult, browseResult] = await Promise.allSettled([
+    (async () => {
+      const res = await fetchWithTimeout(rssUrl, {}, 8000);
+      if (res.ok) {
+        const xml = await res.text();
+        const parsed = parseYouTubeRss(xml);
+        if (parsed.channel.id) return parsed;
+      }
+      return null;
+    })(),
+    fetchPaginatedChannelVideos(channelId, `Channel ${channelId.slice(0, 8)}`, 5),
+  ]);
+
+  const rssData = rssResult.status === 'fulfilled' ? rssResult.value : null;
+  const browseData =
+    browseResult.status === 'fulfilled' ? browseResult.value : { videos: [] };
+
+  if (rssData || browseData.videos.length > 0) {
+    const baseChannel: ChannelData = rssData?.channel || {
+      id: channelId,
+      title: browseData.resolvedTitle || `Channel ${channelId.slice(0, 8)}...`,
+      url: `https://www.youtube.com/channel/${channelId}`,
+      avatar: browseData.avatar || `https://avatar.vercel.sh/${channelId}?size=120`,
+    };
+    if (browseData.avatar) baseChannel.avatar = browseData.avatar;
+    if (browseData.resolvedTitle && (!baseChannel.title || baseChannel.title.startsWith('Channel '))) {
+      baseChannel.title = browseData.resolvedTitle;
+    }
+
+    const mergedMap = new Map<string, VideoItem>();
+    for (const v of rssData?.videos || []) {
+      mergedMap.set(v.id, v);
+    }
+    for (const v of browseData.videos) {
+      if (!mergedMap.has(v.id)) {
+        mergedMap.set(v.id, { ...v, channelTitle: baseChannel.title });
       }
     }
-  } catch (err) {
-    console.warn(`Gagal fetch RSS dari YouTube untuk channelId ${channelId}:`, err);
+
+    return {
+      channel: baseChannel,
+      videos: Array.from(mergedMap.values()),
+    };
   }
 
   // Fallback to presets if available

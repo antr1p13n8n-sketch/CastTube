@@ -227,27 +227,36 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 
   // Keep playing when window is minimized / tab goes to background
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    const resumeIfNeeded = () => {
       if (
         document.visibilityState === 'hidden' &&
         intendedPlayingRef.current &&
         playerRef.current &&
         isReadyRef.current
       ) {
-        setTimeout(() => {
-          try {
-            const state = playerRef.current?.getPlayerState?.();
-            if (state === 2 && intendedPlayingRef.current) {
-              playerRef.current.playVideo();
-            }
-          } catch {
-            // ignore
+        try {
+          const state = playerRef.current?.getPlayerState?.();
+          if (state !== 1 && state !== 3 && intendedPlayingRef.current) {
+            playerRef.current.playVideo();
           }
-        }, 300);
+        } catch {
+          // ignore
+        }
       }
     };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && intendedPlayingRef.current) {
+        setTimeout(resumeIfNeeded, 250);
+      }
+    };
+
+    const keepAliveTimer = setInterval(resumeIfNeeded, 1500);
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      clearInterval(keepAliveTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   // Handle play / pause toggle
@@ -308,7 +317,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       className={
         isVisible
           ? 'w-full h-full relative bg-black aspect-video rounded-xl overflow-hidden shadow-2xl'
-          : 'fixed bottom-0 right-0 w-[240px] h-[135px] opacity-[0.02] pointer-events-none -z-50'
+          : 'fixed bottom-0 right-0 w-[2px] h-[2px] opacity-[0.05] pointer-events-none z-0'
       }
       aria-hidden={!isVisible}
     >
