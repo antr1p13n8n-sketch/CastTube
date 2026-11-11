@@ -131,12 +131,13 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
               onStateChange(true);
               startTimePolling();
             } else if (event.data === 2) {
-              // If browser auto-paused when window was minimized/backgrounded, immediately resume
+              // On mobile/desktop minimize, browsers auto-pause cross-origin video iframes.
+              // Never flip isPlaying=false while hidden & intendedPlayingRef is true,
+              // otherwise MediaSession & the silent <audio> keep-alive also stop!
               if (
                 typeof document !== 'undefined' &&
                 document.visibilityState === 'hidden' &&
-                intendedPlayingRef.current &&
-                hiddenResumeCountRef.current < 10
+                intendedPlayingRef.current
               ) {
                 hiddenResumeCountRef.current += 1;
                 try {
@@ -144,19 +145,26 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 } catch {
                   // ignore
                 }
-                [150, 600].forEach((delay) => {
-                  setTimeout(() => {
-                    if (playerRef.current && isReadyRef.current && intendedPlayingRef.current) {
-                      try {
-                        if (playerRef.current.getPlayerState?.() !== 1) {
-                          playerRef.current.playVideo();
+                if (hiddenResumeCountRef.current <= 20) {
+                  [80, 300, 800].forEach((delay) => {
+                    setTimeout(() => {
+                      if (
+                        playerRef.current &&
+                        isReadyRef.current &&
+                        intendedPlayingRef.current &&
+                        document.visibilityState === 'hidden'
+                      ) {
+                        try {
+                          if (playerRef.current.getPlayerState?.() !== 1) {
+                            playerRef.current.playVideo();
+                          }
+                        } catch {
+                          // ignore
                         }
-                      } catch {
-                        // ignore
                       }
-                    }
-                  }, delay);
-                });
+                    }, delay);
+                  });
+                }
                 return;
               }
               onStateChange(false);
@@ -247,11 +255,13 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden' && intendedPlayingRef.current) {
-        setTimeout(resumeIfNeeded, 250);
+        [50, 250, 600, 1200].forEach((delay) => {
+          setTimeout(resumeIfNeeded, delay);
+        });
       }
     };
 
-    const keepAliveTimer = setInterval(resumeIfNeeded, 1500);
+    const keepAliveTimer = setInterval(resumeIfNeeded, 1000);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       clearInterval(keepAliveTimer);
@@ -317,7 +327,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       className={
         isVisible
           ? 'w-full h-full relative bg-black aspect-video rounded-xl overflow-hidden shadow-2xl'
-          : 'fixed bottom-0 right-0 w-[2px] h-[2px] opacity-[0.05] pointer-events-none z-0'
+          : 'fixed bottom-0 right-0 w-[200px] h-[112px] opacity-[0.01] pointer-events-none z-0'
       }
       aria-hidden={!isVisible}
     >

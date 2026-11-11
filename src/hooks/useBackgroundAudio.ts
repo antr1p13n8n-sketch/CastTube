@@ -16,11 +16,44 @@ interface UseBackgroundAudioOptions {
   onSkipForward: () => void;
 }
 
+function createSilentWavUrl(durationSeconds = 3): string {
+  const sampleRate = 8000;
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const numSamples = sampleRate * durationSeconds;
+  const dataSize = numSamples * numChannels * (bitsPerSample / 8);
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // PCM chunk size
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
+  view.setUint16(32, numChannels * (bitsPerSample / 8), true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  const blob = new Blob([buffer], { type: 'audio/wav' });
+  return URL.createObjectURL(blob);
+}
+
 /**
  * Keeps audio playback alive when the browser window is minimized or backgrounded:
  * 1. Registers Media Session metadata & lock-screen / OS media controls.
- * 2. Maintains an inaudible Web Audio API keep-alive context while playing so
- *    browsers do not freeze background timers or suspend the tab.
+ * 2. Maintains a real 3-second silent HTML5 <audio> loop + Web Audio API keep-alive
+ *    so mobile browsers (Android Chrome / iOS Safari) keep audio focus and do not freeze the tab.
  */
 export function useBackgroundAudio({
   currentVideo,
@@ -39,6 +72,7 @@ export function useBackgroundAudio({
   const audioCtxRef = useRef<AudioContext | null>(null);
   const keepAliveStartedRef = useRef(false);
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const silentAudioUrlRef = useRef<string | null>(null);
 
   const handlersRef = useRef({
     onPlay,
@@ -62,19 +96,20 @@ export function useBackgroundAudio({
     };
   }, [onPlay, onPause, onNext, onPrev, onSeek, onSkipBack, onSkipForward]);
 
-  // 1. Real silent HTML5 <audio> + Web Audio keep-alive while playing
-  // (iOS Safari & Android Chrome require a top-level <audio> element to keep MediaSession alive when minimized)
+  // 1. Real 3s silent HTML5 <audio> + Web Audio keep-alive while playing
+  // (iOS Safari & Android Chrome require a real >=1s <audio> element to keep MediaSession & background audio alive)
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     if (!silentAudioRef.current) {
       try {
-        const audio = new Audio(
-          'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
-        );
+        const wavUrl = createSilentWavUrl(3);
+        silentAudioUrlRef.current = wavUrl;
+        const audio = new Audio(wavUrl);
         audio.loop = true;
-        audio.volume = 0.01;
+        audio.volume = 0.5; // Samples are 0 (pure silence), non-zero volume prevents OS muting heuristic
         audio.setAttribute('playsinline', 'true');
+        audio.setAttribute('webkit-playsinline', 'true');
         silentAudioRef.current = audio;
       } catch {
         // ignore
@@ -128,6 +163,10 @@ export function useBackgroundAudio({
         silentAudioRef.current.pause();
         silentAudioRef.current.src = '';
         silentAudioRef.current = null;
+      }
+      if (silentAudioUrlRef.current) {
+        URL.revokeObjectURL(silentAudioUrlRef.current);
+        silentAudioUrlRef.current = null;
       }
       if (audioCtxRef.current) {
         audioCtxRef.current.close().catch(() => {});

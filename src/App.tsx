@@ -926,7 +926,7 @@ export default function App() {
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : 'fixed bottom-0 right-0 w-[2px] h-[2px] opacity-[0.05] pointer-events-none z-0 overflow-hidden'
+                  : 'fixed bottom-0 right-0 w-[200px] h-[112px] opacity-[0.01] pointer-events-none z-0 overflow-hidden'
               }
               aria-hidden={!(activeTab === 'player' && playerMode === 'video')}
             >
