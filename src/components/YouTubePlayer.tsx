@@ -131,13 +131,14 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
               onStateChange(true);
               startTimePolling();
             } else if (event.data === 2) {
-              // On mobile/desktop minimize, browsers auto-pause cross-origin video iframes.
-              // Never flip isPlaying=false while hidden & intendedPlayingRef is true,
-              // otherwise MediaSession & the silent <audio> keep-alive also stop!
+              // On desktop/compatible browsers, try resuming briefly when minimized.
+              // If the mobile OS still forces pause after 3 attempts, sync state to paused
+              // so the notification does not falsely appear "playing" with no sound.
               if (
                 typeof document !== 'undefined' &&
                 document.visibilityState === 'hidden' &&
-                intendedPlayingRef.current
+                intendedPlayingRef.current &&
+                hiddenResumeCountRef.current < 3
               ) {
                 hiddenResumeCountRef.current += 1;
                 try {
@@ -145,26 +146,23 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 } catch {
                   // ignore
                 }
-                if (hiddenResumeCountRef.current <= 20) {
-                  [80, 300, 800].forEach((delay) => {
-                    setTimeout(() => {
-                      if (
-                        playerRef.current &&
-                        isReadyRef.current &&
-                        intendedPlayingRef.current &&
-                        document.visibilityState === 'hidden'
-                      ) {
-                        try {
-                          if (playerRef.current.getPlayerState?.() !== 1) {
-                            playerRef.current.playVideo();
-                          }
-                        } catch {
-                          // ignore
-                        }
+                setTimeout(() => {
+                  if (
+                    playerRef.current &&
+                    isReadyRef.current &&
+                    intendedPlayingRef.current &&
+                    document.visibilityState === 'hidden'
+                  ) {
+                    try {
+                      if (playerRef.current.getPlayerState?.() !== 1) {
+                        onStateChange(false);
+                        stopTimePolling();
                       }
-                    }, delay);
-                  });
-                }
+                    } catch {
+                      // ignore
+                    }
+                  }
+                }, 600);
                 return;
               }
               onStateChange(false);

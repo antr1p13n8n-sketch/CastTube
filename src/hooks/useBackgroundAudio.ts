@@ -14,6 +14,7 @@ interface UseBackgroundAudioOptions {
   onSeek: (seconds: number) => void;
   onSkipBack: () => void;
   onSkipForward: () => void;
+  disableKeepAlive?: boolean;
 }
 
 function createSilentWavUrl(durationSeconds = 3): string {
@@ -68,6 +69,7 @@ export function useBackgroundAudio({
   onSeek,
   onSkipBack,
   onSkipForward,
+  disableKeepAlive = false,
 }: UseBackgroundAudioOptions) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const keepAliveStartedRef = useRef(false);
@@ -96,10 +98,20 @@ export function useBackgroundAudio({
     };
   }, [onPlay, onPause, onNext, onPrev, onSeek, onSkipBack, onSkipForward]);
 
-  // 1. Real 3s silent HTML5 <audio> + Web Audio keep-alive while playing
-  // (iOS Safari & Android Chrome require a real >=1s <audio> element to keep MediaSession & background audio alive)
+  // 1. Real 3s silent HTML5 <audio> + Web Audio keep-alive while playing via iframe
+  // (Skipped when NativeAudioPlayer is active so it doesn't steal MediaSession focus)
   useEffect(() => {
     if (typeof window === 'undefined') return;
+
+    if (disableKeepAlive) {
+      if (silentAudioRef.current && !silentAudioRef.current.paused) {
+        silentAudioRef.current.pause();
+      }
+      if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
+        audioCtxRef.current.suspend().catch(() => {});
+      }
+      return;
+    }
 
     if (!silentAudioRef.current) {
       try {
@@ -155,7 +167,7 @@ export function useBackgroundAudio({
     } else if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
       audioCtxRef.current.suspend().catch(() => {});
     }
-  }, [isPlaying]);
+  }, [isPlaying, disableKeepAlive]);
 
   useEffect(() => {
     return () => {

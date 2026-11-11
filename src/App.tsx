@@ -822,6 +822,7 @@ export default function App() {
     onSeek: handleSeek,
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
+    disableKeepAlive: useNativeAudio,
   });
 
   // 9. Filter and Sort Videos
