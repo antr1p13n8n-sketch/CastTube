@@ -217,13 +217,17 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     try {
       const currentUrl = playerRef.current.getVideoUrl ? playerRef.current.getVideoUrl() : '';
       if (!currentUrl.includes(currentVideo.id)) {
-        playerRef.current.loadVideoById({
-          videoId: currentVideo.id,
-          startSeconds: Math.floor(initialSeekSeconds || 0),
-        });
         if (isPlaying) {
-          playerRef.current.playVideo();
+          playerRef.current.loadVideoById({
+            videoId: currentVideo.id,
+            startSeconds: Math.floor(initialSeekSeconds || 0),
+          });
           startTimePolling();
+        } else {
+          playerRef.current.cueVideoById({
+            videoId: currentVideo.id,
+            startSeconds: Math.floor(initialSeekSeconds || 0),
+          });
         }
       }
     } catch (e) {
@@ -325,9 +329,8 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       className={
         isVisible
           ? 'w-full h-full relative bg-black aspect-video rounded-xl overflow-hidden shadow-2xl'
-          : 'fixed bottom-0 right-0 w-[200px] h-[112px] opacity-[0.01] pointer-events-none z-0'
+          : 'w-full h-full relative bg-black aspect-video overflow-hidden'
       }
-      aria-hidden={!isVisible}
     >
       <div id="yt-embedded-instance" className="w-full h-full" />
     </div>

@@ -22,6 +22,9 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     }
 
     const streamInfo = await resolveAudioStreamUrl(videoId);
+    if (req.query.check === '1') {
+      return res.status(200).json({ available: Boolean(streamInfo) });
+    }
     if (!streamInfo) {
       return res.status(404).json({ error: 'Audio stream tidak tersedia untuk video ini' });
     }

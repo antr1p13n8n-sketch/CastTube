@@ -156,6 +156,23 @@ export default function App() {
 
   useEffect(() => {
     setAudioFallbackToIframe(false);
+    if (!currentVideo || playerMode !== 'audio') return;
+
+    let cancelled = false;
+    fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(currentVideo.id)}&check=1`)
+      .then((res) => (res.ok ? res.json() : { available: false }))
+      .then((data) => {
+        if (!cancelled && !data?.available) {
+          setAudioFallbackToIframe(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAudioFallbackToIframe(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentVideo?.id, playerMode]);
 
   useEffect(() => {
@@ -822,7 +839,6 @@ export default function App() {
     onSeek: handleSeek,
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
-    disableKeepAlive: useNativeAudio,
   });
 
   // 9. Filter and Sort Videos
@@ -979,9 +995,10 @@ export default function App() {
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : 'fixed bottom-0 right-0 w-[200px] h-[112px] opacity-[0.01] pointer-events-none z-0 overflow-hidden'
+                  : !useNativeAudio && isPlaying
+                  ? 'fixed bottom-20 right-3 w-36 aspect-video rounded-xl overflow-hidden shadow-xl border border-slate-300 dark:border-slate-700 z-30 bg-black'
+                  : 'fixed -bottom-96 -right-96 w-[200px] h-[112px] pointer-events-none opacity-0 overflow-hidden'
               }
-              aria-hidden={!(activeTab === 'player' && playerMode === 'video')}
             >
               <VideoPlayerView
                 currentVideo={currentVideo}
