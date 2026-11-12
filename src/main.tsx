@@ -7,6 +7,11 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   try {
     registerSW({
       immediate: true,
+      onRegisteredSW(_swUrl, registration) {
+        if (registration) {
+          registration.update().catch(() => {});
+        }
+      },
       onOfflineReady() {
         console.info('CastTube siap digunakan dalam mode offline.');
       },
