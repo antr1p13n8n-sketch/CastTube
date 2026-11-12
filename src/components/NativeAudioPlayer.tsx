@@ -150,7 +150,7 @@ export const NativeAudioPlayer: React.FC<NativeAudioPlayerProps> = ({
       onError={() => {
         onFallbackNeeded();
       }}
-      className="hidden"
+      className="fixed opacity-0 pointer-events-none w-1 h-1 -z-50"
     />
   );
 };

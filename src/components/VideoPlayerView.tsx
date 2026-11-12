@@ -7,6 +7,7 @@ import {
   Share2,
   Check,
   ListMusic,
+  Maximize2,
 } from 'lucide-react';
 import { Video } from '../types';
 import { formatRelativeTime } from '../utils/format';
@@ -18,6 +19,8 @@ interface VideoPlayerViewProps {
   onPlayVideo: (video: Video) => void;
   onRemoveFromQueue: (videoId: string) => void;
   playerSlot?: React.ReactNode;
+  isMiniPiP?: boolean;
+  onExpandPiP?: () => void;
 }
 
 export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
@@ -27,6 +30,8 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   onPlayVideo,
   onRemoveFromQueue,
   playerSlot,
+  isMiniPiP = false,
+  onExpandPiP,
 }) => {
   const [descExpanded, setDescExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -56,6 +61,22 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  if (isMiniPiP) {
+    return (
+      <div className="relative w-full h-full group bg-black overflow-hidden rounded-2xl">
+        {playerSlot}
+        <button
+          onClick={onExpandPiP}
+          className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white text-xs font-semibold backdrop-blur-xs transition-opacity cursor-pointer z-10"
+          title="Perbesar Pemutar Video"
+        >
+          <Maximize2 className="w-4 h-4" />
+          <span>Buka Video Penuh</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-5xl mx-auto rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden p-4 sm:p-6 md:p-8 transition-colors duration-200">

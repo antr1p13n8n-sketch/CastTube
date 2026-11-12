@@ -841,6 +841,35 @@ export default function App() {
     onSkipForward: handleSkipForward,
   });
 
+  const handleYouTubeTimeUpdate = useCallback(
+    (cur: number, dur: number) => {
+      if (useNativeAudio || !currentVideo) return;
+      setCurrentTime(cur);
+      if (dur > 0) setDuration(dur);
+      if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
+        lastSavedProgressTimeRef.current = cur;
+        persistProgress(currentVideo.id, cur, dur);
+      }
+    },
+    [currentVideo?.id, persistProgress, useNativeAudio]
+  );
+
+  const handleYouTubeStateChange = useCallback(
+    (playing: boolean) => {
+      if (useNativeAudio) return;
+      setIsPlaying(playing);
+    },
+    [useNativeAudio]
+  );
+
+  const handleYouTubeEnded = useCallback(() => {
+    if (useNativeAudio) return;
+    if (currentVideo) {
+      handleMarkAsPlayed(currentVideo.id);
+    }
+    handleNextTrack();
+  }, [currentVideo?.id, handleMarkAsPlayed, queue, useNativeAudio]);
+
   // 9. Filter and Sort Videos
   const filteredVideos = useMemo(() => {
     let result = [...videos];
@@ -995,14 +1024,19 @@ export default function App() {
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : !useNativeAudio && isPlaying
-                  ? 'fixed bottom-20 right-3 w-36 aspect-video rounded-xl overflow-hidden shadow-xl border border-slate-300 dark:border-slate-700 z-30 bg-black'
+                  : isPlaying
+                  ? 'fixed bottom-20 right-4 w-60 sm:w-72 aspect-video rounded-2xl overflow-hidden shadow-2xl border border-slate-300 dark:border-slate-700 z-40 bg-black transition-all'
                   : 'fixed -bottom-96 -right-96 w-[200px] h-[112px] pointer-events-none opacity-0 overflow-hidden'
               }
             >
               <VideoPlayerView
                 currentVideo={currentVideo}
                 queue={queue}
+                isMiniPiP={!(activeTab === 'player' && playerMode === 'video')}
+                onExpandPiP={() => {
+                  setPlayerMode('video');
+                  setActiveTab('player');
+                }}
                 onSwitchToAudio={() => setPlayerMode('audio')}
                 onPlayVideo={(v) => handlePlayVideo(v, 'video')}
                 onRemoveFromQueue={handleRemoveFromQueue}
@@ -1016,32 +1050,9 @@ export default function App() {
                     volume={volume}
                     isMuted={isMuted}
                     initialSeekSeconds={playbackProgressMap[currentVideo.id]?.currentTime || 0}
-                    onTimeUpdate={useCallback(
-                      (cur, dur) => {
-                        if (useNativeAudio) return;
-                        setCurrentTime(cur);
-                        if (dur > 0) setDuration(dur);
-                        if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
-                          lastSavedProgressTimeRef.current = cur;
-                          persistProgress(currentVideo.id, cur, dur);
-                        }
-                      },
-                      [currentVideo.id, persistProgress, useNativeAudio]
-                    )}
-                    onStateChange={useCallback(
-                      (playing) => {
-                        if (useNativeAudio) return;
-                        setIsPlaying(playing);
-                      },
-                      [useNativeAudio]
-                    )}
-                    onEnded={useCallback(() => {
-                      if (useNativeAudio) return;
-                      if (currentVideo) {
-                        handleMarkAsPlayed(currentVideo.id);
-                      }
-                      handleNextTrack();
-                    }, [currentVideo?.id, handleMarkAsPlayed, queue, useNativeAudio])}
+                    onTimeUpdate={handleYouTubeTimeUpdate}
+                    onStateChange={handleYouTubeStateChange}
+                    onEnded={handleYouTubeEnded}
                     seekCommand={useNativeAudio ? null : seekCommand}
                     onSeekHandled={() => setSeekCommand(null)}
                   />

@@ -131,38 +131,18 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
               onStateChange(true);
               startTimePolling();
             } else if (event.data === 2) {
-              // On desktop/compatible browsers, try resuming briefly when minimized.
-              // If the mobile OS still forces pause after 3 attempts, sync state to paused
-              // so the notification does not falsely appear "playing" with no sound.
+              // If tab is in background/minimized and user intended to play,
+              // don't force a UI pause; keep trying to play.
               if (
                 typeof document !== 'undefined' &&
                 document.visibilityState === 'hidden' &&
-                intendedPlayingRef.current &&
-                hiddenResumeCountRef.current < 3
+                intendedPlayingRef.current
               ) {
-                hiddenResumeCountRef.current += 1;
                 try {
                   playerRef.current?.playVideo?.();
                 } catch {
                   // ignore
                 }
-                setTimeout(() => {
-                  if (
-                    playerRef.current &&
-                    isReadyRef.current &&
-                    intendedPlayingRef.current &&
-                    document.visibilityState === 'hidden'
-                  ) {
-                    try {
-                      if (playerRef.current.getPlayerState?.() !== 1) {
-                        onStateChange(false);
-                        stopTimePolling();
-                      }
-                    } catch {
-                      // ignore
-                    }
-                  }
-                }, 600);
                 return;
               }
               onStateChange(false);
@@ -256,7 +236,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden' && intendedPlayingRef.current) {
+      if (intendedPlayingRef.current) {
         [50, 250, 600, 1200].forEach((delay) => {
           setTimeout(resumeIfNeeded, delay);
         });
