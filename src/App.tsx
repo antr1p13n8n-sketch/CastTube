@@ -201,6 +201,8 @@ export default function App() {
 
   // Modals & Drawers
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
+  const [addModalTab, setAddModalTab] = useState<'search' | 'paste'>('search');
+  const [addModalSearchQuery, setAddModalSearchQuery] = useState<string>('');
   const [pastedLinkForModal, setPastedLinkForModal] = useState<string>('');
   const [isGroupModalOpen, setIsGroupModalOpen] = useState<boolean>(false);
   const [isChannelDrawerOpen, setIsChannelDrawerOpen] = useState<boolean>(false);
@@ -208,8 +210,17 @@ export default function App() {
   const [videoToAddToPlaylist, setVideoToAddToPlaylist] = useState<Video | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
+  const openSearchChannelModal = (initialQuery = '') => {
+    setPastedLinkForModal('');
+    setAddModalTab('search');
+    setAddModalSearchQuery(initialQuery);
+    setIsAddModalOpen(true);
+  };
+
   // Quick Paste & Open Add Modal
   const handleQuickPasteAndOpen = async () => {
+    setAddModalTab('paste');
+    setAddModalSearchQuery('');
     try {
       if (navigator.clipboard && navigator.clipboard.readText) {
         const text = await navigator.clipboard.readText();
@@ -964,7 +975,7 @@ export default function App() {
       <Header
         theme={themePreference}
         onThemeChange={handleThemeChange}
-        onOpenAddModal={() => setIsAddModalOpen(true)}
+        onOpenAddModal={() => openSearchChannelModal('')}
         onOpenGroupModal={() => setIsGroupModalOpen(true)}
         onOpenChannelDrawer={() => setIsChannelDrawerOpen(true)}
         onOpenPlaylistModal={() => {
@@ -1161,20 +1172,29 @@ export default function App() {
             </div>
 
             {/* Quick Actions & Refresh */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => openSearchChannelModal(searchQuery.trim())}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                title="Cari dan tambahkan channel baru langsung dari YouTube"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Cari Channel YouTube</span>
+              </button>
+
               <button
                 onClick={handleQuickPasteAndOpen}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-xs transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 title="Tempel link YouTube langsung dari clipboard"
               >
-                <Clipboard className="w-3.5 h-3.5" />
+                <Clipboard className="w-3.5 h-3.5 text-red-500" />
                 <span>Tempel Link</span>
               </button>
 
               <button
                 onClick={handleRefreshFeeds}
                 disabled={isRefreshing}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 title="Perbarui Video Terbaru dari YouTube"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-red-500' : ''}`} />
@@ -1269,21 +1289,33 @@ export default function App() {
           {/* Search, Filter & Channel Focus Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
             {/* Search Input */}
-            <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Cari judul video atau nama channel..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3.5 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
-              />
-              {searchQuery && (
+            <div className="flex items-center gap-2 flex-1 max-w-xl">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Cari judul video atau nama channel..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-7 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              {searchQuery.trim() && (
                 <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-700 dark:hover:text-white"
+                  type="button"
+                  onClick={() => openSearchChannelModal(searchQuery.trim())}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200/80 dark:border-red-800/60 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                  title={`Cari channel "${searchQuery.trim()}" di YouTube`}
                 >
-                  ×
+                  Cari di YouTube
                 </button>
               )}
             </div>
@@ -1362,12 +1394,12 @@ export default function App() {
                   ? `Tidak ada video yang cocok dengan kata kunci "${searchQuery}". Coba kata kunci lain.`
                   : 'Belum ada video pada grup ini. Tambahkan channel baru atau sinkronkan feed.'}
               </p>
-              <div className="mt-4 flex justify-center gap-2">
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button
-                  onClick={() => setIsAddModalOpen(true)}
+                  onClick={() => openSearchChannelModal(searchQuery.trim())}
                   className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
                 >
-                  Tambah Channel
+                  {searchQuery.trim() ? `Cari "${searchQuery.trim()}" di YouTube` : 'Cari Channel YouTube'}
                 </button>
                 {searchQuery && (
                   <button
@@ -1471,10 +1503,14 @@ export default function App() {
         onClose={() => {
           setIsAddModalOpen(false);
           setPastedLinkForModal('');
+          setAddModalSearchQuery('');
         }}
         groups={groups}
+        existingChannelIds={channels.map((c) => c.id)}
         onAddChannels={handleAddChannels}
         initialPastedText={pastedLinkForModal}
+        initialTab={addModalTab}
+        initialSearchQuery={addModalSearchQuery}
       />
 
       <GroupManagerModal

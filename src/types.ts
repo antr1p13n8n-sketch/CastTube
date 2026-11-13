@@ -68,3 +68,14 @@ export interface Playlist {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface YouTubeChannelSearchResult {
+  id: string;
+  title: string;
+  handle?: string;
+  avatar: string;
+  subscriberCount?: string;
+  description?: string;
+  url: string;
+}
+

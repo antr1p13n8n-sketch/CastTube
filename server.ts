@@ -9,6 +9,7 @@ import {
   fetchChannelRss,
   resolveAudioStreamUrl,
   invalidateAudioStreamCache,
+  searchYouTubeChannels,
   VideoItem,
   ChannelData,
 } from './api/_youtube';
@@ -72,6 +73,22 @@ async function startServer() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Terjadi kesalahan saat memproses channel';
       res.status(400).json({ error: message });
+    }
+  });
+
+  // API: Search YouTube channels by keyword
+  app.get('/api/youtube/search-channels', async (req: Request, res: Response) => {
+    try {
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      if (!q) {
+        res.status(400).json({ error: 'Parameter pencarian q diperlukan' });
+        return;
+      }
+      const channels = await searchYouTubeChannels(q);
+      res.json({ channels });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Gagal mencari channel YouTube';
+      res.status(500).json({ error: message });
     }
   });
 

@@ -830,4 +830,121 @@ export async function resolveAudioStreamUrl(
   return null;
 }
 
+export interface ChannelSearchResult {
+  id: string;
+  title: string;
+  handle?: string;
+  avatar: string;
+  subscriberCount?: string;
+  description?: string;
+  url: string;
+}
+
+export async function searchYouTubeChannels(queryText: string): Promise<ChannelSearchResult[]> {
+  const cleaned = queryText.trim();
+  if (!cleaned) return [];
+
+  const res = await fetchWithTimeout(
+    'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept-Language': 'id,en-US,en;q=0.9',
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: 'WEB',
+            clientVersion: '2.20240501.00.00',
+            hl: 'id',
+            gl: 'ID',
+          },
+        },
+        query: cleaned,
+        params: 'EgIQAg==', // Filter strictly to Channels
+      }),
+    },
+    10000
+  );
+
+  if (!res.ok) {
+    throw new Error(`YouTube search merespons status ${res.status}`);
+  }
+
+  const data = await res.json();
+  const sections =
+    data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer
+      ?.contents || [];
+
+  const results: ChannelSearchResult[] = [];
+  const seenIds = new Set<string>();
+
+  for (const section of sections) {
+    const items = section?.itemSectionRenderer?.contents || [];
+    for (const item of items) {
+      const cr = item?.channelRenderer;
+      if (!cr || !cr.channelId || seenIds.has(cr.channelId)) continue;
+      seenIds.add(cr.channelId);
+
+      const channelId = String(cr.channelId);
+      const title =
+        cr.title?.simpleText ||
+        cr.title?.runs?.map((r: any) => r.text).join('') ||
+        'YouTube Channel';
+
+      const subText: string | undefined =
+        cr.subscriberCountText?.simpleText ||
+        cr.subscriberCountText?.runs?.map((r: any) => r.text).join('');
+      const vidText: string | undefined =
+        cr.videoCountText?.simpleText ||
+        cr.videoCountText?.runs?.map((r: any) => r.text).join('');
+      const canonicalBaseUrl: string | undefined =
+        cr.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl;
+
+      let handle: string | undefined;
+      let subscriberCount: string | undefined;
+
+      if (subText && subText.trim().startsWith('@')) {
+        handle = subText.trim();
+        subscriberCount = vidText?.trim();
+      } else {
+        subscriberCount = subText?.trim() || vidText?.trim();
+        if (canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')) {
+          handle = canonicalBaseUrl.slice(1);
+        }
+      }
+
+      const rawThumb = cr.thumbnail?.thumbnails?.slice(-1)?.[0]?.url || '';
+      const avatar = rawThumb
+        ? rawThumb.startsWith('//')
+          ? `https:${rawThumb}`
+          : rawThumb
+        : `https://avatar.vercel.sh/${channelId}?size=120`;
+
+      const description = cr.descriptionSnippet?.runs
+        ? cr.descriptionSnippet.runs.map((r: any) => r.text).join('').trim()
+        : undefined;
+
+      const url = canonicalBaseUrl
+        ? `https://www.youtube.com${canonicalBaseUrl}`
+        : `https://www.youtube.com/channel/${channelId}`;
+
+      results.push({
+        id: channelId,
+        title,
+        handle,
+        avatar,
+        subscriberCount,
+        description,
+        url,
+      });
+
+      if (results.length >= 20) break;
+    }
+    if (results.length >= 20) break;
+  }
+
+  return results;
+}
 
