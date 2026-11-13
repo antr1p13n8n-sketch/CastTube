@@ -37,7 +37,7 @@ export async function ensureUserProfile(user: User, themePreference: ThemeMode):
       await setDoc(ref, {
         uid: user.uid,
         displayName: clampStr(user.displayName || 'Pengguna CastTube', 120),
-        email: clampStr(user.email || '', 256),
+        email: clampStr(user.email || `${user.uid}@casttube.local`, 256),
         photoURL: clampStr(user.photoURL || '', 1000),
         themePreference,
         createdAt: serverTimestamp(),
@@ -57,8 +57,11 @@ export async function ensureUserProfile(user: User, themePreference: ThemeMode):
 
 export async function updateThemeInFirestore(userId: string, theme: ThemeMode): Promise<void> {
   const path = `users/${userId}`;
+  const ref = doc(db, 'users', userId);
   try {
-    await updateDoc(doc(db, 'users', userId), {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    await updateDoc(ref, {
       themePreference: theme,
       updatedAt: serverTimestamp(),
     });
@@ -93,8 +96,11 @@ export async function updatePlayedVideosInFirestore(
   playedVideoIds: string[]
 ): Promise<void> {
   const path = `users/${userId}`;
+  const ref = doc(db, 'users', userId);
   try {
-    await updateDoc(doc(db, 'users', userId), {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    await updateDoc(ref, {
       playedVideoIds: playedVideoIds.filter(isValidDocId).slice(0, 1000),
       updatedAt: serverTimestamp(),
     });

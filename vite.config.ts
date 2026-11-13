@@ -53,10 +53,6 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
-              urlPattern: /\/api\/youtube\/audio-stream.*/i,
-              handler: 'NetworkOnly',
-            },
-            {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
               options: {
@@ -85,7 +81,7 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /^https:\/\/(i\.ytimg\.com|yt3\.googleusercontent\.com)\/.*/i,
+              urlPattern: /^https:\/\/(i[0-9]*\.ytimg\.com|yt3\.googleusercontent\.com|yt3\.ggpht\.com)\/.*/i,
               handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'youtube-thumbnails-cache',
@@ -99,7 +95,7 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /\/api\/youtube\/.*/i,
+              urlPattern: /\/api\/youtube\/(?!audio-stream).*/i,
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'youtube-api-cache',

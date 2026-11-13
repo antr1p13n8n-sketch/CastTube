@@ -31,6 +31,8 @@ export interface ChannelGroup {
 
 export type PlayerMode = 'video' | 'audio';
 
+export type NativeAudioStatus = 'checking' | 'available' | 'login_required' | 'live_stream' | 'unavailable';
+
 export type VisualizerStyle = 'bars' | 'wave' | 'radar' | 'minimal';
 
 export type ThemeMode = 'system' | 'dark' | 'light';

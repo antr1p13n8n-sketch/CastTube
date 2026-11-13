@@ -547,9 +547,14 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                           <img
-                            src={item.avatar}
+                            src={item.avatar || `https://avatar.vercel.sh/${item.id}?size=100`}
                             alt={item.title}
                             referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              const img = e.currentTarget;
+                              const fallback = `https://avatar.vercel.sh/${item.id}?size=100`;
+                              if (img.src !== fallback) img.src = fallback;
+                            }}
                             className="w-12 h-12 rounded-full object-cover shrink-0 bg-slate-200 dark:bg-slate-700"
                           />
                           <div className="min-w-0 flex-1">

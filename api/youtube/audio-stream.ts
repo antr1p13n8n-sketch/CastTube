@@ -1,5 +1,6 @@
 import { Readable } from 'stream';
 import {
+  resolveAudioStreamInfo,
   resolveAudioStreamUrl,
   invalidateAudioStreamCache,
   VercelReq,
@@ -26,12 +27,21 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       return res.status(400).json({ error: 'Parameter videoId diperlukan' });
     }
 
-    let streamInfo = await resolveAudioStreamUrl(videoId);
+    const resolution = await resolveAudioStreamInfo(videoId);
     if (req.query.check === '1') {
-      return res.status(200).json({ available: Boolean(streamInfo) });
+      return res.status(200).json({
+        available: Boolean(resolution.stream),
+        status: resolution.status,
+        reason: resolution.reason,
+      });
     }
+    let streamInfo = resolution.stream;
     if (!streamInfo) {
-      return res.status(404).json({ error: 'Audio stream tidak tersedia untuk video ini' });
+      return res.status(404).json({
+        error: 'Audio stream tidak tersedia untuk video ini',
+        status: resolution.status,
+        reason: resolution.reason,
+      });
     }
 
     const reqAny = req as unknown as {

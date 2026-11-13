@@ -99,6 +99,11 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
                         src={channel.avatar || `https://avatar.vercel.sh/${channel.id}?size=100`}
                         alt={channel.title}
                         referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          const fallback = `https://avatar.vercel.sh/${channel.id}?size=100`;
+                          if (img.src !== fallback) img.src = fallback;
+                        }}
                         className="w-10 h-10 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
                       />
                       <div className="min-w-0">

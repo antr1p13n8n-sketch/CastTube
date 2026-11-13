@@ -7,6 +7,7 @@ import {
   PRESET_CHANNELS,
   resolveYouTubeChannel,
   fetchChannelRss,
+  resolveAudioStreamInfo,
   resolveAudioStreamUrl,
   invalidateAudioStreamCache,
   searchYouTubeChannels,
@@ -154,13 +155,22 @@ async function startServer() {
         return;
       }
 
-      let streamInfo = await resolveAudioStreamUrl(videoId);
+      const resolution = await resolveAudioStreamInfo(videoId);
       if (req.query.check === '1') {
-        res.status(200).json({ available: Boolean(streamInfo) });
+        res.status(200).json({
+          available: Boolean(resolution.stream),
+          status: resolution.status,
+          reason: resolution.reason,
+        });
         return;
       }
+      let streamInfo = resolution.stream;
       if (!streamInfo) {
-        res.status(404).json({ error: 'Audio stream tidak tersedia untuk video ini' });
+        res.status(404).json({
+          error: 'Audio stream tidak tersedia untuk video ini',
+          status: resolution.status,
+          reason: resolution.reason,
+        });
         return;
       }
 

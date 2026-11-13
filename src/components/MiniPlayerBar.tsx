@@ -10,6 +10,7 @@ interface MiniPlayerBarProps {
   currentTime: number;
   duration: number;
   mode: PlayerMode;
+  usingNativeAudio?: boolean;
   onPlayPause: () => void;
   onSkipBack: (sec?: number) => void;
   onSkipForward: (sec?: number) => void;
@@ -23,13 +24,15 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = ({
   currentTime,
   duration,
   mode,
+  usingNativeAudio = false,
   onPlayPause,
   onSkipBack,
   onSkipForward,
   onExpand,
   onToggleMode,
 }) => {
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const progressPercent =
+    duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
 
   return (
     <AnimatePresence>
@@ -91,18 +94,29 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = ({
                 <div className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
                   {currentVideo.title}
                 </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-2">
-                  <span>{currentVideo.channelTitle}</span>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1.5">
+                  <span className="truncate">{currentVideo.channelTitle}</span>
                   <span aria-hidden="true">·</span>
-                  <span className="font-mono tabular-nums text-slate-400">
+                  <span className="font-mono tabular-nums text-slate-400 shrink-0">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </span>
+                  {mode === 'audio' && (
+                    <span
+                      className={`hidden md:inline-block text-[10px] font-semibold ${
+                        usingNativeAudio
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-amber-600 dark:text-amber-400'
+                      }`}
+                    >
+                      · {usingNativeAudio ? 'Latar Aktif' : 'IFrame'}
+                    </span>
+                  )}
                 </div>
               </div>
             </motion.div>
 
             {/* Center: Playback Controls */}
-            <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+            <div className="flex items-center gap-1 sm:gap-4 shrink-0">
               <motion.button
                 whileTap={{ scale: 0.88 }}
                 onClick={() => onSkipBack(15)}
@@ -133,22 +147,26 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = ({
             </div>
 
             {/* Right: Mode indicator & Expand button */}
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <motion.button
                 whileTap={{ scale: 0.95 }}
                 onClick={onToggleMode}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
                 title={mode === 'audio' ? 'Beralih ke Video' : 'Beralih ke Audio Saja'}
               >
                 {mode === 'audio' ? (
                   <>
-                    <Headphones className="w-3.5 h-3.5 text-red-500" />
-                    <span>Audio Saja</span>
+                    <Headphones
+                      className={`w-3.5 h-3.5 ${
+                        usingNativeAudio ? 'text-emerald-500' : 'text-red-500'
+                      }`}
+                    />
+                    <span className="hidden sm:inline">Audio Saja</span>
                   </>
                 ) : (
                   <>
                     <Tv className="w-3.5 h-3.5 text-red-500" />
-                    <span>Video</span>
+                    <span className="hidden sm:inline">Video</span>
                   </>
                 )}
               </motion.button>

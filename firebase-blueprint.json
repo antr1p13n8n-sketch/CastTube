@@ -33,6 +33,10 @@
           "maxLength": 16,
           "description": "Preferensi tema tampilan."
         },
+        "playedVideoIds": {
+          "type": "array",
+          "description": "Daftar ID video yang sudah ditandai selesai diputar."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -228,6 +232,51 @@
         }
       },
       "required": ["id", "title", "publishedAt", "thumbnail", "channelId", "channelTitle", "description", "ownerId", "createdAt", "updatedAt"]
+    },
+    "Playlist": {
+      "title": "Playlist",
+      "description": "Playlist kurasi lintas channel milik pengguna.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID unik playlist."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Nama playlist."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Deskripsi playlist."
+        },
+        "videoIds": {
+          "type": "array",
+          "description": "Daftar ID video dalam playlist."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID pemilik playlist."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembuatan playlist."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan playlist."
+        }
+      },
+      "required": ["id", "name", "videoIds", "ownerId", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -246,6 +295,10 @@
     "/users/{userId}/videos/{videoId}": {
       "schema": { "$ref": "#/entities/Video" },
       "description": "Menyimpan cache daftar video terbaru dari channel pengguna."
+    },
+    "/users/{userId}/playlists/{playlistId}": {
+      "schema": { "$ref": "#/entities/Playlist" },
+      "description": "Menyimpan daftar playlist kurasi milik pengguna."
     }
   }
 }

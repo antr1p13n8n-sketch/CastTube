@@ -15,8 +15,11 @@ import {
   ExternalLink,
   Sliders,
   Moon,
+  ShieldAlert,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
-import { Video, VisualizerStyle } from '../types';
+import { NativeAudioStatus, Video, VisualizerStyle } from '../types';
 import { formatTime, formatRelativeTime } from '../utils/format';
 import { AudioVisualizer } from './AudioVisualizer';
 
@@ -45,6 +48,7 @@ interface PodcastPlayerProps {
   onPlayQueueItem: (video: Video) => void;
   onRemoveFromQueue: (videoId: string) => void;
   usingNativeAudio?: boolean;
+  nativeAudioStatus?: NativeAudioStatus;
 }
 
 export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
@@ -72,13 +76,16 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
   onPlayQueueItem,
   onRemoveFromQueue,
   usingNativeAudio = false,
+  nativeAudioStatus = 'checking',
 }) => {
   const [visualizerStyle, setVisualizerStyle] = useState<VisualizerStyle>('bars');
   const [showQueue, setShowQueue] = useState(false);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
   const [isHoveringArt, setIsHoveringArt] = useState(false);
+  const [showMobileTips, setShowMobileTips] = useState(false);
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const progressPercent =
+    duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
 
   // Calculate sleep timer countdown
   const getSleepCountdown = () => {
@@ -127,13 +134,17 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
             <Radio className={`w-5 h-5 ${isPlaying ? 'animate-pulse' : ''}`} />
           </div>
           <div>
-            <h2 className="text-sm font-bold tracking-tight text-slate-900 dark:text-white uppercase tracking-wider">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
               Mode Audio Saja (Podcast)
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {usingNativeAudio
-                ? 'Mesin Audio Native aktif · Terus berputar saat diminimize atau layar terkunci'
-                : 'Memutar via Pemutar YouTube · Ikuti kebijakan latar belakang browser'}
+                ? 'Mesin Audio Native aktif · Tetap berbunyi saat minimize atau layar HP terkunci'
+                : nativeAudioStatus === 'checking'
+                ? 'Memeriksa ketersediaan stream audio latar belakang...'
+                : nativeAudioStatus === 'live_stream'
+                ? 'Siaran Live · Memakai iframe YouTube (dijeda browser HP saat diminimize)'
+                : 'Audio langsung dibatasi YouTube · Memakai pemutar iframe YouTube'}
             </p>
           </div>
         </div>
@@ -166,6 +177,49 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
           </motion.button>
         </div>
       </div>
+
+      {/* Contextual mobile background playback banner when YouTube restricts direct stream */}
+      {!usingNativeAudio && nativeAudioStatus !== 'checking' && (
+        <div className="relative z-10 mt-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 px-4 py-3 text-left">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5 text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+              <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Info Audio Latar Belakang HP: </span>
+                {nativeAudioStatus === 'live_stream'
+                  ? 'Siaran Live memakai iframe YouTube, sehingga browser HP/PWA otomatis menjeda suara saat aplikasi diminimize atau layar dikunci.'
+                  : 'YouTube membatasi ekstraksi audio langsung untuk video ini dari server cloud, sehingga pemutaran beralih ke iframe YouTube yang otomatis dijeda browser HP saat diminimize/layar dikunci.'}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowMobileTips(!showMobileTips)}
+              className="flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-300 hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <span>Panduan</span>
+              {showMobileTips ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {showMobileTips && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.18 }}
+                className="overflow-hidden"
+              >
+                <ul className="mt-2.5 pt-2.5 border-t border-amber-200/70 dark:border-amber-800/50 space-y-1 text-[11px] text-amber-800 dark:text-amber-300 list-disc pl-4">
+                  <li>Video yang mendukung Mesin Audio Native tetap terdengar saat pindah aplikasi, minimize, atau layar terkunci.</li>
+                  <li>Di Android, ubah penghemat baterai untuk Chrome / aplikasi CastTube ke <strong>Tidak dibatasi (Unrestricted)</strong> agar OS tidak memutus audio.</li>
+                  <li>Minimize ke Home screen (jangan swipe-tutup dari Recent Apps karena Android menghentikan semua proses aplikasi saat ditutup paksa).</li>
+                </ul>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
 
       {/* Main Content Layout */}
       <div className="relative z-10 grid grid-cols-1 md:grid-cols-12 gap-8 py-8 items-center">
@@ -299,7 +353,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
                 onChange={(e) => onSeek(Number(e.target.value))}
                 className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-hidden"
                 style={{
-                  background: `linear-gradient(to right, #dc2626 0%, #dc2626 ${progressPercent}%, var(--tw-slate-800, #cbd5e1) ${progressPercent}%, var(--tw-slate-800, #cbd5e1) 100%)`,
+                  background: `linear-gradient(to right, #dc2626 0%, #dc2626 ${progressPercent}%, rgba(148, 163, 184, 0.35) ${progressPercent}%, rgba(148, 163, 184, 0.35) 100%)`,
                 }}
               />
             </div>

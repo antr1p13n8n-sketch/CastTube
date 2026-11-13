@@ -45,7 +45,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         ease: [0.16, 1, 0.3, 1],
       }}
       whileHover={{ y: -4, transition: { duration: 0.16, ease: [0.16, 1, 0.3, 1] } }}
-      className={`group relative flex flex-col rounded-2xl bg-white dark:bg-slate-900 border transition-colors transition-shadow duration-200 overflow-hidden hover:shadow-xl ${
+      className={`group relative flex flex-col rounded-2xl bg-white dark:bg-slate-900 border transition-all duration-200 overflow-hidden hover:shadow-xl ${
         isCurrentlyPlaying
           ? 'border-red-500 ring-2 ring-red-500/20'
           : 'border-slate-200/90 dark:border-slate-800/90 hover:border-slate-300 dark:hover:border-slate-700'
@@ -57,6 +57,13 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           src={video.thumbnail}
           alt={video.title}
           referrerPolicy="no-referrer"
+          onError={(e) => {
+            const img = e.currentTarget;
+            if (!img.dataset.fallbackApplied) {
+              img.dataset.fallbackApplied = '1';
+              img.src = `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`;
+            }
+          }}
           className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-105 ${
             isPlayed ? 'opacity-70' : ''
           }`}

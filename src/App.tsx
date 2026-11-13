@@ -40,6 +40,7 @@ import {
   ChannelGroup,
   Video,
   PlayerMode,
+  NativeAudioStatus,
   ThemeMode,
   PlaybackProgress,
   PendingSyncTask,
@@ -80,7 +81,7 @@ import { GroupManagerModal } from './components/GroupManagerModal';
 import { ChannelDrawer } from './components/ChannelDrawer';
 import { PlaylistModal } from './components/PlaylistModal';
 import { YouTubePlayer } from './components/YouTubePlayer';
-import { NativeAudioPlayer } from './components/NativeAudioPlayer';
+import { NativeAudioPlayer, NativeAudioHandle } from './components/NativeAudioPlayer';
 
 export default function App() {
   // Firebase Auth State
@@ -96,6 +97,19 @@ export default function App() {
   const [videos, setVideos] = useState<Video[]>(loadVideos);
   const [playlists, setPlaylists] = useState<Playlist[]>(loadPlaylists);
   const [playedVideoIds, setPlayedVideoIds] = useState<string[]>(loadPlayedVideoIds);
+
+  const latestStateRef = useRef({
+    groups,
+    channels,
+    videos,
+    themePreference,
+  });
+  latestStateRef.current = {
+    groups,
+    channels,
+    videos,
+    themePreference,
+  };
 
   // Active Filter States
   const [activeGroupId, setActiveGroupId] = useState<string>('all');
@@ -150,47 +164,70 @@ export default function App() {
     return v.length > 1 ? v.slice(1, 6) : [];
   });
   const [seekCommand, setSeekCommand] = useState<number | null>(null);
-  const [audioFallbackMap, setAudioFallbackMap] = useState<Record<string, boolean>>({});
+  const [audioStatusMap, setAudioStatusMap] = useState<Record<string, NativeAudioStatus>>({});
+  const nativeAudioRef = useRef<NativeAudioHandle | null>(null);
+  const autoSwitchedToAudioRef = useRef<boolean>(false);
+  const probedAudioIdsRef = useRef<Set<string>>(new Set());
+
+  const currentAudioStatus: NativeAudioStatus = currentVideo
+    ? audioStatusMap[currentVideo.id] || 'checking'
+    : 'unavailable';
+
+  const isCheckingNativeAudio = Boolean(
+    currentVideo && playerMode === 'audio' && currentAudioStatus === 'checking'
+  );
 
   const useNativeAudio = Boolean(
-    currentVideo && playerMode === 'audio' && !audioFallbackMap[currentVideo.id]
+    currentVideo &&
+      playerMode === 'audio' &&
+      currentAudioStatus === 'available'
   );
   const prevUseNativeAudioRef = useRef<boolean>(useNativeAudio);
 
+  // Probe stream availability for currentVideo regardless of mode so switching or minimizing is instant
   useEffect(() => {
-    if (!currentVideo || playerMode !== 'audio') return;
+    if (!currentVideo) return;
     const videoId = currentVideo.id;
-    if (audioFallbackMap[videoId] !== undefined) return;
+    if (probedAudioIdsRef.current.has(videoId)) return;
+    probedAudioIdsRef.current.add(videoId);
 
     let cancelled = false;
     fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&check=1`)
-      .then((res) => (res.ok ? res.json() : { available: false }))
+      .then((res) => (res.ok ? res.json() : { available: false, status: 'unavailable' }))
       .then((data) => {
         if (!cancelled) {
-          setAudioFallbackMap((prev) => ({
+          const resolvedStatus: NativeAudioStatus = data?.available
+            ? 'available'
+            : data?.status === 'login_required' || data?.status === 'live_stream'
+            ? data.status
+            : 'unavailable';
+          setAudioStatusMap((prev) => ({
             ...prev,
-            [videoId]: !data?.available,
+            [videoId]: resolvedStatus,
           }));
+        } else {
+          probedAudioIdsRef.current.delete(videoId);
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setAudioFallbackMap((prev) => ({
+          setAudioStatusMap((prev) => ({
             ...prev,
-            [videoId]: true,
+            [videoId]: 'unavailable',
           }));
+        } else {
+          probedAudioIdsRef.current.delete(videoId);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [currentVideo?.id, playerMode, audioFallbackMap]);
+  }, [currentVideo?.id]);
 
   useEffect(() => {
-    // When switching from native <audio> back to YouTube IFrame (video or fallback),
-    // sync the iframe playback position to currentTime.
-    if (prevUseNativeAudioRef.current && !useNativeAudio && currentTime > 0) {
+    // When switching between Native <audio> and YouTube IFrame, keep playback timestamp synced
+    if (prevUseNativeAudioRef.current !== useNativeAudio && currentTime > 0) {
       setSeekCommand(currentTime);
     }
     prevUseNativeAudioRef.current = useNativeAudio;
@@ -286,8 +323,10 @@ export default function App() {
 
       if (firebaseUser) {
         try {
-          await ensureUserProfile(firebaseUser, themePreference);
-          await seedInitialDataIfEmpty(firebaseUser.uid, groups, channels, videos);
+          const { groups: curGroups, channels: curChannels, videos: curVideos, themePreference: curTheme } =
+            latestStateRef.current;
+          await ensureUserProfile(firebaseUser, curTheme);
+          await seedInitialDataIfEmpty(firebaseUser.uid, curGroups, curChannels, curVideos);
         } catch (err) {
           console.error('Gagal sinkronisasi awal Firebase:', err);
         }
@@ -413,6 +452,9 @@ export default function App() {
   );
 
   const handlePlayPause = () => {
+    if (!isPlaying) {
+      nativeAudioRef.current?.unlock();
+    }
     setIsPlaying((prev) => !prev);
   };
 
@@ -432,6 +474,8 @@ export default function App() {
   };
 
   const handlePlayVideo = (video: Video, mode: PlayerMode = 'video') => {
+    nativeAudioRef.current?.unlock();
+    autoSwitchedToAudioRef.current = false;
     selectVideoForPlayback(video, mode, true);
     setActiveTab('player');
   };
@@ -679,25 +723,83 @@ export default function App() {
     setIsRefreshing(true);
     try {
       const channelIds = channels.map((c) => c.id);
-      const res = await fetch('/api/youtube/batch-feed', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelIds }),
-      });
+      const chunks: string[][] = [];
+      for (let i = 0; i < channelIds.length; i += 20) {
+        chunks.push(channelIds.slice(i, i + 20));
+      }
 
-      if (res.ok) {
+      const fetchedVideos: Video[] = [];
+      const fetchedChannelsMap: Record<string, Partial<Channel>> = {};
+
+      const responses = await Promise.all(
+        chunks.map((chunk) =>
+          fetch('/api/youtube/batch-feed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channelIds: chunk }),
+          })
+        )
+      );
+
+      let anyOk = false;
+      for (const res of responses) {
+        if (!res.ok) continue;
+        anyOk = true;
         const data = await res.json();
-        if (Array.isArray(data.videos) && data.videos.length > 0) {
-          setVideos((prev) => {
-            const existingMap = new Map(prev.map((v) => [v.id, v]));
-            data.videos.forEach((v: Video) => existingMap.set(v.id, v));
-            const merged = Array.from(existingMap.values());
-            merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-            return merged;
+        if (Array.isArray(data.videos)) {
+          fetchedVideos.push(...data.videos);
+        }
+        if (data.channels && typeof data.channels === 'object') {
+          Object.assign(fetchedChannelsMap, data.channels);
+        }
+      }
+
+      if (!anyOk) {
+        throw new Error('Semua permintaan batch feed gagal');
+      }
+
+      if (Object.keys(fetchedChannelsMap).length > 0) {
+        setChannels((prev) => {
+          const updatedList: Channel[] = [];
+          const nextChannels = prev.map((ch) => {
+            const fresh = fetchedChannelsMap[ch.id];
+            if (!fresh) return ch;
+            const mergedCh: Channel = {
+              ...ch,
+              title: fresh.title || ch.title,
+              handle: fresh.handle || ch.handle,
+              avatar: fresh.avatar || ch.avatar,
+              url: fresh.url || ch.url,
+              videoCount: fresh.videoCount ?? ch.videoCount,
+            };
+            if (
+              mergedCh.title !== ch.title ||
+              mergedCh.avatar !== ch.avatar ||
+              mergedCh.handle !== ch.handle
+            ) {
+              updatedList.push(mergedCh);
+            }
+            return mergedCh;
           });
-          if (user) {
-            saveVideosInFirestore(user.uid, data.videos).catch(console.error);
+          if (user && updatedList.length > 0) {
+            updatedList.forEach((ch) => {
+              saveChannelInFirestore(user.uid, ch).catch(console.error);
+            });
           }
+          return nextChannels;
+        });
+      }
+
+      if (fetchedVideos.length > 0) {
+        setVideos((prev) => {
+          const existingMap = new Map(prev.map((v) => [v.id, v]));
+          fetchedVideos.forEach((v) => existingMap.set(v.id, v));
+          const merged = Array.from(existingMap.values());
+          merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+          return merged;
+        });
+        if (user) {
+          saveVideosInFirestore(user.uid, fetchedVideos).catch(console.error);
         }
       }
     } catch (e) {
@@ -870,6 +972,8 @@ export default function App() {
 
   const handlePlayPlaylist = (orderedVideos: Video[], mode: PlayerMode) => {
     if (orderedVideos.length === 0) return;
+    nativeAudioRef.current?.unlock();
+    autoSwitchedToAudioRef.current = false;
     const [first, ...rest] = orderedVideos;
     setQueue(rest);
     selectVideoForPlayback(first, mode, true);
@@ -877,25 +981,40 @@ export default function App() {
     saveLastVideoId(first.id);
   };
 
-  // Background audio & Media Session API (keeps audio playing when minimized)
+  // Background audio & Media Session API (keeps audio playing when minimized or screen-locked)
   useBackgroundAudio({
     currentVideo,
     isPlaying,
     currentTime,
     duration,
     playbackRate,
-    onPlay: () => setIsPlaying(true),
+    onPlay: () => {
+      nativeAudioRef.current?.unlock();
+      setIsPlaying(true);
+    },
     onPause: () => setIsPlaying(false),
     onNext: handleNextTrack,
     onPrev: handlePrevTrack,
     onSeek: handleSeek,
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
+    onVisibilityHiddenWhilePlaying: () => {
+      if (playerMode === 'video' && currentAudioStatus === 'available') {
+        autoSwitchedToAudioRef.current = true;
+        setPlayerMode('audio');
+      }
+    },
+    onVisibilityVisible: () => {
+      if (autoSwitchedToAudioRef.current) {
+        autoSwitchedToAudioRef.current = false;
+        setPlayerMode('video');
+      }
+    },
   });
 
   const handleYouTubeTimeUpdate = useCallback(
     (cur: number, dur: number) => {
-      if (useNativeAudio || !currentVideo) return;
+      if (useNativeAudio || isCheckingNativeAudio || !currentVideo) return;
       setCurrentTime(cur);
       if (dur > 0) setDuration(dur);
       if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
@@ -903,24 +1022,24 @@ export default function App() {
         persistProgress(currentVideo.id, cur, dur);
       }
     },
-    [currentVideo?.id, persistProgress, useNativeAudio]
+    [currentVideo?.id, persistProgress, useNativeAudio, isCheckingNativeAudio]
   );
 
   const handleYouTubeStateChange = useCallback(
     (playing: boolean) => {
-      if (useNativeAudio) return;
+      if (useNativeAudio || isCheckingNativeAudio) return;
       setIsPlaying(playing);
     },
-    [useNativeAudio]
+    [useNativeAudio, isCheckingNativeAudio]
   );
 
   const handleYouTubeEnded = useCallback(() => {
-    if (useNativeAudio) return;
+    if (useNativeAudio || isCheckingNativeAudio) return;
     if (currentVideo) {
       handleMarkAsPlayed(currentVideo.id);
     }
     handleNextTrack();
-  }, [currentVideo?.id, handleMarkAsPlayed, handleNextTrack, useNativeAudio]);
+  }, [currentVideo?.id, handleMarkAsPlayed, handleNextTrack, useNativeAudio, isCheckingNativeAudio]);
 
   // 9. Filter and Sort Videos
   const filteredVideos = useMemo(() => {
@@ -986,7 +1105,11 @@ export default function App() {
         }}
         playlistCount={playlists.length}
         playerMode={playerMode}
-        onTogglePlayerMode={() => setPlayerMode(playerMode === 'video' ? 'audio' : 'video')}
+        onTogglePlayerMode={() => {
+          autoSwitchedToAudioRef.current = false;
+          if (playerMode === 'video') nativeAudioRef.current?.unlock();
+          setPlayerMode(playerMode === 'video' ? 'audio' : 'video');
+        }}
         activeFilterGroup={activeGroupId}
         onSelectGroup={setActiveGroupId}
         activeTab={activeTab}
@@ -1032,6 +1155,7 @@ export default function App() {
                 sleepTimerExpiresAt={sleepTimerExpiresAt}
                 queue={queue}
                 usingNativeAudio={useNativeAudio}
+                nativeAudioStatus={currentAudioStatus}
                 onPlayPause={handlePlayPause}
                 onSeek={handleSeek}
                 onSkipBack={handleSkipBack}
@@ -1041,56 +1165,22 @@ export default function App() {
                 onSpeedChange={setPlaybackRate}
                 onVolumeChange={setVolume}
                 onToggleMute={() => setIsMuted(!isMuted)}
-                onSwitchToVideo={() => setPlayerMode('video')}
+                onSwitchToVideo={() => {
+                  autoSwitchedToAudioRef.current = false;
+                  setPlayerMode('video');
+                }}
                 onSetSleepTimer={handleSetSleepTimer}
                 onPlayQueueItem={(v) => handlePlayVideo(v, 'audio')}
                 onRemoveFromQueue={handleRemoveFromQueue}
               />
             </motion.div>
 
-            {/* 1b. Native HTML5 <audio> Engine for Mode Audio Saja (stays alive when minimized or screen locked on mobile/PWA/PC) */}
-            {useNativeAudio && currentVideo && (
-              <NativeAudioPlayer
-                currentVideo={currentVideo}
-                isPlaying={isPlaying}
-                playbackRate={playbackRate}
-                volume={volume}
-                isMuted={isMuted}
-                initialSeekSeconds={
-                  currentTime > 0
-                    ? currentTime
-                    : playbackProgressMap[currentVideo.id]?.currentTime || 0
-                }
-                seekCommand={seekCommand}
-                onSeekHandled={() => setSeekCommand(null)}
-                onTimeUpdate={(cur, dur) => {
-                  setCurrentTime(cur);
-                  if (dur > 0) setDuration(dur);
-                  if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
-                    lastSavedProgressTimeRef.current = cur;
-                    persistProgress(currentVideo.id, cur, dur);
-                  }
-                }}
-                onStateChange={(playing) => setIsPlaying(playing)}
-                onEnded={() => {
-                  if (currentVideo) {
-                    handleMarkAsPlayed(currentVideo.id);
-                  }
-                  handleNextTrack();
-                }}
-                onFallbackNeeded={() => {
-                  const vidId = currentVideo.id;
-                  setAudioFallbackMap((prev) => ({ ...prev, [vidId]: true }));
-                }}
-              />
-            )}
-
             {/* 2. Video Player View (Hosts the actual YouTube iframe without unmounting) */}
             <div
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : isPlaying && !useNativeAudio
+                  : isPlaying && !useNativeAudio && !isCheckingNativeAudio
                   ? 'fixed bottom-24 right-3 w-44 sm:w-64 aspect-video rounded-2xl overflow-hidden shadow-2xl border border-slate-300 dark:border-slate-700 z-40 bg-black transition-all'
                   : 'fixed bottom-24 right-3 w-44 aspect-video pointer-events-none opacity-0 -z-50 overflow-hidden'
               }
@@ -1100,16 +1190,21 @@ export default function App() {
                 queue={queue}
                 isMiniPiP={!(activeTab === 'player' && playerMode === 'video')}
                 onExpandPiP={() => {
+                  autoSwitchedToAudioRef.current = false;
                   setPlayerMode('video');
                   setActiveTab('player');
                 }}
-                onSwitchToAudio={() => setPlayerMode('audio')}
+                onSwitchToAudio={() => {
+                  autoSwitchedToAudioRef.current = false;
+                  nativeAudioRef.current?.unlock();
+                  setPlayerMode('audio');
+                }}
                 onPlayVideo={(v) => handlePlayVideo(v, 'video')}
                 onRemoveFromQueue={handleRemoveFromQueue}
                 playerSlot={
                   <YouTubePlayer
                     currentVideo={currentVideo}
-                    isPlaying={useNativeAudio ? false : isPlaying}
+                    isPlaying={useNativeAudio || isCheckingNativeAudio ? false : isPlaying}
                     mode={playerMode}
                     isVisible={activeTab === 'player' && playerMode === 'video'}
                     playbackRate={playbackRate}
@@ -1123,7 +1218,7 @@ export default function App() {
                     onTimeUpdate={handleYouTubeTimeUpdate}
                     onStateChange={handleYouTubeStateChange}
                     onEnded={handleYouTubeEnded}
-                    seekCommand={useNativeAudio ? null : seekCommand}
+                    seekCommand={useNativeAudio || isCheckingNativeAudio ? null : seekCommand}
                     onSeekHandled={() => setSeekCommand(null)}
                   />
                 }
@@ -1292,6 +1387,11 @@ export default function App() {
                             src={ch.avatar || `https://avatar.vercel.sh/${ch.id}?size=64`}
                             alt={ch.title}
                             referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              const img = e.currentTarget;
+                              const fallback = `https://avatar.vercel.sh/${ch.id}?size=64`;
+                              if (img.src !== fallback) img.src = fallback;
+                            }}
                             className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
                           />
                           <span className="max-w-[160px] truncate">{ch.title}</span>
@@ -1530,6 +1630,47 @@ export default function App() {
         </section>
       </main>
 
+      {/* Persistent Native HTML5 <audio> Engine (always mounted to retain mobile/PWA user-gesture audio unlock) */}
+      <NativeAudioPlayer
+        ref={nativeAudioRef}
+        active={useNativeAudio}
+        currentVideo={currentVideo}
+        isPlaying={isPlaying}
+        playbackRate={playbackRate}
+        volume={volume}
+        isMuted={isMuted}
+        initialSeekSeconds={
+          currentTime > 0
+            ? currentTime
+            : currentVideo
+            ? playbackProgressMap[currentVideo.id]?.currentTime || 0
+            : 0
+        }
+        seekCommand={useNativeAudio ? seekCommand : null}
+        onSeekHandled={() => setSeekCommand(null)}
+        onTimeUpdate={(cur, dur) => {
+          if (!currentVideo) return;
+          setCurrentTime(cur);
+          if (dur > 0) setDuration(dur);
+          if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
+            lastSavedProgressTimeRef.current = cur;
+            persistProgress(currentVideo.id, cur, dur);
+          }
+        }}
+        onStateChange={(playing) => setIsPlaying(playing)}
+        onEnded={() => {
+          if (currentVideo) {
+            handleMarkAsPlayed(currentVideo.id);
+          }
+          handleNextTrack();
+        }}
+        onFallbackNeeded={(reason = 'unavailable') => {
+          if (!currentVideo) return;
+          const vidId = currentVideo.id;
+          setAudioStatusMap((prev) => ({ ...prev, [vidId]: reason }));
+        }}
+      />
+
       {/* Sticky Mini Player Bar (when playing and scrolled or on feed tab) */}
       <MiniPlayerBar
         currentVideo={currentVideo}
@@ -1537,11 +1678,16 @@ export default function App() {
         currentTime={currentTime}
         duration={duration}
         mode={playerMode}
+        usingNativeAudio={useNativeAudio}
         onPlayPause={handlePlayPause}
         onSkipBack={handleSkipBack}
         onSkipForward={handleSkipForward}
         onExpand={() => setActiveTab('player')}
-        onToggleMode={() => setPlayerMode(playerMode === 'video' ? 'audio' : 'video')}
+        onToggleMode={() => {
+          autoSwitchedToAudioRef.current = false;
+          if (playerMode === 'video') nativeAudioRef.current?.unlock();
+          setPlayerMode(playerMode === 'video' ? 'audio' : 'video');
+        }}
       />
 
       {/* Modals & Drawers */}
@@ -1624,6 +1770,11 @@ export default function App() {
                   src={channelToDelete.avatar || `https://avatar.vercel.sh/${channelToDelete.id}?size=100`}
                   alt={channelToDelete.title}
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    const fallback = `https://avatar.vercel.sh/${channelToDelete.id}?size=100`;
+                    if (img.src !== fallback) img.src = fallback;
+                  }}
                   className="w-11 h-11 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
                 />
                 <div className="min-w-0">

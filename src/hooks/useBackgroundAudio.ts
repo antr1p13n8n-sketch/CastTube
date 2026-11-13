@@ -14,12 +14,13 @@ interface UseBackgroundAudioOptions {
   onSeek: (seconds: number) => void;
   onSkipBack: () => void;
   onSkipForward: () => void;
+  onVisibilityHiddenWhilePlaying?: () => void;
+  onVisibilityVisible?: () => void;
 }
 
 /**
  * Registers Media Session metadata, lock-screen / OS notification controls,
- * and playback position state without playing a fake silent audio track
- * (which previously caused notifications to appear "playing" with no sound).
+ * playback position state, and visibility lifecycle hooks for background playback.
  */
 export function useBackgroundAudio({
   currentVideo,
@@ -34,6 +35,8 @@ export function useBackgroundAudio({
   onSeek,
   onSkipBack,
   onSkipForward,
+  onVisibilityHiddenWhilePlaying,
+  onVisibilityVisible,
 }: UseBackgroundAudioOptions) {
   const handlersRef = useRef({
     onPlay,
@@ -43,6 +46,8 @@ export function useBackgroundAudio({
     onSeek,
     onSkipBack,
     onSkipForward,
+    onVisibilityHiddenWhilePlaying,
+    onVisibilityVisible,
   });
 
   useEffect(() => {
@@ -54,8 +59,23 @@ export function useBackgroundAudio({
       onSeek,
       onSkipBack,
       onSkipForward,
+      onVisibilityHiddenWhilePlaying,
+      onVisibilityVisible,
     };
-  }, [onPlay, onPause, onNext, onPrev, onSeek, onSkipBack, onSkipForward]);
+  }, [
+    onPlay,
+    onPause,
+    onNext,
+    onPrev,
+    onSeek,
+    onSkipBack,
+    onSkipForward,
+    onVisibilityHiddenWhilePlaying,
+    onVisibilityVisible,
+  ]);
+
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
 
   // 1. Media Session API metadata & action handlers
   useEffect(() => {
@@ -69,13 +89,13 @@ export function useBackgroundAudio({
           album: 'CastTube',
           artwork: [
             {
-              src: currentVideo.thumbnail,
-              sizes: '480x360',
+              src: `https://i.ytimg.com/vi/${currentVideo.id}/mqdefault.jpg`,
+              sizes: '320x180',
               type: 'image/jpeg',
             },
             {
-              src: `https://i.ytimg.com/vi/${currentVideo.id}/mqdefault.jpg`,
-              sizes: '320x180',
+              src: currentVideo.thumbnail,
+              sizes: '480x360',
               type: 'image/jpeg',
             },
           ],
@@ -88,6 +108,7 @@ export function useBackgroundAudio({
     const actions: Array<[MediaSessionAction, MediaSessionActionHandler]> = [
       ['play', () => handlersRef.current.onPlay()],
       ['pause', () => handlersRef.current.onPause()],
+      ['stop', () => handlersRef.current.onPause()],
       ['previoustrack', () => handlersRef.current.onPrev()],
       ['nexttrack', () => handlersRef.current.onNext()],
       ['seekbackward', () => handlersRef.current.onSkipBack()],
@@ -119,17 +140,41 @@ export function useBackgroundAudio({
       if (
         typeof navigator.mediaSession.setPositionState === 'function' &&
         duration > 0 &&
+        Number.isFinite(duration) &&
         currentTime >= 0 &&
         currentTime <= duration
       ) {
         navigator.mediaSession.setPositionState({
           duration,
           playbackRate: playbackRate || 1,
-          position: currentTime,
+          position: Math.min(duration, Math.max(0, currentTime)),
         });
       }
     } catch {
       // Ignore invalid position state
     }
   }, [isPlaying, currentTime, duration, playbackRate]);
+
+  // 3. Re-assert Media Session & notify handler when app goes to background / returns
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if ('mediaSession' in navigator) {
+          try {
+            navigator.mediaSession.playbackState = isPlayingRef.current ? 'playing' : 'paused';
+          } catch {
+            // ignore
+          }
+        }
+        if (isPlayingRef.current) {
+          handlersRef.current.onVisibilityHiddenWhilePlaying?.();
+        }
+      } else {
+        handlersRef.current.onVisibilityVisible?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
 }

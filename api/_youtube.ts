@@ -108,99 +108,99 @@ export function parseYouTubeRss(xmlText: string): { channel: ChannelData; videos
 }
 
 export const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: VideoItem[] }> = {
-  'UCBJycsmduP41z98B13IFzBQ': {
+  'UCBJycsmduvYEL83R_U4JriQ': {
     channel: {
-      id: 'UCBJycsmduP41z98B13IFzBQ',
-      title: 'Marques Brownlee (MKBHD)',
+      id: 'UCBJycsmduvYEL83R_U4JriQ',
+      title: 'Marques Brownlee',
       handle: '@mkbhd',
-      avatar: 'https://yt3.googleusercontent.com/lkH37D712tiyphnu0Id0D5MwwQ7IRuwgQLVD05iMXlDyj-kOTuxnRghHoDZFi5TaPh-rSYWh7IG=s176-c-k-c0x00ffffff-no-rj',
-      description: 'Quality Tech Videos | YouTuber | Geek',
+      avatar: 'https://yt3.googleusercontent.com/qu4TmIaYUlS41-dJ9gZ7DUR3nilvmB5_11i6OKSdvNnBNiyOusZP1bMN6ICnuxtjFBb6ioKgRQ=s160-c-k-c0x00ffffff-no-rj',
+      description: 'MKBHD: Quality Tech Videos | YouTuber | Geek | Consumer Electronics | Tech Head | Internet Personality!',
       url: 'https://www.youtube.com/@mkbhd',
     },
     videos: [
       {
-        id: 'dQw4w9WgXcQ',
-        title: 'The Real Truth About Modern Smartphone Batteries',
+        id: 'hdMszZ2ah5Q',
+        title: "Macbook PROLED Review: It's Not About That",
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-        channelId: 'UCBJycsmduP41z98B13IFzBQ',
-        channelTitle: 'Marques Brownlee (MKBHD)',
-        description: 'Deep dive into why phone batteries degrade and the actual science behind fast charging.',
-        views: '1.240.000',
+        thumbnail: 'https://i1.ytimg.com/vi/hdMszZ2ah5Q/hqdefault.jpg',
+        channelId: 'UCBJycsmduvYEL83R_U4JriQ',
+        channelTitle: 'Marques Brownlee',
+        description: 'Deep dive into modern laptop display hardware and everyday creator workflows.',
+        views: '5.057.265',
       },
       {
-        id: 'L_LUpnjgPso',
-        title: 'M4 Mac Mini Review: Apple Did The Impossible!',
+        id: '_x58r9TBois',
+        title: 'Meta VR Glasses: What Vision Pro 2 COULD Have Been!',
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/L_LUpnjgPso/hqdefault.jpg',
-        channelId: 'UCBJycsmduP41z98B13IFzBQ',
-        channelTitle: 'Marques Brownlee (MKBHD)',
-        description: 'The redesigned M4 Mac mini is tiny, powerful, and remarkably cheap.',
-        views: '3.890.000',
+        thumbnail: 'https://i4.ytimg.com/vi/_x58r9TBois/hqdefault.jpg',
+        channelId: 'UCBJycsmduvYEL83R_U4JriQ',
+        channelTitle: 'Marques Brownlee',
+        description: 'Hands-on with lightweight spatial computing and smart glasses hardware.',
+        views: '7.251.665',
       },
     ],
   },
-  'UCb229Z4w_2d3U5L9_5oWk4Q': {
+  'UC1dI4tO13ApuSX0QeX8pHng': {
     channel: {
-      id: 'UCb229Z4w_2d3U5L9_5oWk4Q',
+      id: 'UC1dI4tO13ApuSX0QeX8pHng',
       title: 'GadgetIn',
       handle: '@GadgetIn',
-      avatar: 'https://yt3.googleusercontent.com/ytc/AIdro_k6T6L7H_bB35T7z3YvP3L_qf9f6p3j0f2Z0Y4_=s176-c-k-c0x00ffffff-no-rj',
+      avatar: 'https://yt3.googleusercontent.com/ytc/AIdro_m_WWs--JDXUyiAFrM3BsWiBRvU0-gh-giMdaAHv4LCbyA=s160-c-k-c0x00ffffff-no-rj',
       description: 'Channel review gadget berbahasa Indonesia terlengkap dan terpercaya.',
       url: 'https://www.youtube.com/@GadgetIn',
     },
     videos: [
       {
-        id: 'fJ9rUzIMcZQ',
-        title: 'Review Smartphone Flagship Terbaru Tahun Ini: Beneran Gila!',
+        id: 'ELIwF3VFPyQ',
+        title: 'Lagi lagi mendingin iPhone... Unboxing Xiaomi 18 PRO MAX!!!',
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/fJ9rUzIMcZQ/hqdefault.jpg',
-        channelId: 'UCb229Z4w_2d3U5L9_5oWk4Q',
+        thumbnail: 'https://i2.ytimg.com/vi/ELIwF3VFPyQ/hqdefault.jpg',
+        channelId: 'UC1dI4tO13ApuSX0QeX8pHng',
         channelTitle: 'GadgetIn',
-        description: 'Halo guys, David di sini dan kali ini kita kedatangan hp yang bikin penasaran banget.',
-        views: '980.500',
+        description: 'Halo guys, David di sini dan kali ini kita unboxing dan bahas tuntas smartphone flagship terbaru.',
+        views: '1.568.300',
       },
       {
-        id: 'kJQP7kiw5Fk',
-        title: 'Beli Mystery Box Elektronik 10 Juta: Dapet Apa Aja?',
+        id: 'y60ZgnnzkMw',
+        title: 'Nothing yg harganya something 🙂',
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg',
-        channelId: 'UCb229Z4w_2d3U5L9_5oWk4Q',
+        thumbnail: 'https://i2.ytimg.com/vi/y60ZgnnzkMw/hqdefault.jpg',
+        channelId: 'UC1dI4tO13ApuSX0QeX8pHng',
         channelTitle: 'GadgetIn',
-        description: 'Iseng beli mystery box dari e-commerce ternama seharga 10 juta rupiah.',
-        views: '1.450.000',
+        description: 'Review jujur desain, kamera, performa, dan value-for-money untuk pengguna harian.',
+        views: '635.756',
       },
     ],
   },
-  'UCx_tM26W-W13b5_yv_wA0mA': {
+  'UCYk4LJI0Pr6RBDWowMm-KUw': {
     channel: {
-      id: 'UCx_tM26W-W13b5_yv_wA0mA',
-      title: 'Deddy Corbuzier (Close The Door)',
+      id: 'UCYk4LJI0Pr6RBDWowMm-KUw',
+      title: 'Deddy Corbuzier',
       handle: '@corbuzier',
-      avatar: 'https://yt3.googleusercontent.com/ytc/AIdro_nFmH-Qz8c-6J9f3e4o5y8x1q2w3e4r5t6y7u8i=s176-c-k-c0x00ffffff-no-rj',
-      description: 'Podcast Nomor 1 di Indonesia. Close The Door.',
+      avatar: 'https://yt3.googleusercontent.com/7k4jFbchFagHe6tmcont-mHuOGQrUjnbyh482MwIEFrobjT-uGiMss4qbiTMV74vp8OE3SuY=s160-c-k-c0x00ffffff-no-rj',
+      description: 'CLOSETHEDOOR PODCAST.',
       url: 'https://www.youtube.com/@corbuzier',
     },
     videos: [
       {
-        id: '3JZ_D3ELwOQ',
-        title: 'PODCAST: Bongkar Rahasia Sukses & Masa Depan Kecerdasan Buatan',
+        id: 'i8nGN61QtYg',
+        title: 'MAHFUD MD: GIBRAN HARUS MUNDUR‼️',
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 14).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/3JZ_D3ELwOQ/hqdefault.jpg',
-        channelId: 'UCx_tM26W-W13b5_yv_wA0mA',
-        channelTitle: 'Deddy Corbuzier (Close The Door)',
-        description: 'Obrolan santai tapi berbobot tentang masa depan teknologi, bisnis, dan mindset.',
-        views: '2.100.000',
+        thumbnail: 'https://i2.ytimg.com/vi/i8nGN61QtYg/hqdefault.jpg',
+        channelId: 'UCYk4LJI0Pr6RBDWowMm-KUw',
+        channelTitle: 'Deddy Corbuzier',
+        description: 'Obrolan mendalam Close The Door Podcast membahas isu terkini, hukum, dan tata negara.',
+        views: '110.657',
       },
       {
-        id: '9bZkp7q19f0',
-        title: 'PODCAST: Pengakuan Jujur Mantan Hacker Dunia Bawah Tanah',
+        id: 'pKmc_uJ0LwI',
+        title: 'WAPRES MUNDUR.. ADA YANG MENCOBA MAKAR⁉️MAHFUD MD BICARA‼️',
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 80).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/9bZkp7q19f0/hqdefault.jpg',
-        channelId: 'UCx_tM26W-W13b5_yv_wA0mA',
-        channelTitle: 'Deddy Corbuzier (Close The Door)',
-        description: 'Eksklusif! Fakta keamanan digital yang belum pernah diungkap di manapun.',
-        views: '3.420.000',
+        thumbnail: 'https://i1.ytimg.com/vi/pKmc_uJ0LwI/hqdefault.jpg',
+        channelId: 'UCYk4LJI0Pr6RBDWowMm-KUw',
+        channelTitle: 'Deddy Corbuzier',
+        description: 'Diskusi lengkap di Close The Door Podcast bersama Prof. Mahfud MD.',
+        views: '4.095.207',
       },
     ],
   },
@@ -209,30 +209,30 @@ export const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: Vid
       id: 'UCsXVk37bltHxD1rDPwtNM8Q',
       title: 'Kurzgesagt – In a Nutshell',
       handle: '@kurzgesagt',
-      avatar: 'https://yt3.googleusercontent.com/ytc/AIdro_k6Z4s3e2w1q0p9o8i7u6y5t4r3e2w1q0p9o8i7=s176-c-k-c0x00ffffff-no-rj',
+      avatar: 'https://yt3.googleusercontent.com/ytc/AIdro_n1Ribd7LwdP_qKtqWL3ZDfIgv9M1d6g78VwpHGXVR2Ir4=s160-c-k-c0x00ffffff-no-rj',
       description: 'Videos explaining things with optimistic nihilism.',
       url: 'https://www.youtube.com/@kurzgesagt',
     },
     videos: [
       {
-        id: 'h6fcK_fRYaI',
-        title: 'What If We Detonated All Nuclear Bombs at Once?',
+        id: 'Y1vEGsnNYek',
+        title: 'What Is Food Fortification?',
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 36).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/h6fcK_fRYaI/hqdefault.jpg',
+        thumbnail: 'https://i2.ytimg.com/vi/Y1vEGsnNYek/hqdefault.jpg',
         channelId: 'UCsXVk37bltHxD1rDPwtNM8Q',
         channelTitle: 'Kurzgesagt – In a Nutshell',
-        description: 'If you gathered all ~15,000 nuclear weapons on Earth and detonated them in one spot, what happens?',
-        views: '8.400.000',
+        description: 'How enriching everyday staple foods transformed global public health.',
+        views: '291.446',
       },
       {
-        id: '1-NxodiGPCU',
-        title: 'The Last Human on Earth',
+        id: 'fEjvSbI_PT4',
+        title: 'Dying Is Complicated',
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 120).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/1-NxodiGPCU/hqdefault.jpg',
+        thumbnail: 'https://i3.ytimg.com/vi/fEjvSbI_PT4/hqdefault.jpg',
         channelId: 'UCsXVk37bltHxD1rDPwtNM8Q',
         channelTitle: 'Kurzgesagt – In a Nutshell',
-        description: 'What does the far future of humanity look like billions of years from now?',
-        views: '5.200.000',
+        description: 'A scientific look at cellular biology and what happens when life fades.',
+        views: '3.794.198',
       },
     ],
   },
@@ -241,7 +241,7 @@ export const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: Vid
       id: 'UCSJ4gkVC6NrvII8umztf0Ow',
       title: 'Lofi Girl',
       handle: '@LofiGirl',
-      avatar: 'https://yt3.googleusercontent.com/u5jSuhq12XF8F98_j87s=s176-c-k-c0x00ffffff-no-rj',
+      avatar: 'https://yt3.googleusercontent.com/REcZL_LGu0DaDaC-G7VIbN0uE_5l-i_dw6ZvOETRnY3pRhUmfkOq6C1MLephPZkV4VSzQAhEi_4=s160-c-k-c0x00ffffff-no-rj',
       description: 'Peaceful lofi hip hop radio - beats to relax/study to.',
       url: 'https://www.youtube.com/@LofiGirl',
     },
@@ -257,14 +257,14 @@ export const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: Vid
         views: 'Live',
       },
       {
-        id: 'rUxyKA_-grg',
-        title: 'synthwave radio 🌌 - beats to chill/game to',
+        id: 'hCqTWYeahV8',
+        title: '(the same people who say they failed a test but actually get a great grade.)',
         publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/rUxyKA_-grg/hqdefault.jpg',
+        thumbnail: 'https://i1.ytimg.com/vi/hCqTWYeahV8/hqdefault.jpg',
         channelId: 'UCSJ4gkVC6NrvII8umztf0Ow',
         channelTitle: 'Lofi Girl',
-        description: 'Peaceful chill retro synthwave music for late night focus.',
-        views: 'Live',
+        description: 'Relaxing study beats and chill vibes from Lofi Girl.',
+        views: '33.817',
       },
     ],
   },
@@ -717,9 +717,24 @@ export async function fetchChannelRss(
   };
 }
 
+export type AudioStreamFailureReason = 'login_required' | 'live_stream' | 'unavailable';
+
+export interface ResolvedAudioStream {
+  url: string;
+  mimeType: string;
+  contentLength?: string;
+  userAgent: string;
+}
+
+export interface AudioStreamResolution {
+  stream: ResolvedAudioStream | null;
+  status: 'available' | AudioStreamFailureReason;
+  reason?: string;
+}
+
 const audioStreamCache = new Map<
   string,
-  { url: string; mimeType: string; contentLength?: string; userAgent: string; expiresAt: number }
+  { resolution: AudioStreamResolution; expiresAt: number }
 >();
 
 export function invalidateAudioStreamCache(videoId: string): void {
@@ -751,33 +766,108 @@ const INNERTUBE_AUDIO_CLIENTS = [
       osVersion: '18.1.0.22B83',
     },
   },
+  {
+    userAgent:
+      'com.google.android.apps.youtube.music/7.29.52 (Linux; U; Android 14; en_US; Pixel 8) gzip',
+    client: {
+      clientName: 'ANDROID_MUSIC',
+      clientVersion: '7.29.52',
+      deviceMake: 'Google',
+      deviceModel: 'Pixel 8',
+      osName: 'Android',
+      osVersion: '14',
+      androidSdkVersion: 34,
+    },
+  },
 ];
 
-export async function resolveAudioStreamUrl(
-  videoId: string
-): Promise<{ url: string; mimeType: string; contentLength?: string; userAgent: string } | null> {
-  if (!videoId || !/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) return null;
+async function tryExternalExtractor(videoId: string): Promise<ResolvedAudioStream | null> {
+  const pipedBase = process.env.PIPED_API_URL?.trim().replace(/\/+$/, '');
+  if (pipedBase) {
+    try {
+      const res = await fetchWithTimeout(`${pipedBase}/streams/${encodeURIComponent(videoId)}`, {}, 6000);
+      if (res.ok) {
+        const data = await res.json();
+        const streams: any[] = Array.isArray(data?.audioStreams) ? data.audioStreams : [];
+        const selected =
+          streams.find((s) => typeof s?.url === 'string' && String(s.mimeType || '').includes('audio/mp4')) ||
+          streams.find((s) => typeof s?.url === 'string' && String(s.mimeType || '').startsWith('audio/'));
+        if (selected?.url) {
+          return {
+            url: String(selected.url),
+            mimeType: String(selected.mimeType || 'audio/mp4').split(';')[0].trim(),
+            contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
+            userAgent:
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          };
+        }
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  const invidiousBase = process.env.INVIDIOUS_API_URL?.trim().replace(/\/+$/, '');
+  if (invidiousBase) {
+    try {
+      const res = await fetchWithTimeout(
+        `${invidiousBase}/api/v1/videos/${encodeURIComponent(videoId)}`,
+        {},
+        6000
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const adaptive: any[] = Array.isArray(data?.adaptiveFormats) ? data.adaptiveFormats : [];
+        const selected =
+          adaptive.find((f) => typeof f?.url === 'string' && String(f.type || '').includes('audio/mp4')) ||
+          adaptive.find((f) => typeof f?.url === 'string' && String(f.type || '').startsWith('audio/'));
+        if (selected?.url) {
+          return {
+            url: String(selected.url),
+            mimeType: String(selected.type || 'audio/mp4').split(';')[0].trim(),
+            contentLength: selected.clen ? String(selected.clen) : undefined,
+            userAgent:
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          };
+        }
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  return null;
+}
+
+export async function resolveAudioStreamInfo(videoId: string): Promise<AudioStreamResolution> {
+  if (!videoId || !/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) {
+    return { stream: null, status: 'unavailable', reason: 'Video ID tidak valid' };
+  }
 
   const cached = audioStreamCache.get(videoId);
   if (cached && cached.expiresAt > Date.now()) {
-    return {
-      url: cached.url,
-      mimeType: cached.mimeType,
-      contentLength: cached.contentLength,
-      userAgent: cached.userAgent,
-    };
+    return cached.resolution;
   }
+
+  const customCookies = process.env.YOUTUBE_COOKIES?.trim();
+  let detectedStatus: AudioStreamFailureReason = 'unavailable';
+  let detectedReason: string | undefined;
 
   for (const cfg of INNERTUBE_AUDIO_CLIENTS) {
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'User-Agent': cfg.userAgent,
+      };
+      if (customCookies) {
+        headers['Cookie'] = customCookies;
+      }
+
       const res = await fetchWithTimeout(
         'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': cfg.userAgent,
-          },
+          headers,
           body: JSON.stringify({
             videoId,
             context: {
@@ -787,47 +877,105 @@ export async function resolveAudioStreamUrl(
             racyCheckOk: true,
           }),
         },
-        8000
+        7000
       );
 
       if (!res.ok) continue;
       const data = await res.json();
-      if (data?.playabilityStatus?.status !== 'OK') continue;
+      const playStatus = data?.playabilityStatus?.status;
+      const playReason = typeof data?.playabilityStatus?.reason === 'string' ? data.playabilityStatus.reason : undefined;
 
-      const formats: any[] = data?.streamingData?.adaptiveFormats || [];
-      const audioFormats = formats.filter(
+      if (playStatus !== 'OK') {
+        if (playStatus === 'LOGIN_REQUIRED') {
+          detectedStatus = 'login_required';
+          detectedReason = playReason;
+        } else if (
+          data?.videoDetails?.isLiveContent ||
+          (playReason && playReason.toLowerCase().includes('live stream'))
+        ) {
+          detectedStatus = 'live_stream';
+          detectedReason = playReason;
+        } else if (!detectedReason && playReason) {
+          detectedReason = playReason;
+        }
+        continue;
+      }
+
+      const adaptiveFormats: any[] = data?.streamingData?.adaptiveFormats || [];
+      const audioFormats = adaptiveFormats.filter(
         (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('audio/') && typeof f.url === 'string'
       );
-      if (audioFormats.length === 0) continue;
 
       // Prefer audio/mp4 (AAC itag 140/139) for universal iOS Safari + Android Chrome compatibility
-      const selected =
+      let selected =
         audioFormats.find((f) => f.itag === 140) ||
         audioFormats.find((f) => f.itag === 139) ||
         audioFormats.find((f) => f.mimeType.startsWith('audio/mp4')) ||
         audioFormats.find((f) => f.itag === 251) ||
         audioFormats[0];
 
+      // Fallback to progressive muxed MP4 stream (itag 18) if no standalone audio format exposes a direct URL
+      if (!selected) {
+        const muxedFormats: any[] = data?.streamingData?.formats || [];
+        selected =
+          muxedFormats.find((f) => f.itag === 18 && typeof f.url === 'string') ||
+          muxedFormats.find((f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('video/mp4') && typeof f.url === 'string');
+      }
+
+      if (!selected) {
+        if (data?.videoDetails?.isLiveContent || data?.streamingData?.hlsManifestUrl) {
+          detectedStatus = 'live_stream';
+          detectedReason = 'Siaran Live memakai streaming HLS/IFrame';
+        }
+        continue;
+      }
+
       const mimeType = String(selected.mimeType).split(';')[0].trim() || 'audio/mp4';
-      const result = {
+      const stream: ResolvedAudioStream = {
         url: selected.url as string,
         mimeType,
         contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
         userAgent: cfg.userAgent,
       };
 
+      const resolution: AudioStreamResolution = { stream, status: 'available' };
       audioStreamCache.set(videoId, {
-        ...result,
+        resolution,
         expiresAt: Date.now() + 30 * 60 * 1000,
       });
-
-      return result;
+      return resolution;
     } catch {
       // try next client
     }
   }
 
-  return null;
+  const external = await tryExternalExtractor(videoId);
+  if (external) {
+    const resolution: AudioStreamResolution = { stream: external, status: 'available' };
+    audioStreamCache.set(videoId, {
+      resolution,
+      expiresAt: Date.now() + 25 * 60 * 1000,
+    });
+    return resolution;
+  }
+
+  const negativeResolution: AudioStreamResolution = {
+    stream: null,
+    status: detectedStatus,
+    reason: detectedReason,
+  };
+  audioStreamCache.set(videoId, {
+    resolution: negativeResolution,
+    expiresAt: Date.now() + 3 * 60 * 1000,
+  });
+  return negativeResolution;
+}
+
+export async function resolveAudioStreamUrl(
+  videoId: string
+): Promise<ResolvedAudioStream | null> {
+  const result = await resolveAudioStreamInfo(videoId);
+  return result.stream;
 }
 
 export interface ChannelSearchResult {
