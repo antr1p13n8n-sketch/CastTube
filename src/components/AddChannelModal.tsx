@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   X,
   Youtube,
@@ -141,8 +142,6 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       }
     }
   }, [isOpen, initialPastedText, initialTab, initialSearchQuery, executeYouTubeSearch]);
-
-  if (!isOpen) return null;
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -309,8 +308,26 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left transition-colors duration-200">
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          key="add-channel-backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18 }}
+          onClick={onClose}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+        >
+          <motion.div
+            key="add-channel-dialog"
+            initial={{ opacity: 0, scale: 0.95, y: 14 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left transition-colors duration-200"
+          >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -343,14 +360,21 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 setActiveTab('search');
                 setFeedback(null);
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
+              className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                 activeTab === 'search'
-                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                  ? 'text-slate-900 dark:text-white'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Search className="w-3.5 h-3.5 text-red-500" />
-              <span>Cari Channel YouTube</span>
+              {activeTab === 'search' && (
+                <motion.span
+                  layoutId="addModalModeTab"
+                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                  className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
+                />
+              )}
+              <Search className="relative z-10 w-3.5 h-3.5 text-red-500" />
+              <span className="relative z-10">Cari Channel YouTube</span>
             </button>
             <button
               type="button"
@@ -358,14 +382,21 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 setActiveTab('paste');
                 setFeedback(null);
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
+              className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                 activeTab === 'paste'
-                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                  ? 'text-slate-900 dark:text-white'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Clipboard className="w-3.5 h-3.5 text-red-500" />
-              <span>Tempel Link / Handle</span>
+              {activeTab === 'paste' && (
+                <motion.span
+                  layoutId="addModalModeTab"
+                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                  className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
+                />
+              )}
+              <Clipboard className="relative z-10 w-3.5 h-3.5 text-red-500" />
+              <span className="relative z-10">Tempel Link / Handle</span>
             </button>
           </div>
 
@@ -496,14 +527,22 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 </div>
               ) : (
                 <div className="space-y-2.5">
-                  {searchResults.map((item) => {
+                  {searchResults.map((item, idx) => {
                     const isAlreadyAdded =
                       existingChannelIds.includes(item.id) || Boolean(addedInSession[item.id]);
                     const isAddingThis = addingChannelId === item.id;
 
                     return (
-                      <div
+                      <motion.div
                         key={item.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          duration: 0.2,
+                          delay: Math.min(idx, 10) * 0.025,
+                          ease: [0.16, 1, 0.3, 1],
+                        }}
+                        whileHover={{ y: -2 }}
                         className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -545,7 +584,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                           </div>
                         </div>
 
-                        <button
+                        <motion.button
+                          whileTap={{ scale: 0.94 }}
                           type="button"
                           disabled={isAlreadyAdded || Boolean(addingChannelId)}
                           onClick={() => handleAddFromSearch(item)}
@@ -571,8 +611,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                               <span>Tambah</span>
                             </>
                           )}
-                        </button>
-                      </div>
+                        </motion.button>
+                      </motion.div>
                     );
                   })}
                 </div>
@@ -711,7 +751,9 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
             </form>
           )}
         </div>
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

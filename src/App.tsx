@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import {
   Folder,
   Radio,
@@ -970,6 +971,7 @@ export default function App() {
   const selectedChannel = channels.find((c) => c.id === selectedChannelId);
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 selection:bg-red-500 selection:text-white transition-colors duration-200 pb-28">
       {/* Top Bar Header */}
       <Header
@@ -1008,7 +1010,16 @@ export default function App() {
         {currentVideo && (
           <section className="mb-10">
             {/* 1. Podcast Player View */}
-            <div className={activeTab === 'player' && playerMode === 'audio' ? 'block' : 'hidden'}>
+            <motion.div
+              initial={false}
+              animate={{
+                opacity: activeTab === 'player' && playerMode === 'audio' ? 1 : 0,
+                y: activeTab === 'player' && playerMode === 'audio' ? 0 : 8,
+                scale: activeTab === 'player' && playerMode === 'audio' ? 1 : 0.985,
+              }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              className={activeTab === 'player' && playerMode === 'audio' ? 'block' : 'hidden'}
+            >
               <PodcastPlayer
                 currentVideo={currentVideo}
                 isPlaying={isPlaying}
@@ -1035,7 +1046,7 @@ export default function App() {
                 onPlayQueueItem={(v) => handlePlayVideo(v, 'audio')}
                 onRemoveFromQueue={handleRemoveFromQueue}
               />
-            </div>
+            </motion.div>
 
             {/* 1b. Native HTML5 <audio> Engine for Mode Audio Saja (stays alive when minimized or screen locked on mobile/PWA/PC) */}
             {useNativeAudio && currentVideo && (
@@ -1134,21 +1145,29 @@ export default function App() {
                     : channels.filter((c) => c.groupId === group.id).length;
 
                 return (
-                  <button
+                  <motion.button
                     key={group.id}
+                    whileTap={{ scale: 0.96 }}
                     onClick={() => {
                       setActiveGroupId(group.id);
                       setSelectedChannelId(null);
                     }}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                    className={`relative flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                       isActive
-                        ? 'bg-red-600 text-white shadow-sm'
+                        ? 'text-white'
                         : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800'
                     }`}
                   >
-                    <span>{group.name}</span>
+                    {isActive && (
+                      <motion.span
+                        layoutId="activeGroupIndicator"
+                        transition={{ type: 'spring', stiffness: 480, damping: 35 }}
+                        className="absolute inset-0 rounded-xl bg-red-600 shadow-sm"
+                      />
+                    )}
+                    <span className="relative z-10">{group.name}</span>
                     <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                      className={`relative z-10 text-[10px] px-1.5 py-0.2 rounded-full tabular-nums ${
                         isActive
                           ? 'bg-white/25 text-white'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
@@ -1156,42 +1175,49 @@ export default function App() {
                     >
                       {count}
                     </span>
-                  </button>
+                  </motion.button>
                 );
               })}
 
               {/* Quick Manage Groups button */}
-              <button
+              <motion.button
+                whileTap={{ scale: 0.95 }}
                 onClick={() => setIsGroupModalOpen(true)}
                 className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 dark:hover:text-white bg-transparent rounded-xl whitespace-nowrap shrink-0 cursor-pointer"
                 title="Kelola & Ganti Nama Grup"
               >
                 <Layers className="w-3.5 h-3.5" />
                 <span>Atur Grup</span>
-              </button>
+              </motion.button>
             </div>
 
             {/* Quick Actions & Refresh */}
             <div className="flex flex-wrap items-center gap-2">
-              <button
+              <motion.button
+                whileHover={{ y: -1 }}
+                whileTap={{ scale: 0.96 }}
                 onClick={() => openSearchChannelModal(searchQuery.trim())}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 title="Cari dan tambahkan channel baru langsung dari YouTube"
               >
                 <Search className="w-3.5 h-3.5" />
                 <span>Cari Channel YouTube</span>
-              </button>
+              </motion.button>
 
-              <button
+              <motion.button
+                whileHover={{ y: -1 }}
+                whileTap={{ scale: 0.96 }}
                 onClick={handleQuickPasteAndOpen}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 title="Tempel link YouTube langsung dari clipboard"
               >
                 <Clipboard className="w-3.5 h-3.5 text-red-500" />
                 <span>Tempel Link</span>
-              </button>
+              </motion.button>
 
-              <button
+              <motion.button
+                whileHover={{ y: -1 }}
+                whileTap={{ scale: 0.96 }}
                 onClick={handleRefreshFeeds}
                 disabled={isRefreshing}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
@@ -1199,92 +1225,103 @@ export default function App() {
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-red-500' : ''}`} />
                 <span>{isRefreshing ? 'Memperbarui...' : 'Sinkron Feed'}</span>
-              </button>
+              </motion.button>
             </div>
           </div>
 
           {/* Channel List Inside Group (shown when group has > 1 channel) */}
-          {activeGroupChannels.length > 1 && (
-            <div className="p-3 rounded-2xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-1">
-                <span className="flex items-center gap-1.5">
-                  <Folder className="w-3.5 h-3.5 text-red-500" />
-                  <span>
-                    Channel dalam Grup "{groups.find((g) => g.id === activeGroupId)?.name || 'Semua'}" ({activeGroupChannels.length})
+          <AnimatePresence initial={false}>
+            {activeGroupChannels.length > 1 && (
+              <motion.div
+                key={`group-strip-${activeGroupId}`}
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                className="p-3 rounded-2xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 space-y-2"
+              >
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-1">
+                  <span className="flex items-center gap-1.5">
+                    <Folder className="w-3.5 h-3.5 text-red-500" />
+                    <span>
+                      Channel dalam Grup "{groups.find((g) => g.id === activeGroupId)?.name || 'Semua'}" ({activeGroupChannels.length})
+                    </span>
                   </span>
-                </span>
-                {selectedChannelId && (
-                  <button
-                    onClick={() => setSelectedChannelId(null)}
-                    className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
-                  >
-                    Tampilkan Semua
-                  </button>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                <button
-                  onClick={() => setSelectedChannelId(null)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                    !selectedChannelId
-                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  Semua ({activeGroupChannels.length})
-                </button>
-
-                {activeGroupChannels.map((ch) => {
-                  const isSelected = selectedChannelId === ch.id;
-                  const chVideoCount = videos.filter((v) => v.channelId === ch.id).length;
-
-                  return (
-                    <div
-                      key={ch.id}
-                      className={`group flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 text-xs font-medium rounded-xl whitespace-nowrap shrink-0 transition-all border ${
-                        isSelected
-                          ? 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 shadow-xs'
-                          : 'bg-slate-50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/70 hover:bg-slate-100 dark:hover:bg-slate-800'
-                      }`}
+                  {selectedChannelId && (
+                    <button
+                      onClick={() => setSelectedChannelId(null)}
+                      className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
                     >
-                      <button
-                        onClick={() => setSelectedChannelId(isSelected ? null : ch.id)}
-                        className="flex items-center gap-2 cursor-pointer"
+                      Tampilkan Semua
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                  <motion.button
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => setSelectedChannelId(null)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                      !selectedChannelId
+                        ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    Semua ({activeGroupChannels.length})
+                  </motion.button>
+
+                  {activeGroupChannels.map((ch) => {
+                    const isSelected = selectedChannelId === ch.id;
+                    const chVideoCount = videos.filter((v) => v.channelId === ch.id).length;
+
+                    return (
+                      <motion.div
+                        key={ch.id}
+                        whileHover={{ y: -1 }}
+                        className={`group flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 text-xs font-medium rounded-xl whitespace-nowrap shrink-0 transition-colors border ${
+                          isSelected
+                            ? 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 shadow-xs'
+                            : 'bg-slate-50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/70 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
                       >
-                        <img
-                          src={ch.avatar || `https://avatar.vercel.sh/${ch.id}?size=64`}
-                          alt={ch.title}
-                          referrerPolicy="no-referrer"
-                          className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
-                        />
-                        <span className="max-w-[160px] truncate">{ch.title}</span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                            isSelected
-                              ? 'bg-red-200/70 dark:bg-red-900/70 text-red-800 dark:text-red-200'
-                              : 'bg-slate-200/80 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
-                          }`}
+                        <button
+                          onClick={() => setSelectedChannelId(isSelected ? null : ch.id)}
+                          className="flex items-center gap-2 cursor-pointer"
                         >
-                          {chVideoCount}
-                        </span>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setChannelToDelete(ch);
-                        }}
-                        className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-100/70 dark:hover:text-red-400 dark:hover:bg-red-900/40 transition-colors cursor-pointer"
-                        title={`Hapus channel ${ch.title}`}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+                          <img
+                            src={ch.avatar || `https://avatar.vercel.sh/${ch.id}?size=64`}
+                            alt={ch.title}
+                            referrerPolicy="no-referrer"
+                            className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
+                          />
+                          <span className="max-w-[160px] truncate">{ch.title}</span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.2 rounded-full tabular-nums ${
+                              isSelected
+                                ? 'bg-red-200/70 dark:bg-red-900/70 text-red-800 dark:text-red-200'
+                                : 'bg-slate-200/80 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {chVideoCount}
+                          </span>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setChannelToDelete(ch);
+                          }}
+                          className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-100/70 dark:hover:text-red-400 dark:hover:bg-red-900/40 transition-colors cursor-pointer"
+                          title={`Hapus channel ${ch.title}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Search, Filter & Channel Focus Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
@@ -1321,25 +1358,34 @@ export default function App() {
             </div>
 
             {/* Selected Channel Focus Tag */}
-            {selectedChannel && (
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 text-xs text-red-700 dark:text-red-300">
-                <span className="font-semibold">Fokus Channel: {selectedChannel.title}</span>
-                <button
-                  onClick={() => setChannelToDelete(selectedChannel)}
-                  className="p-0.5 rounded hover:bg-red-200/60 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 cursor-pointer"
-                  title="Hapus channel ini"
+            <AnimatePresence>
+              {selectedChannel && (
+                <motion.div
+                  key={`focus-${selectedChannel.id}`}
+                  initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.92 }}
+                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                  className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 text-xs text-red-700 dark:text-red-300"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setSelectedChannelId(null)}
-                  className="font-bold hover:text-red-900 dark:hover:text-white cursor-pointer"
-                  title="Hapus filter channel"
-                >
-                  ×
-                </button>
-              </div>
-            )}
+                  <span className="font-semibold">Fokus Channel: {selectedChannel.title}</span>
+                  <button
+                    onClick={() => setChannelToDelete(selectedChannel)}
+                    className="p-0.5 rounded hover:bg-red-200/60 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 cursor-pointer"
+                    title="Hapus channel ini"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setSelectedChannelId(null)}
+                    className="font-bold hover:text-red-900 dark:hover:text-white cursor-pointer"
+                    title="Hapus filter channel"
+                  >
+                    ×
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Sort Dropdown */}
             <div className="flex items-center gap-2 shrink-0">
@@ -1413,10 +1459,11 @@ export default function App() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredVideos.map((video) => (
+              {filteredVideos.map((video, idx) => (
                 <VideoCard
                   key={video.id}
                   video={video}
+                  index={idx}
                   isCurrentlyPlaying={currentVideo?.id === video.id && isPlaying}
                   isInQueue={queue.some((q) => q.id === video.id)}
                   isPlayed={playedVideoIds.includes(video.id)}
@@ -1552,49 +1599,70 @@ export default function App() {
       />
 
       {/* Delete Channel Confirmation Modal */}
-      {channelToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4">
-            <div className="flex items-center gap-3">
-              <img
-                src={channelToDelete.avatar || `https://avatar.vercel.sh/${channelToDelete.id}?size=100`}
-                alt={channelToDelete.title}
-                referrerPolicy="no-referrer"
-                className="w-11 h-11 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
-              />
-              <div className="min-w-0">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                  Hapus Channel?
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                  {channelToDelete.title}
-                </p>
+      <AnimatePresence>
+        {channelToDelete && (
+          <motion.div
+            key="delete-channel-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            onClick={() => setChannelToDelete(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          >
+            <motion.div
+              key="delete-channel-dialog"
+              initial={{ opacity: 0, scale: 0.94, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 8 }}
+              transition={{ type: 'spring', stiffness: 440, damping: 32 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <img
+                  src={channelToDelete.avatar || `https://avatar.vercel.sh/${channelToDelete.id}?size=100`}
+                  alt={channelToDelete.title}
+                  referrerPolicy="no-referrer"
+                  className="w-11 h-11 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
+                />
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                    Hapus Channel?
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {channelToDelete.title}
+                  </p>
+                </div>
               </div>
-            </div>
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Channel ini beserta semua daftar videonya akan dihapus dari koleksi Anda. Tindakan ini tidak dapat dibatalkan.
-            </p>
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                onClick={() => setChannelToDelete(null)}
-                className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-              >
-                Batal
-              </button>
-              <button
-                onClick={() => {
-                  handleDeleteChannel(channelToDelete.id);
-                  setChannelToDelete(null);
-                }}
-                className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Hapus Channel</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                Channel ini beserta semua daftar videonya akan dihapus dari koleksi Anda. Tindakan ini tidak dapat dibatalkan.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <motion.button
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => setChannelToDelete(null)}
+                  className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                >
+                  Batal
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => {
+                    handleDeleteChannel(channelToDelete.id);
+                    setChannelToDelete(null);
+                  }}
+                  className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus Channel</span>
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+    </MotionConfig>
   );
 }

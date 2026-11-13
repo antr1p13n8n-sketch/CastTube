@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Play,
   Pause,
@@ -8,7 +9,6 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
-  Clock,
   Tv,
   ListMusic,
   Radio,
@@ -103,14 +103,18 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
   return (
     <div className="relative w-full max-w-4xl mx-auto rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden p-6 md:p-8 transition-colors duration-200">
       {/* Background ambient lighting */}
-      <div
-        className="absolute -top-32 -left-32 w-80 h-80 rounded-full blur-3xl opacity-25 dark:opacity-20 pointer-events-none"
+      <motion.div
+        animate={isPlaying ? { scale: [1, 1.12, 1], opacity: [0.22, 0.34, 0.22] } : { scale: 1, opacity: 0.18 }}
+        transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
+        className="absolute -top-32 -left-32 w-80 h-80 rounded-full blur-3xl pointer-events-none"
         style={{
           background: 'radial-gradient(circle, #ef4444 0%, #f97316 70%, transparent 100%)',
         }}
       />
-      <div
-        className="absolute -bottom-32 -right-32 w-80 h-80 rounded-full blur-3xl opacity-20 dark:opacity-15 pointer-events-none"
+      <motion.div
+        animate={isPlaying ? { scale: [1.05, 0.95, 1.05], opacity: [0.16, 0.28, 0.16] } : { scale: 1, opacity: 0.14 }}
+        transition={{ duration: 5.2, repeat: Infinity, ease: 'easeInOut' }}
+        className="absolute -bottom-32 -right-32 w-80 h-80 rounded-full blur-3xl pointer-events-none"
         style={{
           background: 'radial-gradient(circle, #6366f1 0%, #a855f7 70%, transparent 100%)',
         }}
@@ -120,7 +124,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
       <div className="relative z-10 flex items-center justify-between gap-4 pb-6 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-xl bg-red-500/10 text-red-600 dark:text-red-400">
-            <Radio className="w-5 h-5 animate-pulse" />
+            <Radio className={`w-5 h-5 ${isPlaying ? 'animate-pulse' : ''}`} />
           </div>
           <div>
             <h2 className="text-sm font-bold tracking-tight text-slate-900 dark:text-white uppercase tracking-wider">
@@ -136,17 +140,19 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
 
         <div className="flex items-center gap-2">
           {/* Switch to video button */}
-          <button
+          <motion.button
+            whileTap={{ scale: 0.95 }}
             onClick={onSwitchToVideo}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
             title="Beralih ke Pemutar Video"
           >
             <Tv className="w-4 h-4 text-red-600 dark:text-red-400" />
             <span className="hidden sm:inline">Mode Video</span>
-          </button>
+          </motion.button>
 
           {/* Toggle Queue */}
-          <button
+          <motion.button
+            whileTap={{ scale: 0.95 }}
             onClick={() => setShowQueue(!showQueue)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               showQueue
@@ -157,7 +163,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
           >
             <ListMusic className="w-4 h-4" />
             <span className="hidden sm:inline">Antrean ({queue.length})</span>
-          </button>
+          </motion.button>
         </div>
       </div>
 
@@ -165,7 +171,10 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
       <div className="relative z-10 grid grid-cols-1 md:grid-cols-12 gap-8 py-8 items-center">
         {/* Left column: Episode Artwork & Visualizer */}
         <div className="md:col-span-5 flex flex-col items-center">
-          <div
+          <motion.div
+            whileTap={{ scale: 0.97 }}
+            animate={{ scale: isPlaying ? 1.02 : 1 }}
+            transition={{ type: 'spring', stiffness: 280, damping: 24 }}
             className="relative group w-56 h-56 sm:w-64 sm:h-64 rounded-2xl overflow-hidden shadow-2xl bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center cursor-pointer"
             onMouseEnter={() => setIsHoveringArt(true)}
             onMouseLeave={() => setIsHoveringArt(false)}
@@ -209,7 +218,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             </div>
-          </div>
+          </motion.div>
 
           {/* Visualizer Style Switcher */}
           <div className="mt-4 flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl">
@@ -221,19 +230,28 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
               <button
                 key={vStyle}
                 onClick={() => setVisualizerStyle(vStyle)}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded-lg transition-colors cursor-pointer capitalize ${
+                className={`relative px-2.5 py-1 text-[11px] font-medium rounded-lg transition-colors cursor-pointer capitalize ${
                   visualizerStyle === vStyle
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                    ? 'text-slate-900 dark:text-white font-semibold'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                {vStyle === 'bars'
-                  ? 'Spektrum'
-                  : vStyle === 'wave'
-                  ? 'Gelombang'
-                  : vStyle === 'radar'
-                  ? 'Radar'
-                  : 'Minimal'}
+                {visualizerStyle === vStyle && (
+                  <motion.span
+                    layoutId="visualizerStylePill"
+                    transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                    className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
+                  />
+                )}
+                <span className="relative z-10">
+                  {vStyle === 'bars'
+                    ? 'Spektrum'
+                    : vStyle === 'wave'
+                    ? 'Gelombang'
+                    : vStyle === 'radar'
+                    ? 'Radar'
+                    : 'Minimal'}
+                </span>
               </button>
             ))}
           </div>
@@ -294,16 +312,18 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
           {/* Primary Controls Row */}
           <div className="flex items-center justify-between gap-2 sm:gap-4">
             {/* Previous track */}
-            <button
+            <motion.button
+              whileTap={{ scale: 0.88 }}
               onClick={onPrev}
               className="p-2.5 rounded-full text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               title="Episode Sebelumnya"
             >
               <SkipBack className="w-5 h-5" />
-            </button>
+            </motion.button>
 
             {/* Skip Back 15s */}
-            <button
+            <motion.button
+              whileTap={{ scale: 0.88 }}
               onClick={() => onSkipBack(15)}
               className="relative p-2.5 rounded-full text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer group"
               title="Mundur 15 Detik"
@@ -312,12 +332,14 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
               <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold font-mono group-hover:scale-105 transition-transform">
                 15
               </span>
-            </button>
+            </motion.button>
 
             {/* Big Main Play/Pause Button */}
-            <button
+            <motion.button
+              whileHover={{ scale: 1.06 }}
+              whileTap={{ scale: 0.92 }}
               onClick={onPlayPause}
-              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-red-600 hover:bg-red-700 active:scale-95 text-white flex items-center justify-center shadow-lg shadow-red-600/30 transition-all cursor-pointer"
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-lg shadow-red-600/30 transition-colors cursor-pointer"
               title={isPlaying ? 'Jeda' : 'Putar'}
             >
               {isPlaying ? (
@@ -325,10 +347,11 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
               ) : (
                 <Play className="w-7 h-7 ml-0.5" />
               )}
-            </button>
+            </motion.button>
 
             {/* Skip Forward 30s */}
-            <button
+            <motion.button
+              whileTap={{ scale: 0.88 }}
               onClick={() => onSkipForward(30)}
               className="relative p-2.5 rounded-full text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer group"
               title="Maju 30 Detik"
@@ -337,16 +360,17 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
               <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold font-mono group-hover:scale-105 transition-transform">
                 30
               </span>
-            </button>
+            </motion.button>
 
             {/* Next track */}
-            <button
+            <motion.button
+              whileTap={{ scale: 0.88 }}
               onClick={onNext}
               className="p-2.5 rounded-full text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               title="Episode Berikutnya"
             >
               <SkipForward className="w-5 h-5" />
-            </button>
+            </motion.button>
           </div>
 
           {/* Secondary Controls Bar: Speed, Volume, Sleep Timer */}
@@ -359,13 +383,20 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
                   <button
                     key={speed}
                     onClick={() => onSpeedChange(speed)}
-                    className={`px-2 py-0.5 font-mono text-[11px] rounded transition-colors cursor-pointer ${
+                    className={`relative px-2 py-0.5 font-mono text-[11px] rounded transition-colors cursor-pointer ${
                       playbackRate === speed
-                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white font-bold shadow-xs'
+                        ? 'text-slate-900 dark:text-white font-bold'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    {speed}x
+                    {playbackRate === speed && (
+                      <motion.span
+                        layoutId="playbackSpeedPill"
+                        transition={{ type: 'spring', stiffness: 520, damping: 36 }}
+                        className="absolute inset-0 rounded bg-white dark:bg-slate-700 shadow-xs"
+                      />
+                    )}
+                    <span className="relative z-10">{speed}x</span>
                   </button>
                 ))}
               </div>
@@ -375,7 +406,8 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
             <div className="flex items-center gap-4">
               {/* Sleep timer dropdown trigger */}
               <div className="relative">
-                <button
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => setShowSleepMenu(!showSleepMenu)}
                   className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                     sleepTimerExpiresAt
@@ -390,31 +422,39 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
                       ? `Tidur: ${getSleepCountdown()}`
                       : 'Waktu Tidur'}
                   </span>
-                </button>
+                </motion.button>
 
-                {showSleepMenu && (
-                  <div className="absolute right-0 bottom-full mb-2 w-36 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-30">
-                    <div className="px-3 py-1 text-[11px] font-semibold text-slate-400">
-                      Waktu Berhenti:
-                    </div>
-                    {sleepOptions.map((opt) => (
-                      <button
-                        key={opt.label}
-                        onClick={() => {
-                          onSetSleepTimer(opt.value);
-                          setShowSleepMenu(false);
-                        }}
-                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer ${
-                          sleepTimerMinutes === opt.value
-                            ? 'text-red-600 dark:text-red-400 font-bold'
-                            : 'text-slate-700 dark:text-slate-300'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <AnimatePresence>
+                  {showSleepMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 6, scale: 0.95 }}
+                      transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute right-0 bottom-full mb-2 w-36 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-30"
+                    >
+                      <div className="px-3 py-1 text-[11px] font-semibold text-slate-400">
+                        Waktu Berhenti:
+                      </div>
+                      {sleepOptions.map((opt) => (
+                        <button
+                          key={opt.label}
+                          onClick={() => {
+                            onSetSleepTimer(opt.value);
+                            setShowSleepMenu(false);
+                          }}
+                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer ${
+                            sleepTimerMinutes === opt.value
+                              ? 'text-red-600 dark:text-red-400 font-bold'
+                              : 'text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* Volume Slider */}
@@ -445,63 +485,74 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
       </div>
 
       {/* Queue Drawer overlay (when open) */}
-      {showQueue && (
-        <div className="relative z-20 mt-6 pt-4 border-t border-slate-200 dark:border-slate-800 text-left">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Antrean Berikutnya ({queue.length})
-            </h3>
-            <button
-              onClick={() => setShowQueue(false)}
-              className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-            >
-              Tutup Antrean
-            </button>
-          </div>
-
-          {queue.length === 0 ? (
-            <div className="py-6 text-center text-xs text-slate-400">
-              Belum ada video dalam antrean. Klik tombol "+" pada kartu video untuk menambahkan.
+      <AnimatePresence>
+        {showQueue && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="relative z-20 mt-6 pt-4 border-t border-slate-200 dark:border-slate-800 text-left"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Antrean Berikutnya ({queue.length})
+              </h3>
+              <button
+                onClick={() => setShowQueue(false)}
+                className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                Tutup Antrean
+              </button>
             </div>
-          ) : (
-            <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-              {queue.map((item, idx) => (
-                <div
-                  key={`${item.id}-${idx}`}
-                  className="flex items-center justify-between gap-3 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <div
-                    className="flex items-center gap-3 min-w-0 cursor-pointer flex-1"
-                    onClick={() => onPlayQueueItem(item)}
+
+            {queue.length === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-400">
+                Belum ada video dalam antrean. Klik tombol "+" pada kartu video untuk menambahkan.
+              </div>
+            ) : (
+              <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                {queue.map((item, idx) => (
+                  <motion.div
+                    key={`${item.id}-${idx}`}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.16, delay: Math.min(idx, 8) * 0.025 }}
+                    className="flex items-center justify-between gap-3 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   >
-                    <img
-                      src={item.thumbnail}
-                      alt={item.title}
-                      referrerPolicy="no-referrer"
-                      className="w-12 h-8 rounded-md object-cover shrink-0"
-                    />
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">
-                        {item.title}
-                      </div>
-                      <div className="text-[11px] text-slate-500 truncate">
-                        {item.channelTitle}
+                    <div
+                      className="flex items-center gap-3 min-w-0 cursor-pointer flex-1"
+                      onClick={() => onPlayQueueItem(item)}
+                    >
+                      <img
+                        src={item.thumbnail}
+                        alt={item.title}
+                        referrerPolicy="no-referrer"
+                        className="w-12 h-8 rounded-md object-cover shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                          {item.title}
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate">
+                          {item.channelTitle}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <button
-                    onClick={() => onRemoveFromQueue(item.id)}
-                    className="text-xs text-slate-400 hover:text-red-500 p-1 cursor-pointer shrink-0"
-                    title="Hapus dari antrean"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+                    <button
+                      onClick={() => onRemoveFromQueue(item.id)}
+                      className="text-xs text-slate-400 hover:text-red-500 p-1 cursor-pointer shrink-0"
+                      title="Hapus dari antrean"
+                    >
+                      ×
+                    </button>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

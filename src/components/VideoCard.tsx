@@ -1,10 +1,12 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { Play, Headphones, Plus, Check, ExternalLink, ListPlus, CheckCircle2 } from 'lucide-react';
 import { Video, PlaybackProgress } from '../types';
 import { formatRelativeTime, formatTime } from '../utils/format';
 
 interface VideoCardProps {
   video: Video;
+  index?: number;
   isCurrentlyPlaying: boolean;
   isInQueue: boolean;
   isPlayed?: boolean;
@@ -18,6 +20,7 @@ interface VideoCardProps {
 
 export const VideoCard: React.FC<VideoCardProps> = ({
   video,
+  index = 0,
   isCurrentlyPlaying,
   isInQueue,
   isPlayed = false,
@@ -33,8 +36,16 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       ? Math.min(100, Math.max(0, (progress.currentTime / progress.duration) * 100))
       : 0;
   return (
-    <div
-      className={`group relative flex flex-col rounded-2xl bg-white dark:bg-slate-900 border transition-all duration-200 overflow-hidden hover:shadow-lg ${
+    <motion.div
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.24,
+        delay: Math.min(index, 11) * 0.024,
+        ease: [0.16, 1, 0.3, 1],
+      }}
+      whileHover={{ y: -4, transition: { duration: 0.16, ease: [0.16, 1, 0.3, 1] } }}
+      className={`group relative flex flex-col rounded-2xl bg-white dark:bg-slate-900 border transition-colors transition-shadow duration-200 overflow-hidden hover:shadow-xl ${
         isCurrentlyPlaying
           ? 'border-red-500 ring-2 ring-red-500/20'
           : 'border-slate-200/90 dark:border-slate-800/90 hover:border-slate-300 dark:hover:border-slate-700'
@@ -56,10 +67,30 @@ export const VideoCard: React.FC<VideoCardProps> = ({
 
         {/* Currently playing badge */}
         {isCurrentlyPlaying && (
-          <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold tracking-wide uppercase shadow-sm flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold tracking-wide uppercase shadow-sm flex items-center gap-1.5"
+          >
+            <span className="flex items-end gap-0.5 h-2.5" aria-hidden="true">
+              <motion.span
+                animate={{ scaleY: [0.35, 1, 0.45, 0.9, 0.35] }}
+                transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }}
+                className="w-0.5 h-full bg-white rounded-full origin-bottom"
+              />
+              <motion.span
+                animate={{ scaleY: [0.85, 0.35, 1, 0.5, 0.85] }}
+                transition={{ duration: 0.75, repeat: Infinity, ease: 'easeInOut' }}
+                className="w-0.5 h-full bg-white rounded-full origin-bottom"
+              />
+              <motion.span
+                animate={{ scaleY: [0.5, 0.95, 0.35, 0.8, 0.5] }}
+                transition={{ duration: 1.05, repeat: Infinity, ease: 'easeInOut' }}
+                className="w-0.5 h-full bg-white rounded-full origin-bottom"
+              />
+            </span>
             Sedang Diputar
-          </div>
+          </motion.div>
         )}
 
         {/* Played status badge */}
@@ -71,23 +102,27 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         )}
 
         {/* Hover quick play buttons in center */}
-        <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px]">
-          <button
+        <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/40 backdrop-blur-[1px]">
+          <motion.button
+            whileHover={{ scale: 1.06 }}
+            whileTap={{ scale: 0.93 }}
             onClick={() => onPlayVideo(video)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-lg transition-transform hover:scale-105 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-lg cursor-pointer"
             title="Putar Video"
           >
             <Play className="w-3.5 h-3.5 fill-white" />
             <span>Video</span>
-          </button>
-          <button
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.06 }}
+            whileTap={{ scale: 0.93 }}
             onClick={() => onPlayAudio(video)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-xl shadow-lg transition-transform hover:scale-105 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-xl shadow-lg cursor-pointer"
             title="Dengarkan Audio Podcast"
           >
             <Headphones className="w-3.5 h-3.5 text-red-600" />
             <span>Audio</span>
-          </button>
+          </motion.button>
         </div>
 
         {/* Duration / Live info bottom right */}
@@ -146,16 +181,18 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         {/* Card Footer Actions */}
         <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <button
+            <motion.button
+              whileTap={{ scale: 0.93 }}
               onClick={() => onPlayAudio(video)}
               className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-colors cursor-pointer"
               title="Dengarkan Mode Podcast"
             >
               <Headphones className="w-3.5 h-3.5" />
               <span>Podcast</span>
-            </button>
+            </motion.button>
 
-            <button
+            <motion.button
+              whileTap={{ scale: 0.93 }}
               onClick={() => onToggleQueue(video)}
               className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                 isInQueue
@@ -166,23 +203,25 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             >
               {isInQueue ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
               <span>{isInQueue ? 'Antrean' : '+ Antrean'}</span>
-            </button>
+            </motion.button>
 
             {onAddToPlaylist && (
-              <button
+              <motion.button
+                whileTap={{ scale: 0.93 }}
                 onClick={() => onAddToPlaylist(video)}
                 className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-colors cursor-pointer"
                 title="Simpan ke Playlist"
               >
                 <ListPlus className="w-3.5 h-3.5" />
                 <span>Playlist</span>
-              </button>
+              </motion.button>
             )}
           </div>
 
           <div className="flex items-center gap-1">
             {onTogglePlayed && (
-              <button
+              <motion.button
+                whileTap={{ scale: 0.88 }}
                 onClick={() => onTogglePlayed(video.id)}
                 className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                   isPlayed
@@ -192,7 +231,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
                 title={isPlayed ? 'Tandai belum diputar' : 'Tandai sudah diputar'}
               >
                 <CheckCircle2 className="w-4 h-4" />
-              </button>
+              </motion.button>
             )}
 
             <a
@@ -207,6 +246,6 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };

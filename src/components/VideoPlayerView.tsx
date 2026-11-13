@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import {
   Headphones,
   ExternalLink,
@@ -90,14 +91,16 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.95 }}
             onClick={onSwitchToAudio}
-            className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 active:scale-95 rounded-xl shadow-sm transition-all cursor-pointer"
+            className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-sm transition-colors cursor-pointer"
             title="Dengarkan sebagai podcast dengan visualizer frekuensi"
           >
             <Headphones className="w-4 h-4 animate-pulse" />
             <span>Mode Audio Saja (Podcast)</span>
-          </button>
+          </motion.button>
         </div>
       </div>
 
@@ -194,8 +197,10 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
               </div>
             ) : (
               queue.map((item, idx) => (
-                <div
+                <motion.div
                   key={`${item.id}-${idx}`}
+                  whileHover={{ x: 2 }}
+                  transition={{ duration: 0.14 }}
                   className="group flex items-center justify-between gap-2.5 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 >
                   <div
@@ -225,7 +230,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
                   >
                     ×
                   </button>
-                </div>
+                </motion.div>
               ))
             )}
           </div>
