@@ -164,7 +164,7 @@ const STORAGE_KEYS = {
 export function loadGroups(): ChannelGroup[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.GROUPS);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
@@ -185,9 +185,9 @@ export function saveGroups(groups: ChannelGroup[]) {
 export function loadChannels(): Channel[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.CHANNELS);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) return parsed;
     }
   } catch (e) {
     console.warn('Error reading channels from storage', e);
@@ -206,9 +206,9 @@ export function saveChannels(channels: Channel[]) {
 export function loadVideos(): Video[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.VIDEOS);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) return parsed;
     }
   } catch (e) {
     console.warn('Error reading videos from storage', e);

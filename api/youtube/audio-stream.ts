@@ -1,16 +1,21 @@
 import { Readable } from 'stream';
-import { resolveAudioStreamUrl, VercelReq, VercelRes } from '../_youtube.js';
+import {
+  resolveAudioStreamUrl,
+  invalidateAudioStreamCache,
+  VercelReq,
+  VercelRes,
+} from '../_youtube.js';
 
 export default async function handler(req: VercelReq, res: VercelRes) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
 
-  if (req.method !== 'GET') {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
@@ -21,7 +26,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       return res.status(400).json({ error: 'Parameter videoId diperlukan' });
     }
 
-    const streamInfo = await resolveAudioStreamUrl(videoId);
+    let streamInfo = await resolveAudioStreamUrl(videoId);
     if (req.query.check === '1') {
       return res.status(200).json({ available: Boolean(streamInfo) });
     }
@@ -38,16 +43,33 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       headersSent?: boolean;
     };
 
-    const headers: Record<string, string> = {
-      'User-Agent':
-        'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-    };
     const rangeHeader = reqAny.headers?.range;
-    if (rangeHeader) {
-      headers['Range'] = Array.isArray(rangeHeader) ? rangeHeader[0] : rangeHeader;
+    const rangeStr = rangeHeader
+      ? Array.isArray(rangeHeader)
+        ? rangeHeader[0]
+        : rangeHeader
+      : undefined;
+
+    const fetchUpstream = async (info: NonNullable<typeof streamInfo>) => {
+      const headers: Record<string, string> = {
+        'User-Agent': info.userAgent,
+      };
+      if (rangeStr) {
+        headers['Range'] = rangeStr;
+      }
+      return fetch(info.url, { headers });
+    };
+
+    let upstream = await fetchUpstream(streamInfo);
+    if (upstream.status === 403 || upstream.status === 410) {
+      invalidateAudioStreamCache(videoId);
+      const refreshed = await resolveAudioStreamUrl(videoId);
+      if (refreshed) {
+        streamInfo = refreshed;
+        upstream = await fetchUpstream(refreshed);
+      }
     }
 
-    const upstream = await fetch(streamInfo.url, { headers });
     if (!upstream.ok && upstream.status !== 206) {
       return res.status(502).json({ error: `Upstream audio status ${upstream.status}` });
     }
@@ -62,6 +84,10 @@ export default async function handler(req: VercelReq, res: VercelRes) {
 
     const contentRange = upstream.headers.get('content-range');
     if (contentRange) res.setHeader('Content-Range', contentRange);
+
+    if (req.method === 'HEAD') {
+      return res.end();
+    }
 
     if (!upstream.body) {
       return res.status(502).end();

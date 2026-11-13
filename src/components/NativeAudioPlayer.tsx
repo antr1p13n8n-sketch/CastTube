@@ -19,8 +19,8 @@ interface NativeAudioPlayerProps {
 /**
  * Native HTML5 <audio> playback for "Mode Audio Saja".
  * Unlike a cross-origin YouTube <iframe> (<video>), a native <audio> element
- * continues playing seamlessly on Android Chrome & iOS Safari when the app
- * is minimized, switched to another app, or when the phone screen is locked.
+ * continues playing seamlessly on Android Chrome, iOS Safari, Desktop, and PWAs
+ * when the app is minimized, switched to another app, or when the phone screen is locked.
  */
 export const NativeAudioPlayer: React.FC<NativeAudioPlayerProps> = ({
   currentVideo,
@@ -43,7 +43,6 @@ export const NativeAudioPlayer: React.FC<NativeAudioPlayerProps> = ({
 
   const streamUrl = `/api/youtube/audio-stream?videoId=${encodeURIComponent(currentVideo.id)}`;
 
-  // Reset initial-seek marker when video changes
   useEffect(() => {
     appliedInitialSeekForIdRef.current = null;
   }, [currentVideo.id]);
@@ -55,14 +54,19 @@ export const NativeAudioPlayer: React.FC<NativeAudioPlayerProps> = ({
 
     if (isPlaying) {
       if (audio.paused) {
-        audio.play().catch(() => {
-          // If autoplay is blocked before interaction, state will reflect pause
+        audio.play().catch((err: unknown) => {
+          const name = (err as { name?: string })?.name;
+          if (name === 'NotAllowedError') {
+            onStateChange(false);
+          } else if (name === 'NotSupportedError') {
+            onFallbackNeeded();
+          }
         });
       }
     } else if (!audio.paused) {
       audio.pause();
     }
-  }, [isPlaying, currentVideo.id]);
+  }, [isPlaying, currentVideo.id, onStateChange, onFallbackNeeded]);
 
   // Sync volume & mute
   useEffect(() => {
@@ -97,6 +101,30 @@ export const NativeAudioPlayer: React.FC<NativeAudioPlayerProps> = ({
     onSeekHandled();
   }, [seekCommand, onSeekHandled]);
 
+  const applyInitialSetup = (audio: HTMLAudioElement) => {
+    if (
+      appliedInitialSeekForIdRef.current !== currentVideo.id &&
+      initialSeekSeconds > 0 &&
+      Number.isFinite(initialSeekSeconds)
+    ) {
+      try {
+        if (audio.readyState >= 1) {
+          appliedInitialSeekForIdRef.current = currentVideo.id;
+          audio.currentTime = initialSeekSeconds;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    audio.muted = isMuted;
+    audio.volume = Math.max(0, Math.min(1, volume / 100));
+    try {
+      audio.playbackRate = playbackRate;
+    } catch {
+      // ignore
+    }
+  };
+
   return (
     <audio
       ref={audioRef}
@@ -105,28 +133,24 @@ export const NativeAudioPlayer: React.FC<NativeAudioPlayerProps> = ({
       playsInline
       onLoadedMetadata={(e) => {
         const audio = e.currentTarget;
-        if (
-          appliedInitialSeekForIdRef.current !== currentVideo.id &&
-          initialSeekSeconds > 0 &&
-          Number.isFinite(initialSeekSeconds)
-        ) {
-          appliedInitialSeekForIdRef.current = currentVideo.id;
-          try {
-            audio.currentTime = initialSeekSeconds;
-          } catch {
-            // ignore
-          }
-        }
-        audio.muted = isMuted;
-        audio.volume = Math.max(0, Math.min(1, volume / 100));
-        try {
-          audio.playbackRate = playbackRate;
-        } catch {
-          // ignore
-        }
+        applyInitialSetup(audio);
         if (Number.isFinite(audio.duration) && audio.duration > 0) {
           onTimeUpdate(audio.currentTime || 0, audio.duration);
         }
+        if (isPlayingRef.current && audio.paused) {
+          audio.play().catch((err: unknown) => {
+            const name = (err as { name?: string })?.name;
+            if (name === 'NotAllowedError') {
+              onStateChange(false);
+            } else if (name === 'NotSupportedError') {
+              onFallbackNeeded();
+            }
+          });
+        }
+      }}
+      onCanPlay={(e) => {
+        const audio = e.currentTarget;
+        applyInitialSetup(audio);
         if (isPlayingRef.current && audio.paused) {
           audio.play().catch(() => {});
         }
@@ -138,7 +162,6 @@ export const NativeAudioPlayer: React.FC<NativeAudioPlayerProps> = ({
       }}
       onPlay={() => onStateChange(true)}
       onPause={(e) => {
-        // Ignore pause event fired right before ended
         if (!e.currentTarget.ended) {
           onStateChange(false);
         }

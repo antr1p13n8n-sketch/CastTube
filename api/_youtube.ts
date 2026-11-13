@@ -192,6 +192,16 @@ export const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: Vid
         description: 'Obrolan santai tapi berbobot tentang masa depan teknologi, bisnis, dan mindset.',
         views: '2.100.000',
       },
+      {
+        id: '9bZkp7q19f0',
+        title: 'PODCAST: Pengakuan Jujur Mantan Hacker Dunia Bawah Tanah',
+        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 80).toISOString(),
+        thumbnail: 'https://i.ytimg.com/vi/9bZkp7q19f0/hqdefault.jpg',
+        channelId: 'UCx_tM26W-W13b5_yv_wA0mA',
+        channelTitle: 'Deddy Corbuzier (Close The Door)',
+        description: 'Eksklusif! Fakta keamanan digital yang belum pernah diungkap di manapun.',
+        views: '3.420.000',
+      },
     ],
   },
   'UCsXVk37bltHxD1rDPwtNM8Q': {
@@ -214,6 +224,16 @@ export const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: Vid
         description: 'If you gathered all ~15,000 nuclear weapons on Earth and detonated them in one spot, what happens?',
         views: '8.400.000',
       },
+      {
+        id: '1-NxodiGPCU',
+        title: 'The Last Human on Earth',
+        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 120).toISOString(),
+        thumbnail: 'https://i.ytimg.com/vi/1-NxodiGPCU/hqdefault.jpg',
+        channelId: 'UCsXVk37bltHxD1rDPwtNM8Q',
+        channelTitle: 'Kurzgesagt – In a Nutshell',
+        description: 'What does the far future of humanity look like billions of years from now?',
+        views: '5.200.000',
+      },
     ],
   },
   'UCSJ4gkVC6NrvII8umztf0Ow': {
@@ -234,6 +254,16 @@ export const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: Vid
         channelId: 'UCSJ4gkVC6NrvII8umztf0Ow',
         channelTitle: 'Lofi Girl',
         description: '24/7 relaxing lofi beats to study, chill, focus, code or sleep.',
+        views: 'Live',
+      },
+      {
+        id: 'rUxyKA_-grg',
+        title: 'synthwave radio 🌌 - beats to chill/game to',
+        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+        thumbnail: 'https://i.ytimg.com/vi/rUxyKA_-grg/hqdefault.jpg',
+        channelId: 'UCSJ4gkVC6NrvII8umztf0Ow',
+        channelTitle: 'Lofi Girl',
+        description: 'Peaceful chill retro synthwave music for late night focus.',
         views: 'Live',
       },
     ],
@@ -689,83 +719,115 @@ export async function fetchChannelRss(
 
 const audioStreamCache = new Map<
   string,
-  { url: string; mimeType: string; contentLength?: string; expiresAt: number }
+  { url: string; mimeType: string; contentLength?: string; userAgent: string; expiresAt: number }
 >();
+
+export function invalidateAudioStreamCache(videoId: string): void {
+  audioStreamCache.delete(videoId);
+}
+
+const INNERTUBE_AUDIO_CLIENTS = [
+  {
+    userAgent:
+      'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+    client: {
+      clientName: 'ANDROID_VR',
+      clientVersion: '1.60.19',
+      deviceMake: 'Oculus',
+      deviceModel: 'Quest 3',
+      osName: 'Android',
+      osVersion: '12L',
+      androidSdkVersion: 32,
+    },
+  },
+  {
+    userAgent: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)',
+    client: {
+      clientName: 'IOS',
+      clientVersion: '19.45.4',
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iPhone',
+      osVersion: '18.1.0.22B83',
+    },
+  },
+];
 
 export async function resolveAudioStreamUrl(
   videoId: string
-): Promise<{ url: string; mimeType: string; contentLength?: string } | null> {
+): Promise<{ url: string; mimeType: string; contentLength?: string; userAgent: string } | null> {
   if (!videoId || !/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) return null;
 
   const cached = audioStreamCache.get(videoId);
   if (cached && cached.expiresAt > Date.now()) {
-    return { url: cached.url, mimeType: cached.mimeType, contentLength: cached.contentLength };
-  }
-
-  try {
-    const res = await fetchWithTimeout(
-      'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent':
-            'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-        },
-        body: JSON.stringify({
-          videoId,
-          context: {
-            client: {
-              clientName: 'ANDROID_VR',
-              clientVersion: '1.60.19',
-              deviceMake: 'Oculus',
-              deviceModel: 'Quest 3',
-              osName: 'Android',
-              osVersion: '12L',
-              androidSdkVersion: 32,
-            },
-          },
-          contentCheckOk: true,
-          racyCheckOk: true,
-        }),
-      },
-      10000
-    );
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.playabilityStatus?.status !== 'OK') return null;
-
-    const formats: any[] = data?.streamingData?.adaptiveFormats || [];
-    const audioFormats = formats.filter(
-      (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('audio/') && typeof f.url === 'string'
-    );
-    if (audioFormats.length === 0) return null;
-
-    // Prefer audio/mp4 (AAC itag 140/139) for universal iOS Safari + Android Chrome compatibility
-    const selected =
-      audioFormats.find((f) => f.itag === 140) ||
-      audioFormats.find((f) => f.itag === 139) ||
-      audioFormats.find((f) => f.mimeType.startsWith('audio/mp4')) ||
-      audioFormats.find((f) => f.itag === 251) ||
-      audioFormats[0];
-
-    const mimeType = String(selected.mimeType).split(';')[0].trim() || 'audio/mp4';
-    const result = {
-      url: selected.url as string,
-      mimeType,
-      contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
+    return {
+      url: cached.url,
+      mimeType: cached.mimeType,
+      contentLength: cached.contentLength,
+      userAgent: cached.userAgent,
     };
-
-    audioStreamCache.set(videoId, {
-      ...result,
-      expiresAt: Date.now() + 30 * 60 * 1000,
-    });
-
-    return result;
-  } catch (err) {
-    console.warn(`Failed to resolve audio stream for ${videoId}:`, err);
-    return null;
   }
+
+  for (const cfg of INNERTUBE_AUDIO_CLIENTS) {
+    try {
+      const res = await fetchWithTimeout(
+        'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': cfg.userAgent,
+          },
+          body: JSON.stringify({
+            videoId,
+            context: {
+              client: cfg.client,
+            },
+            contentCheckOk: true,
+            racyCheckOk: true,
+          }),
+        },
+        8000
+      );
+
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data?.playabilityStatus?.status !== 'OK') continue;
+
+      const formats: any[] = data?.streamingData?.adaptiveFormats || [];
+      const audioFormats = formats.filter(
+        (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('audio/') && typeof f.url === 'string'
+      );
+      if (audioFormats.length === 0) continue;
+
+      // Prefer audio/mp4 (AAC itag 140/139) for universal iOS Safari + Android Chrome compatibility
+      const selected =
+        audioFormats.find((f) => f.itag === 140) ||
+        audioFormats.find((f) => f.itag === 139) ||
+        audioFormats.find((f) => f.mimeType.startsWith('audio/mp4')) ||
+        audioFormats.find((f) => f.itag === 251) ||
+        audioFormats[0];
+
+      const mimeType = String(selected.mimeType).split(';')[0].trim() || 'audio/mp4';
+      const result = {
+        url: selected.url as string,
+        mimeType,
+        contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
+        userAgent: cfg.userAgent,
+      };
+
+      audioStreamCache.set(videoId, {
+        ...result,
+        expiresAt: Date.now() + 30 * 60 * 1000,
+      });
+
+      return result;
+    } catch {
+      // try next client
+    }
+  }
+
+  return null;
 }
+
 

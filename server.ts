@@ -3,712 +3,18 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Readable } from 'stream';
-import { resolveAudioStreamUrl } from './api/_youtube';
+import {
+  PRESET_CHANNELS,
+  resolveYouTubeChannel,
+  fetchChannelRss,
+  resolveAudioStreamUrl,
+  invalidateAudioStreamCache,
+  VideoItem,
+  ChannelData,
+} from './api/_youtube';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-interface VideoItem {
-  id: string;
-  title: string;
-  publishedAt: string;
-  thumbnail: string;
-  channelId: string;
-  channelTitle: string;
-  description: string;
-  views?: string;
-  authorUri?: string;
-}
-
-interface ChannelData {
-  id: string;
-  title: string;
-  handle?: string;
-  avatar?: string;
-  description?: string;
-  url: string;
-}
-
-// Clean XML entities and tags
-function decodeXml(str: string): string {
-  if (!str) return '';
-  return str
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#39;/g, "'");
-}
-
-function parseYouTubeRss(xmlText: string): { channel: ChannelData; videos: VideoItem[] } {
-  // Extract channel information
-  const channelIdMatch = xmlText.match(/<yt:channelId>(.*?)<\/yt:channelId>/);
-  const channelTitleMatch = xmlText.match(/<title>(.*?)<\/title>/);
-  const authorNameMatch = xmlText.match(/<author>[\s\S]*?<name>(.*?)<\/name>/);
-  const authorUriMatch = xmlText.match(/<author>[\s\S]*?<uri>(.*?)<\/uri>/);
-
-  const authorChannelMatch = authorUriMatch?.[1]?.match(/channel\/(UC[a-zA-Z0-9_-]{22})/i);
-  const rawChannelId = channelIdMatch ? channelIdMatch[1].trim() : '';
-  const channelId = authorChannelMatch
-    ? authorChannelMatch[1]
-    : rawChannelId && !rawChannelId.startsWith('UC') && rawChannelId.length === 22
-    ? `UC${rawChannelId}`
-    : rawChannelId;
-  const channelTitle = authorNameMatch
-    ? decodeXml(authorNameMatch[1].trim())
-    : channelTitleMatch
-    ? decodeXml(channelTitleMatch[1].trim())
-    : 'YouTube Channel';
-
-  const channel: ChannelData = {
-    id: channelId,
-    title: channelTitle,
-    url: authorUriMatch ? authorUriMatch[1].trim() : `https://www.youtube.com/channel/${channelId}`,
-    avatar: `https://avatar.vercel.sh/${channelId || channelTitle}?size=120`,
-  };
-
-  const videos: VideoItem[] = [];
-  const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = entryRegex.exec(xmlText)) !== null) {
-    const entryXml = match[1];
-
-    const videoIdMatch = entryXml.match(/<yt:videoId>(.*?)<\/yt:videoId>/);
-    const titleMatch = entryXml.match(/<title>(.*?)<\/title>/);
-    const publishedMatch = entryXml.match(/<published>(.*?)<\/published>/);
-    const descMatch = entryXml.match(/<media:description>([\s\S]*?)<\/media:description>/);
-    const viewsMatch = entryXml.match(/<media:statistics views="(\d+)"/);
-    const mediaThumbMatch = entryXml.match(/<media:thumbnail url="(.*?)"/);
-
-    const videoId = videoIdMatch ? videoIdMatch[1].trim() : '';
-    if (!videoId) continue;
-
-    const title = titleMatch ? decodeXml(titleMatch[1].trim()) : 'Untitled Video';
-    const publishedAt = publishedMatch ? publishedMatch[1].trim() : new Date().toISOString();
-    const description = descMatch ? decodeXml(descMatch[1].trim()) : '';
-    const views = viewsMatch ? Number(viewsMatch[1]).toLocaleString('id-ID') : undefined;
-    const thumbnail = mediaThumbMatch ? mediaThumbMatch[1] : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-    videos.push({
-      id: videoId,
-      title,
-      publishedAt,
-      thumbnail,
-      channelId,
-      channelTitle,
-      description,
-      views,
-    });
-  }
-
-  return { channel, videos };
-}
-
-// Preset verified popular channels (with fallback data if offline/blocked)
-const PRESET_CHANNELS: Record<string, { channel: ChannelData; videos: VideoItem[] }> = {
-  'UCBJycsmduP41z98B13IFzBQ': {
-    channel: {
-      id: 'UCBJycsmduP41z98B13IFzBQ',
-      title: 'Marques Brownlee (MKBHD)',
-      handle: '@mkbhd',
-      avatar: 'https://yt3.googleusercontent.com/lkH37D712tiyphnu0Id0D5MwwQ7IRuwgQLVD05iMXlDyj-kOTuxnRghHoDZFi5TaPh-rSYWh7IG=s176-c-k-c0x00ffffff-no-rj',
-      description: 'Quality Tech Videos | YouTuber | Geek',
-      url: 'https://www.youtube.com/@mkbhd',
-    },
-    videos: [
-      {
-        id: 'dQw4w9WgXcQ',
-        title: 'The Real Truth About Modern Smartphone Batteries',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-        channelId: 'UCBJycsmduP41z98B13IFzBQ',
-        channelTitle: 'Marques Brownlee (MKBHD)',
-        description: 'Deep dive into why phone batteries degrade and the actual science behind fast charging.',
-        views: '1.240.000',
-      },
-      {
-        id: 'L_LUpnjgPso',
-        title: 'M4 Mac Mini Review: Apple Did The Impossible!',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/L_LUpnjgPso/hqdefault.jpg',
-        channelId: 'UCBJycsmduP41z98B13IFzBQ',
-        channelTitle: 'Marques Brownlee (MKBHD)',
-        description: 'The redesigned M4 Mac mini is tiny, powerful, and remarkably cheap.',
-        views: '3.890.000',
-      },
-    ],
-  },
-  'UCb229Z4w_2d3U5L9_5oWk4Q': {
-    channel: {
-      id: 'UCb229Z4w_2d3U5L9_5oWk4Q',
-      title: 'GadgetIn',
-      handle: '@GadgetIn',
-      avatar: 'https://yt3.googleusercontent.com/ytc/AIdro_k6T6L7H_bB35T7z3YvP3L_qf9f6p3j0f2Z0Y4_=s176-c-k-c0x00ffffff-no-rj',
-      description: 'Channel review gadget berbahasa Indonesia terlengkap dan terpercaya.',
-      url: 'https://www.youtube.com/@GadgetIn',
-    },
-    videos: [
-      {
-        id: 'fJ9rUzIMcZQ',
-        title: 'Review Smartphone Flagship Terbaru Tahun Ini: Beneran Gila!',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/fJ9rUzIMcZQ/hqdefault.jpg',
-        channelId: 'UCb229Z4w_2d3U5L9_5oWk4Q',
-        channelTitle: 'GadgetIn',
-        description: 'Halo guys, David di sini dan kali ini kita kedatangan hp yang bikin penasaran banget.',
-        views: '980.500',
-      },
-      {
-        id: 'kJQP7kiw5Fk',
-        title: 'Beli Mystery Box Elektronik 10 Juta: Dapet Apa Aja?',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg',
-        channelId: 'UCb229Z4w_2d3U5L9_5oWk4Q',
-        channelTitle: 'GadgetIn',
-        description: 'Iseng beli mystery box dari e-commerce ternama seharga 10 juta rupiah.',
-        views: '1.450.000',
-      },
-    ],
-  },
-  'UCx_tM26W-W13b5_yv_wA0mA': {
-    channel: {
-      id: 'UCx_tM26W-W13b5_yv_wA0mA',
-      title: 'Deddy Corbuzier (Close The Door)',
-      handle: '@corbuzier',
-      avatar: 'https://yt3.googleusercontent.com/ytc/AIdro_nFmH-Qz8c-6J9f3e4o5y8x1q2w3e4r5t6y7u8i=s176-c-k-c0x00ffffff-no-rj',
-      description: 'Podcast Nomor 1 di Indonesia. Close The Door.',
-      url: 'https://www.youtube.com/@corbuzier',
-    },
-    videos: [
-      {
-        id: '3JZ_D3ELwOQ',
-        title: 'PODCAST: Bongkar Rahasia Sukses & Masa Depan Kecerdasan Buatan',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 14).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/3JZ_D3ELwOQ/hqdefault.jpg',
-        channelId: 'UCx_tM26W-W13b5_yv_wA0mA',
-        channelTitle: 'Deddy Corbuzier (Close The Door)',
-        description: 'Obrolan santai tapi berbobot tentang masa depan teknologi, bisnis, dan mindset.',
-        views: '2.100.000',
-      },
-      {
-        id: '9bZkp7q19f0',
-        title: 'PODCAST: Pengakuan Jujur Mantan Hacker Dunia Bawah Tanah',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 80).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/9bZkp7q19f0/hqdefault.jpg',
-        channelId: 'UCx_tM26W-W13b5_yv_wA0mA',
-        channelTitle: 'Deddy Corbuzier (Close The Door)',
-        description: 'Eksklusif! Fakta keamanan digital yang belum pernah diungkap di manapun.',
-        views: '3.420.000',
-      },
-    ],
-  },
-  'UCsXVk37bltHxD1rDPwtNM8Q': {
-    channel: {
-      id: 'UCsXVk37bltHxD1rDPwtNM8Q',
-      title: 'Kurzgesagt – In a Nutshell',
-      handle: '@kurzgesagt',
-      avatar: 'https://yt3.googleusercontent.com/ytc/AIdro_k6Z4s3e2w1q0p9o8i7u6y5t4r3e2w1q0p9o8i7=s176-c-k-c0x00ffffff-no-rj',
-      description: 'Videos explaining things with optimistic nihilism.',
-      url: 'https://www.youtube.com/@kurzgesagt',
-    },
-    videos: [
-      {
-        id: 'h6fcK_fRYaI',
-        title: 'What If We Detonated All Nuclear Bombs at Once?',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 36).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/h6fcK_fRYaI/hqdefault.jpg',
-        channelId: 'UCsXVk37bltHxD1rDPwtNM8Q',
-        channelTitle: 'Kurzgesagt – In a Nutshell',
-        description: 'If you gathered all ~15,000 nuclear weapons on Earth and detonated them in one spot, what happens?',
-        views: '8.400.000',
-      },
-      {
-        id: '1-NxodiGPCU',
-        title: 'The Last Human on Earth',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 120).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/1-NxodiGPCU/hqdefault.jpg',
-        channelId: 'UCsXVk37bltHxD1rDPwtNM8Q',
-        channelTitle: 'Kurzgesagt – In a Nutshell',
-        description: 'What does the far future of humanity look like billions of years from now?',
-        views: '5.200.000',
-      },
-    ],
-  },
-  'UCSJ4gkVC6NrvII8umztf0Ow': {
-    channel: {
-      id: 'UCSJ4gkVC6NrvII8umztf0Ow',
-      title: 'Lofi Girl',
-      handle: '@LofiGirl',
-      avatar: 'https://yt3.googleusercontent.com/u5jSuhq12XF8F98_j87s=s176-c-k-c0x00ffffff-no-rj',
-      description: 'Peaceful lofi hip hop radio - beats to relax/study to.',
-      url: 'https://www.youtube.com/@LofiGirl',
-    },
-    videos: [
-      {
-        id: 'jfKfPfyJRdk',
-        title: 'lofi hip hop radio 📚 - beats to relax/study to',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
-        channelId: 'UCSJ4gkVC6NrvII8umztf0Ow',
-        channelTitle: 'Lofi Girl',
-        description: '24/7 relaxing lofi beats to study, chill, focus, code or sleep.',
-        views: 'Live',
-      },
-      {
-        id: 'rUxyKA_-grg',
-        title: 'synthwave radio 🌌 - beats to chill/game to',
-        publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-        thumbnail: 'https://i.ytimg.com/vi/rUxyKA_-grg/hqdefault.jpg',
-        channelId: 'UCSJ4gkVC6NrvII8umztf0Ow',
-        channelTitle: 'Lofi Girl',
-        description: 'Peaceful chill retro synthwave music for late night focus.',
-        views: 'Live',
-      },
-    ],
-  },
-};
-
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 12000): Promise<globalThis.Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-      redirect: 'follow',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'id,en-US,en;q=0.9',
-        'Cookie': 'SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg; CONSENT=YES+cb.20210328-17-p0.en+FX+667',
-        ...(options.headers || {}),
-      },
-    });
-    clearTimeout(timer);
-    return res;
-  } catch (err) {
-    clearTimeout(timer);
-    throw err;
-  }
-}
-
-function extractChannelFromHtml(html: string): { channelId: string; title?: string; handle?: string } | null {
-  const idMatch =
-    html.match(/<meta itemprop="identifier" content="(UC[a-zA-Z0-9_-]{22})"/i) ||
-    html.match(/<meta itemprop="channelId" content="(UC[a-zA-Z0-9_-]{22})"/i) ||
-    html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/i) ||
-    html.match(/feeds\/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{22})/i) ||
-    html.match(/"externalId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
-    html.match(/"browseId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
-    html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/i);
-
-  if (!idMatch || !idMatch[1]) return null;
-
-  const titleMatch =
-    html.match(/<meta property="og:title" content="(.*?)"/i) ||
-    html.match(/<title>(.*?) - YouTube<\/title>/i);
-
-  const handleMatch = html.match(/https:\/\/www\.youtube\.com\/(@[a-zA-Z0-9_.-]+)/i);
-
-  return {
-    channelId: idMatch[1],
-    title: titleMatch ? decodeXml(titleMatch[1]) : undefined,
-    handle: handleMatch ? handleMatch[1] : undefined,
-  };
-}
-
-async function readChannelFromResponse(
-  res: globalThis.Response
-): Promise<{ channelId: string; title?: string; handle?: string } | null> {
-  if (!res.body) {
-    const html = await res.text();
-    return extractChannelFromHtml(html);
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let accumulated = '';
-  const maxBytes = 3_000_000;
-  try {
-    while (accumulated.length < maxBytes) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      accumulated += decoder.decode(value, { stream: true });
-      const extracted = extractChannelFromHtml(accumulated);
-      if (extracted) {
-        await reader.cancel().catch(() => {});
-        return extracted;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return extractChannelFromHtml(accumulated);
-}
-
-// Resolve handle / URL / ID to channel ID
-async function resolveYouTubeChannel(rawInput: string): Promise<{ channelId: string; handle?: string; title?: string }> {
-  const cleaned = rawInput.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
-  if (!cleaned) {
-    throw new Error('Input link channel kosong.');
-  }
-
-  // 1. Direct channel ID (UC...)
-  if (/^UC[a-zA-Z0-9_-]{22}$/.test(cleaned)) {
-    return { channelId: cleaned };
-  }
-
-  // 2. URL with /channel/UC...
-  const channelUrlMatch = cleaned.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/i);
-  if (channelUrlMatch) {
-    return { channelId: channelUrlMatch[1] };
-  }
-
-  // 3. Preset channels instant match
-  for (const [id, data] of Object.entries(PRESET_CHANNELS)) {
-    if (
-      cleaned.toLowerCase().includes(id.toLowerCase()) ||
-      (data.channel.handle && cleaned.toLowerCase().includes(data.channel.handle.toLowerCase()))
-    ) {
-      return { channelId: id, handle: data.channel.handle, title: data.channel.title };
-    }
-  }
-
-  // 4. Video / Shorts / Live URL -> resolve via oEmbed or watch page
-  const videoMatch = cleaned.match(
-    /(?:watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/live\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/i
-  );
-  if (videoMatch) {
-    const videoId = videoMatch[1];
-    try {
-      const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-      const oembedRes = await fetchWithTimeout(oembedUrl, {}, 8000);
-      if (oembedRes.ok) {
-        const oembed = (await oembedRes.json()) as { author_url?: string; author_name?: string };
-        if (oembed.author_url) {
-          const resolvedFromAuthor = await resolveYouTubeChannel(oembed.author_url);
-          return {
-            ...resolvedFromAuthor,
-            title: resolvedFromAuthor.title || oembed.author_name,
-          };
-        }
-      }
-    } catch {
-      // fallback to watch HTML
-    }
-
-    try {
-      const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const res = await fetchWithTimeout(videoPageUrl);
-      if (res.ok) {
-        const html = await res.text();
-        const extracted = extractChannelFromHtml(html);
-        if (extracted) return extracted;
-      }
-    } catch {
-      // continue
-    }
-  }
-
-  // 5. Handle (@username), /c/name, /user/name, or bare youtube.com/name
-  let targetUrl = '';
-  let handle: string | undefined;
-
-  const handleUrlMatch = cleaned.match(/youtube\.com\/(@[^/\s?#&]+)/i);
-  const customUrlMatch = cleaned.match(/youtube\.com\/(c|user)\/([^/\s?#&]+)/i);
-  const bareUrlMatch = cleaned.match(/youtube\.com\/([^/\s?#&]+)/i);
-
-  if (handleUrlMatch) {
-    handle = decodeURIComponent(handleUrlMatch[1]);
-    targetUrl = `https://www.youtube.com/${handle}`;
-  } else if (customUrlMatch) {
-    const kind = customUrlMatch[1].toLowerCase();
-    const name = decodeURIComponent(customUrlMatch[2]);
-    targetUrl = `https://www.youtube.com/${kind}/${name}`;
-    if (kind === 'user') {
-      try {
-        const rssRes = await fetchWithTimeout(`https://www.youtube.com/feeds/videos.xml?user=${encodeURIComponent(name)}`, {}, 8000);
-        if (rssRes.ok) {
-          const xml = await rssRes.text();
-          const parsed = parseYouTubeRss(xml);
-          if (parsed.channel.id) {
-            return { channelId: parsed.channel.id, title: parsed.channel.title };
-          }
-        }
-      } catch {
-        // fallback to HTML fetch
-      }
-    }
-  } else if (cleaned.startsWith('@')) {
-    handle = cleaned.split(/[/?#\s]/)[0];
-    targetUrl = `https://www.youtube.com/${handle}`;
-  } else if (bareUrlMatch && !['watch', 'shorts', 'live', 'playlist', 'results', 'feed'].includes(bareUrlMatch[1].toLowerCase())) {
-    const slug = decodeURIComponent(bareUrlMatch[1]);
-    targetUrl = `https://www.youtube.com/${slug}`;
-  } else if (!cleaned.includes('/') && !cleaned.includes('.')) {
-    handle = `@${cleaned}`;
-    targetUrl = `https://www.youtube.com/${handle}`;
-  }
-
-  if (targetUrl) {
-    try {
-      const res = await fetchWithTimeout(targetUrl);
-      if (res.ok) {
-        const extracted = await readChannelFromResponse(res);
-        if (extracted) {
-          return {
-            channelId: extracted.channelId,
-            handle: handle || extracted.handle,
-            title: extracted.title,
-          };
-        }
-      }
-    } catch {
-      // ignore and throw clear message below
-    }
-  }
-
-  throw new Error(`Tidak dapat menemukan Channel ID untuk input: "${rawInput}". Pastikan link channel valid (contoh: https://www.youtube.com/@username atau https://www.youtube.com/channel/UC...).`);
-}
-
-function relativeTimeToIso(relText: string | undefined, fallbackOffsetIndex: number): string {
-  const now = Date.now();
-  if (!relText) {
-    return new Date(now - (fallbackOffsetIndex + 16) * 86400_000).toISOString();
-  }
-  const lower = relText.toLowerCase();
-  const numMatch = lower.match(/(\d+)/);
-  const num = numMatch ? parseInt(numMatch[1], 10) : 1;
-
-  let ms = 86400_000 * (fallbackOffsetIndex + 16);
-  if (lower.includes('detik') || lower.includes('second')) ms = num * 1000;
-  else if (lower.includes('menit') || lower.includes('minute')) ms = num * 60_000;
-  else if (lower.includes('jam') || lower.includes('hour')) ms = num * 3600_000;
-  else if (lower.includes('hari') || lower.includes('day')) ms = num * 86400_000;
-  else if (lower.includes('minggu') || lower.includes('week')) ms = num * 7 * 86400_000;
-  else if (lower.includes('bulan') || lower.includes('month')) ms = num * 30 * 86400_000;
-  else if (lower.includes('tahun') || lower.includes('year')) ms = num * 365 * 86400_000;
-
-  return new Date(now - ms - fallbackOffsetIndex * 1000).toISOString();
-}
-
-function parseBrowseVideoItems(
-  items: any[],
-  channelId: string,
-  channelTitle: string,
-  startIndex: number
-): { videos: VideoItem[]; continuationToken: string | null } {
-  const videos: VideoItem[] = [];
-  let continuationToken: string | null = null;
-
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    if (item?.continuationItemRenderer) {
-      const token =
-        item.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
-      if (token) continuationToken = token;
-      continue;
-    }
-
-    const lockup = item?.richItemRenderer?.content?.lockupViewModel;
-    if (lockup && lockup.contentId) {
-      const videoId = String(lockup.contentId);
-      const title =
-        lockup.metadata?.lockupMetadataViewModel?.title?.content || 'Untitled Video';
-      const sources = lockup.contentImage?.thumbnailViewModel?.image?.sources || [];
-      const thumbnail =
-        sources[sources.length - 1]?.url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-      const rows =
-        lockup.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel
-          ?.metadataRows || [];
-      const parts = rows[0]?.metadataParts || [];
-      const viewsText = parts[0]?.text?.content;
-      const relText = parts[1]?.text?.content;
-
-      videos.push({
-        id: videoId,
-        title,
-        publishedAt: relativeTimeToIso(relText, startIndex + i),
-        thumbnail,
-        channelId,
-        channelTitle,
-        description: '',
-        views: viewsText,
-      });
-      continue;
-    }
-
-    const vr = item?.richItemRenderer?.content?.videoRenderer || item?.gridVideoRenderer;
-    if (vr && vr.videoId) {
-      const videoId = String(vr.videoId);
-      const title =
-        vr.title?.runs?.[0]?.text || vr.title?.simpleText || 'Untitled Video';
-      const thumbs = vr.thumbnail?.thumbnails || [];
-      const thumbnail =
-        thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-      const viewsText = vr.shortViewCountText?.simpleText || vr.viewCountText?.simpleText;
-      const relText = vr.publishedTimeText?.simpleText;
-
-      videos.push({
-        id: videoId,
-        title,
-        publishedAt: relativeTimeToIso(relText, startIndex + i),
-        thumbnail,
-        channelId,
-        channelTitle,
-        description: '',
-        views: viewsText,
-      });
-    }
-  }
-
-  return { videos, continuationToken };
-}
-
-async function fetchPaginatedChannelVideos(
-  channelId: string,
-  channelTitle: string,
-  maxPages = 5
-): Promise<{ videos: VideoItem[]; avatar?: string; resolvedTitle?: string }> {
-  const allVideos: VideoItem[] = [];
-  let avatar: string | undefined;
-  let resolvedTitle: string | undefined;
-
-  try {
-    const res = await fetchWithTimeout(
-      `https://www.youtube.com/channel/${channelId}/videos`,
-      {},
-      10000
-    );
-    if (!res.ok) return { videos: allVideos };
-    const html = await res.text();
-    const match = html.match(/var ytInitialData = (\{[\s\S]*?\});<\/script>/);
-    if (!match) return { videos: allVideos };
-
-    const data = JSON.parse(match[1]);
-    avatar =
-      data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources?.slice(-1)?.[0]?.url ||
-      data?.header?.c4TabbedHeaderRenderer?.avatar?.thumbnails?.slice(-1)?.[0]?.url;
-    resolvedTitle =
-      data?.metadata?.channelMetadataRenderer?.title ||
-      data?.header?.pageHeaderRenderer?.pageTitle;
-
-    const effectiveTitle = resolvedTitle || channelTitle;
-    const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
-    const videosTab =
-      tabs.find((t: any) => t.tabRenderer?.selected) ||
-      tabs.find((t: any) => t.tabRenderer?.content?.richGridRenderer);
-    const items = videosTab?.tabRenderer?.content?.richGridRenderer?.contents || [];
-
-    const firstPage = parseBrowseVideoItems(items, channelId, effectiveTitle, 0);
-    allVideos.push(...firstPage.videos);
-
-    let token = firstPage.continuationToken;
-    let page = 1;
-    while (token && page < maxPages) {
-      const apiRes = await fetchWithTimeout(
-        'https://www.youtube.com/youtubei/v1/browse?prettyPrint=false',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            context: {
-              client: { clientName: 'WEB', clientVersion: '2.20240501.00.00', hl: 'id' },
-            },
-            continuation: token,
-          }),
-        },
-        7000
-      );
-      if (!apiRes.ok) break;
-      const apiJson = await apiRes.json();
-      const contItems =
-        apiJson?.onResponseReceivedActions?.[0]?.appendContinuationItemsAction
-          ?.continuationItems || [];
-      if (contItems.length === 0) break;
-
-      const nextPage = parseBrowseVideoItems(
-        contItems,
-        channelId,
-        effectiveTitle,
-        allVideos.length
-      );
-      allVideos.push(...nextPage.videos);
-      token = nextPage.continuationToken;
-      page++;
-    }
-  } catch (err) {
-    console.warn(`Pagination fetch skipped for ${channelId}:`, err);
-  }
-
-  return { videos: allVideos, avatar, resolvedTitle };
-}
-
-async function fetchChannelRss(channelId: string): Promise<{ channel: ChannelData; videos: VideoItem[] }> {
-  const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-
-  const [rssResult, browseResult] = await Promise.allSettled([
-    (async () => {
-      const res = await fetchWithTimeout(rssUrl, {}, 8000);
-      if (res.ok) {
-        const xml = await res.text();
-        const parsed = parseYouTubeRss(xml);
-        if (parsed.channel.id) return parsed;
-      }
-      return null;
-    })(),
-    fetchPaginatedChannelVideos(channelId, `Channel ${channelId.slice(0, 8)}`, 5),
-  ]);
-
-  const rssData = rssResult.status === 'fulfilled' ? rssResult.value : null;
-  const browseData =
-    browseResult.status === 'fulfilled' ? browseResult.value : { videos: [] };
-
-  if (rssData || browseData.videos.length > 0) {
-    const baseChannel: ChannelData = rssData?.channel || {
-      id: channelId,
-      title: browseData.resolvedTitle || `Channel ${channelId.slice(0, 8)}...`,
-      url: `https://www.youtube.com/channel/${channelId}`,
-      avatar: browseData.avatar || `https://avatar.vercel.sh/${channelId}?size=120`,
-    };
-    if (browseData.avatar) baseChannel.avatar = browseData.avatar;
-    if (browseData.resolvedTitle && (!baseChannel.title || baseChannel.title.startsWith('Channel '))) {
-      baseChannel.title = browseData.resolvedTitle;
-    }
-
-    const mergedMap = new Map<string, VideoItem>();
-    for (const v of rssData?.videos || []) {
-      mergedMap.set(v.id, v);
-    }
-    for (const v of browseData.videos) {
-      if (!mergedMap.has(v.id)) {
-        mergedMap.set(v.id, { ...v, channelTitle: baseChannel.title });
-      }
-    }
-
-    return {
-      channel: baseChannel,
-      videos: Array.from(mergedMap.values()),
-    };
-  }
-
-  // Fallback to presets if available
-  if (PRESET_CHANNELS[channelId]) {
-    return PRESET_CHANNELS[channelId];
-  }
-
-  // Minimal fallback
-  return {
-    channel: {
-      id: channelId,
-      title: `Channel ${channelId.slice(0, 8)}...`,
-      url: `https://www.youtube.com/channel/${channelId}`,
-      avatar: `https://avatar.vercel.sh/${channelId}?size=120`,
-    },
-    videos: [],
-  };
-}
 
 async function startServer() {
   const app = express();
@@ -724,8 +30,8 @@ async function startServer() {
     );
     if (req.path.startsWith('/api/')) {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
       if (req.method === 'OPTIONS') {
         res.status(204).end();
         return;
@@ -743,7 +49,7 @@ async function startServer() {
     res.json({ presets });
   });
 
-  // API: Resolve input and return channel data + recent videos
+  // API: Resolve input and return channel data + all fetched videos
   app.post('/api/youtube/resolve', async (req: Request, res: Response) => {
     try {
       const { input } = req.body;
@@ -823,7 +129,7 @@ async function startServer() {
   });
 
   // API: Stream native audio directly (for mobile background / lock-screen playback)
-  app.get('/api/youtube/audio-stream', async (req: Request, res: Response) => {
+  const handleAudioStream = async (req: Request, res: Response) => {
     try {
       const videoId = typeof req.query.videoId === 'string' ? req.query.videoId.trim() : '';
       if (!videoId) {
@@ -831,7 +137,7 @@ async function startServer() {
         return;
       }
 
-      const streamInfo = await resolveAudioStreamUrl(videoId);
+      let streamInfo = await resolveAudioStreamUrl(videoId);
       if (req.query.check === '1') {
         res.status(200).json({ available: Boolean(streamInfo) });
         return;
@@ -841,21 +147,31 @@ async function startServer() {
         return;
       }
 
-      const headers: Record<string, string> = {
-        'User-Agent':
-          'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-      };
-      if (req.headers.range) {
-        headers['Range'] = String(req.headers.range);
-      }
-
       const controller = new AbortController();
       req.on('close', () => controller.abort());
 
-      const upstream = await fetch(streamInfo.url, {
-        headers,
-        signal: controller.signal,
-      });
+      const fetchUpstream = async (info: NonNullable<typeof streamInfo>) => {
+        const headers: Record<string, string> = {
+          'User-Agent': info.userAgent,
+        };
+        if (req.headers.range) {
+          headers['Range'] = String(req.headers.range);
+        }
+        return fetch(info.url, {
+          headers,
+          signal: controller.signal,
+        });
+      };
+
+      let upstream = await fetchUpstream(streamInfo);
+      if (upstream.status === 403 || upstream.status === 410) {
+        invalidateAudioStreamCache(videoId);
+        const refreshed = await resolveAudioStreamUrl(videoId);
+        if (refreshed) {
+          streamInfo = refreshed;
+          upstream = await fetchUpstream(refreshed);
+        }
+      }
 
       if (!upstream.ok && upstream.status !== 206) {
         res.status(502).json({ error: `Upstream audio status ${upstream.status}` });
@@ -872,6 +188,11 @@ async function startServer() {
 
       const contentRange = upstream.headers.get('content-range');
       if (contentRange) res.setHeader('Content-Range', contentRange);
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
 
       if (!upstream.body) {
         res.status(502).end();
@@ -890,7 +211,10 @@ async function startServer() {
         res.status(500).json({ error: message });
       }
     }
-  });
+  };
+
+  app.get('/api/youtube/audio-stream', handleAudioStream);
+  app.head('/api/youtube/audio-stream', handleAudioStream);
 
   // Setup Vite middlewares for dev or static files for prod
   if (process.env.NODE_ENV === 'production') {

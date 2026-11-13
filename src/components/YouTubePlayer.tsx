@@ -20,7 +20,7 @@ interface YouTubePlayerProps {
   onStateChange: (isPlaying: boolean) => void;
   onEnded: () => void;
   onError?: (err: any) => void;
-  seekCommand: number | null; // Triggered when user scrubs or skips
+  seekCommand: number | null;
   onSeekHandled: () => void;
   initialSeekSeconds?: number;
 }
@@ -28,7 +28,6 @@ interface YouTubePlayerProps {
 export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   currentVideo,
   isPlaying,
-  mode,
   isVisible,
   playbackRate,
   volume,
@@ -43,9 +42,15 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 }) => {
   const playerRef = useRef<any>(null);
   const isReadyRef = useRef<boolean>(false);
-  const timeIntervalRef = useRef<any>(null);
+  const timeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const verifyPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intendedPlayingRef = useRef<boolean>(isPlaying);
   const hiddenResumeCountRef = useRef<number>(0);
+  const initialSeekSecondsRef = useRef<number>(initialSeekSeconds);
+  const isPlayingRef = useRef<boolean>(isPlaying);
+
+  initialSeekSecondsRef.current = initialSeekSeconds;
+  isPlayingRef.current = isPlaying;
 
   useEffect(() => {
     intendedPlayingRef.current = isPlaying;
@@ -54,7 +59,6 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     }
   }, [isPlaying]);
 
-  // Poll current time when playing
   const startTimePolling = useCallback(() => {
     if (timeIntervalRef.current) clearInterval(timeIntervalRef.current);
     timeIntervalRef.current = setInterval(() => {
@@ -80,11 +84,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   // Initialize YT Player API
   useEffect(() => {
     const initPlayer = () => {
-      if (!window.YT || !window.YT.Player) return;
-
-      if (playerRef.current) {
-        return;
-      }
+      if (!window.YT || !window.YT.Player || playerRef.current) return;
 
       playerRef.current = new window.YT.Player('yt-embedded-instance', {
         height: '100%',
@@ -100,6 +100,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           iv_load_policy: 3,
           fs: 1,
           enablejsapi: 1,
+          start: initialSeekSecondsRef.current > 0 ? Math.floor(initialSeekSecondsRef.current) : 0,
           origin: window.location.origin,
         },
         events: {
@@ -117,9 +118,21 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             } catch {
               // ignore
             }
-            event.target.setVolume(isMuted ? 0 : volume);
-            event.target.setPlaybackRate(playbackRate);
-            if (isPlaying && currentVideo) {
+            if (isMuted) {
+              event.target.mute?.();
+            } else {
+              event.target.unMute?.();
+              event.target.setVolume?.(volume);
+            }
+            event.target.setPlaybackRate?.(playbackRate);
+            if (initialSeekSecondsRef.current > 0) {
+              try {
+                event.target.seekTo?.(Math.floor(initialSeekSecondsRef.current), true);
+              } catch {
+                // ignore
+              }
+            }
+            if (isPlayingRef.current && currentVideo) {
               event.target.playVideo();
               startTimePolling();
             }
@@ -128,26 +141,50 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             // YT.PlayerState: -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 video cued
             if (event.data === 1) {
               hiddenResumeCountRef.current = 0;
+              if (verifyPauseTimerRef.current) {
+                clearTimeout(verifyPauseTimerRef.current);
+                verifyPauseTimerRef.current = null;
+              }
               onStateChange(true);
               startTimePolling();
             } else if (event.data === 2) {
-              // If tab is in background/minimized and user intended to play,
-              // don't force a UI pause; keep trying to play.
+              // When minimized/backgrounded, retry at most 2 quick times.
+              // If the browser/OS still blocks iframe audio, sync UI & notification to paused
+              // so the user never sees a silent "playing" notification.
               if (
                 typeof document !== 'undefined' &&
                 document.visibilityState === 'hidden' &&
-                intendedPlayingRef.current
+                intendedPlayingRef.current &&
+                hiddenResumeCountRef.current < 2
               ) {
+                hiddenResumeCountRef.current += 1;
                 try {
                   playerRef.current?.playVideo?.();
                 } catch {
                   // ignore
                 }
+                if (verifyPauseTimerRef.current) clearTimeout(verifyPauseTimerRef.current);
+                verifyPauseTimerRef.current = setTimeout(() => {
+                  try {
+                    const state = playerRef.current?.getPlayerState?.();
+                    if (state !== 1 && state !== 3) {
+                      onStateChange(false);
+                      stopTimePolling();
+                    }
+                  } catch {
+                    onStateChange(false);
+                    stopTimePolling();
+                  }
+                }, 700);
                 return;
               }
               onStateChange(false);
               stopTimePolling();
             } else if (event.data === 0) {
+              if (verifyPauseTimerRef.current) {
+                clearTimeout(verifyPauseTimerRef.current);
+                verifyPauseTimerRef.current = null;
+              }
               onStateChange(false);
               stopTimePolling();
               onEnded();
@@ -164,7 +201,6 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     if (window.YT && window.YT.Player) {
       initPlayer();
     } else {
-      // Load script if not already added
       const existingScript = document.getElementById('youtube-iframe-api-script');
       if (!existingScript) {
         const tag = document.createElement('script');
@@ -172,7 +208,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         tag.src = 'https://www.youtube.com/iframe_api';
         tag.async = true;
         tag.onerror = () => {
-          console.warn('YouTube IFrame API gagal dimuat (mungkin diblokir oleh ekstensi atau jaringan).');
+          console.warn('YouTube IFrame API gagal dimuat.');
           if (onError) onError('API_BLOCKED');
         };
         const firstScriptTag = document.getElementsByTagName('script')[0];
@@ -188,6 +224,10 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 
     return () => {
       stopTimePolling();
+      if (verifyPauseTimerRef.current) {
+        clearTimeout(verifyPauseTimerRef.current);
+        verifyPauseTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -197,59 +237,75 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     try {
       const currentUrl = playerRef.current.getVideoUrl ? playerRef.current.getVideoUrl() : '';
       if (!currentUrl.includes(currentVideo.id)) {
-        if (isPlaying) {
+        const startSeconds = Math.floor(initialSeekSecondsRef.current || 0);
+        if (isPlayingRef.current) {
           playerRef.current.loadVideoById({
             videoId: currentVideo.id,
-            startSeconds: Math.floor(initialSeekSeconds || 0),
+            startSeconds,
           });
           startTimePolling();
         } else {
           playerRef.current.cueVideoById({
             videoId: currentVideo.id,
-            startSeconds: Math.floor(initialSeekSeconds || 0),
+            startSeconds,
           });
         }
       }
     } catch (e) {
       console.warn('Failed to switch video', e);
     }
-  }, [currentVideo?.id]);
+  }, [currentVideo?.id, startTimePolling]);
 
-  // Keep playing when window is minimized / tab goes to background
+  // Attempt brief resume when tab moves to background; sync to paused if OS blocks it
   useEffect(() => {
-    const resumeIfNeeded = () => {
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        hiddenResumeCountRef.current = 0;
+        return;
+      }
+
       if (
         document.visibilityState === 'hidden' &&
         intendedPlayingRef.current &&
         playerRef.current &&
         isReadyRef.current
       ) {
-        try {
-          const state = playerRef.current?.getPlayerState?.();
-          if (state !== 1 && state !== 3 && intendedPlayingRef.current) {
-            playerRef.current.playVideo();
+        const retryTimer = setTimeout(() => {
+          try {
+            const state = playerRef.current?.getPlayerState?.();
+            if (state !== 1 && state !== 3 && intendedPlayingRef.current && hiddenResumeCountRef.current < 2) {
+              hiddenResumeCountRef.current += 1;
+              playerRef.current.playVideo();
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
-        }
+        }, 180);
+
+        const verifyTimer = setTimeout(() => {
+          try {
+            const state = playerRef.current?.getPlayerState?.();
+            if (intendedPlayingRef.current && state !== 1 && state !== 3) {
+              onStateChange(false);
+              stopTimePolling();
+            }
+          } catch {
+            // ignore
+          }
+        }, 850);
+
+        timers.push(retryTimer, verifyTimer);
       }
     };
 
-    const handleVisibilityChange = () => {
-      if (intendedPlayingRef.current) {
-        [50, 250, 600, 1200].forEach((delay) => {
-          setTimeout(resumeIfNeeded, delay);
-        });
-      }
-    };
-
-    const keepAliveTimer = setInterval(resumeIfNeeded, 1000);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
-      clearInterval(keepAliveTimer);
+      timers.forEach((t) => clearTimeout(t));
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
+  }, [onStateChange, stopTimePolling]);
 
   // Handle play / pause toggle
   useEffect(() => {

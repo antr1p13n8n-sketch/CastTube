@@ -24,10 +24,12 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
   const [newGroupName, setNewGroupName] = useState('');
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleStartRename = (group: ChannelGroup) => {
+    setConfirmingDeleteId(null);
     setEditingGroupId(group.id);
     setEditName(group.name);
   };
@@ -104,6 +106,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
               ? channels.length
               : channels.filter((c) => c.groupId === group.id).length;
             const isEditing = editingGroupId === group.id;
+            const isConfirmingDelete = confirmingDeleteId === group.id;
 
             return (
               <div
@@ -140,7 +143,9 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
                         {group.name}
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        {channelCount} channel terdaftar
+                        {isConfirmingDelete
+                          ? 'Pindahkan channel ke "Umum" & hapus grup ini?'
+                          : `${channelCount} channel terdaftar`}
                       </div>
                     </div>
                   )}
@@ -149,32 +154,44 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
                 {/* Actions: Rename & Delete */}
                 {!isEditing && (
                   <div className="flex items-center gap-1 shrink-0">
-                    {/* Rename Button */}
-                    <button
-                      onClick={() => handleStartRename(group)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                      title="Ganti Nama Grup"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-
-                    {/* Delete button (cannot delete default "all" or "general") */}
-                    {group.id !== 'all' && group.id !== 'general' && (
-                      <button
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Hapus grup "${group.name}"? Channel di dalamnya akan dipindahkan ke "Umum".`
-                            )
-                          ) {
+                    {isConfirmingDelete ? (
+                      <>
+                        <button
+                          onClick={() => {
                             onDeleteGroup(group.id);
-                          }
-                        }}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
-                        title="Hapus Grup"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                            setConfirmingDeleteId(null);
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-red-600 text-white hover:bg-red-700 cursor-pointer"
+                        >
+                          Hapus
+                        </button>
+                        <button
+                          onClick={() => setConfirmingDeleteId(null)}
+                          className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 cursor-pointer"
+                        >
+                          Batal
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleStartRename(group)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                          title="Ganti Nama Grup"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+
+                        {group.id !== 'all' && group.id !== 'general' && (
+                          <button
+                            onClick={() => setConfirmingDeleteId(group.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                            title="Hapus Grup"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 )}

@@ -44,6 +44,7 @@ interface PodcastPlayerProps {
   onSetSleepTimer: (minutes: number | null) => void;
   onPlayQueueItem: (video: Video) => void;
   onRemoveFromQueue: (videoId: string) => void;
+  usingNativeAudio?: boolean;
 }
 
 export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
@@ -70,6 +71,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
   onSetSleepTimer,
   onPlayQueueItem,
   onRemoveFromQueue,
+  usingNativeAudio = false,
 }) => {
   const [visualizerStyle, setVisualizerStyle] = useState<VisualizerStyle>('bars');
   const [showQueue, setShowQueue] = useState(false);
@@ -125,7 +127,9 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
               Mode Audio Saja (Podcast)
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Pengalaman mendengarkan bebas distraksi dengan visualizer audio
+              {usingNativeAudio
+                ? 'Mesin Audio Native aktif · Terus berputar saat diminimize atau layar terkunci'
+                : 'Memutar via Pemutar YouTube · Ikuti kebijakan latar belakang browser'}
             </p>
           </div>
         </div>

@@ -70,6 +70,13 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
+    const validGroups = groups.filter((g) => g.id !== 'all');
+    if (validGroups.length > 0 && !validGroups.some((g) => g.id === selectedGroupId)) {
+      setSelectedGroupId(validGroups[0].id);
+    }
+  }, [groups, selectedGroupId]);
+
+  useEffect(() => {
     if (initialPastedText) {
       const formatted = parseAndFormatLinks(initialPastedText);
       setInputText(formatted.length > 0 ? formatted.join('\n') : initialPastedText);

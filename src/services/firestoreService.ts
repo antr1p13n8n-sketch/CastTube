@@ -405,13 +405,23 @@ export async function deleteChannelInFirestore(
 export async function saveVideosInFirestore(userId: string, videos: Video[]): Promise<void> {
   const path = `users/${userId}/videos`;
   try {
-    // Only create/update up to 50 newest videos per batch to stay within free tier limits
-    const validVideos = videos.filter((v) => isValidDocId(v.id) && isValidDocId(v.channelId)).slice(0, 50);
-    for (const v of validVideos) {
-      const ref = doc(db, 'users', userId, 'videos', v.id);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        await setDoc(ref, {
+    // Only create up to 50 newest videos per batch to stay within limits
+    const validVideos = videos
+      .filter((v) => isValidDocId(v.id) && isValidDocId(v.channelId))
+      .slice(0, 50);
+    if (validVideos.length === 0) return;
+
+    const snaps = await Promise.all(
+      validVideos.map((v) => getDoc(doc(db, 'users', userId, 'videos', v.id)))
+    );
+
+    const batch = writeBatch(db);
+    let pendingCount = 0;
+
+    validVideos.forEach((v, idx) => {
+      if (!snaps[idx]?.exists()) {
+        const ref = doc(db, 'users', userId, 'videos', v.id);
+        batch.set(ref, {
           id: v.id,
           title: clampStr(v.title || 'Untitled Video', 300),
           publishedAt: clampStr(v.publishedAt || new Date().toISOString(), 64),
@@ -425,7 +435,12 @@ export async function saveVideosInFirestore(userId: string, videos: Video[]): Pr
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        pendingCount++;
       }
+    });
+
+    if (pendingCount > 0) {
+      await batch.commit();
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);

@@ -149,31 +149,42 @@ export default function App() {
     return v.length > 1 ? v.slice(1, 6) : [];
   });
   const [seekCommand, setSeekCommand] = useState<number | null>(null);
-  const [audioFallbackToIframe, setAudioFallbackToIframe] = useState<boolean>(false);
+  const [audioFallbackMap, setAudioFallbackMap] = useState<Record<string, boolean>>({});
 
-  const useNativeAudio = Boolean(currentVideo && playerMode === 'audio' && !audioFallbackToIframe);
+  const useNativeAudio = Boolean(
+    currentVideo && playerMode === 'audio' && !audioFallbackMap[currentVideo.id]
+  );
   const prevUseNativeAudioRef = useRef<boolean>(useNativeAudio);
 
   useEffect(() => {
-    setAudioFallbackToIframe(false);
     if (!currentVideo || playerMode !== 'audio') return;
+    const videoId = currentVideo.id;
+    if (audioFallbackMap[videoId] !== undefined) return;
 
     let cancelled = false;
-    fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(currentVideo.id)}&check=1`)
+    fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&check=1`)
       .then((res) => (res.ok ? res.json() : { available: false }))
       .then((data) => {
-        if (!cancelled && !data?.available) {
-          setAudioFallbackToIframe(true);
+        if (!cancelled) {
+          setAudioFallbackMap((prev) => ({
+            ...prev,
+            [videoId]: !data?.available,
+          }));
         }
       })
       .catch(() => {
-        if (!cancelled) setAudioFallbackToIframe(true);
+        if (!cancelled) {
+          setAudioFallbackMap((prev) => ({
+            ...prev,
+            [videoId]: true,
+          }));
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [currentVideo?.id, playerMode]);
+  }, [currentVideo?.id, playerMode, audioFallbackMap]);
 
   useEffect(() => {
     // When switching from native <audio> back to YouTube IFrame (video or fallback),
@@ -182,7 +193,7 @@ export default function App() {
       setSeekCommand(currentTime);
     }
     prevUseNativeAudioRef.current = useNativeAudio;
-  }, [useNativeAudio]);
+  }, [useNativeAudio, currentTime]);
 
   // Sleep Timer States
   const [sleepTimerMinutes, setSleepTimerMinutes] = useState<number | null>(null);
@@ -372,6 +383,23 @@ export default function App() {
   };
 
   // 4. Playback Controls
+  const selectVideoForPlayback = useCallback(
+    (video: Video, mode?: PlayerMode, autoPlay = true) => {
+      const saved = playbackProgressMap[video.id];
+      const resumeTime = saved?.currentTime && saved.currentTime > 0 ? saved.currentTime : 0;
+      const savedDur = saved?.duration && saved.duration > 0 ? saved.duration : 0;
+
+      lastSavedProgressTimeRef.current = resumeTime;
+      setSeekCommand(null);
+      setCurrentTime(resumeTime);
+      setDuration(savedDur);
+      setCurrentVideo(video);
+      if (mode) setPlayerMode(mode);
+      setIsPlaying(autoPlay);
+    },
+    [playbackProgressMap]
+  );
+
   const handlePlayPause = () => {
     setIsPlaying((prev) => !prev);
   };
@@ -392,20 +420,18 @@ export default function App() {
   };
 
   const handlePlayVideo = (video: Video, mode: PlayerMode = 'video') => {
-    setCurrentVideo(video);
-    setPlayerMode(mode);
-    setIsPlaying(true);
+    selectVideoForPlayback(video, mode, true);
     setActiveTab('player');
   };
 
-  const handleNextTrack = () => {
-    if (queue.length > 0) {
-      const nextVid = queue[0];
-      setQueue((prev) => prev.slice(1));
-      setCurrentVideo(nextVid);
-      setIsPlaying(true);
-    }
-  };
+  const handleNextTrack = useCallback(() => {
+    setQueue((prevQueue) => {
+      if (prevQueue.length === 0) return prevQueue;
+      const [nextVid, ...rest] = prevQueue;
+      selectVideoForPlayback(nextVid, undefined, true);
+      return rest;
+    });
+  }, [selectVideoForPlayback]);
 
   const handlePrevTrack = () => {
     handleSeek(0);
@@ -467,12 +493,15 @@ export default function App() {
     const videoIdsToDelete = videos.filter((v) => v.channelId === channelId).map((v) => v.id);
     setChannels((prev) => prev.filter((c) => c.id !== channelId));
     setVideos((prev) => prev.filter((v) => v.channelId !== channelId));
+    setQueue((prev) => prev.filter((v) => v.channelId !== channelId));
     if (selectedChannelId === channelId) {
       setSelectedChannelId(null);
     }
     if (currentVideo?.channelId === channelId) {
       setIsPlaying(false);
       setCurrentVideo(null);
+      setCurrentTime(0);
+      setDuration(0);
     }
     if (user) {
       deleteChannelInFirestore(user.uid, channelId, videoIdsToDelete).catch(console.error);
@@ -587,7 +616,11 @@ export default function App() {
     }
 
     if (newChannels.length > 0) {
-      setChannels((prev) => [...newChannels, ...prev]);
+      setChannels((prev) => {
+        const existingIds = new Set(prev.map((c) => c.id));
+        const unique = newChannels.filter((c) => !existingIds.has(c.id));
+        return unique.length > 0 ? [...unique, ...prev] : prev;
+      });
       if (user) {
         Promise.all(newChannels.map((ch) => saveChannelInFirestore(user.uid, ch))).catch(console.error);
       }
@@ -595,7 +628,11 @@ export default function App() {
 
     if (newVideos.length > 0) {
       setVideos((prev) => {
-        const combined = [...newVideos, ...prev];
+        const map = new Map(prev.map((v) => [v.id, v]));
+        for (const v of newVideos) {
+          if (!map.has(v.id)) map.set(v.id, v);
+        }
+        const combined = Array.from(map.values());
         combined.sort(
           (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
         );
@@ -605,7 +642,7 @@ export default function App() {
         saveVideosInFirestore(user.uid, newVideos).catch(console.error);
       }
       if (!currentVideo && newVideos.length > 0) {
-        setCurrentVideo(newVideos[0]);
+        selectVideoForPlayback(newVideos[0], playerMode, false);
       }
     }
 
@@ -639,11 +676,13 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.videos) && data.videos.length > 0) {
-          const existingMap = new Map(videos.map((v) => [v.id, v]));
-          data.videos.forEach((v: Video) => existingMap.set(v.id, v));
-          const merged = Array.from(existingMap.values());
-          merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-          setVideos(merged);
+          setVideos((prev) => {
+            const existingMap = new Map(prev.map((v) => [v.id, v]));
+            data.videos.forEach((v: Video) => existingMap.set(v.id, v));
+            const merged = Array.from(existingMap.values());
+            merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+            return merged;
+          });
           if (user) {
             saveVideosInFirestore(user.uid, data.videos).catch(console.error);
           }
@@ -663,6 +702,9 @@ export default function App() {
     }
   };
 
+  const syncHandlersRef = useRef({ handleRefreshFeeds, handleAddChannels });
+  syncHandlersRef.current = { handleRefreshFeeds, handleAddChannels };
+
   // Background Sync Processor: automatically runs when connection returns
   useEffect(() => {
     if (!isOnline || pendingSyncQueue.length === 0 || isBackgroundSyncing) return;
@@ -677,9 +719,9 @@ export default function App() {
         if (cancelled) break;
         try {
           if (task.type === 'REFRESH_FEEDS') {
-            await handleRefreshFeeds();
+            await syncHandlersRef.current.handleRefreshFeeds();
           } else if (task.type === 'ADD_CHANNELS') {
-            await handleAddChannels(task.inputs, task.targetGroupId);
+            await syncHandlersRef.current.handleAddChannels(task.inputs, task.targetGroupId);
           }
         } catch {
           remaining.push(task);
@@ -696,7 +738,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [isOnline, pendingSyncQueue.length]);
+  }, [isOnline, pendingSyncQueue.length, isBackgroundSyncing]);
 
   // Persist player session & progress immediately when app is minimized or closed
   useEffect(() => {
@@ -817,11 +859,9 @@ export default function App() {
   const handlePlayPlaylist = (orderedVideos: Video[], mode: PlayerMode) => {
     if (orderedVideos.length === 0) return;
     const [first, ...rest] = orderedVideos;
-    setCurrentVideo(first);
     setQueue(rest);
-    setPlayerMode(mode);
+    selectVideoForPlayback(first, mode, true);
     setActiveTab('player');
-    setIsPlaying(true);
     saveLastVideoId(first.id);
   };
 
@@ -868,7 +908,7 @@ export default function App() {
       handleMarkAsPlayed(currentVideo.id);
     }
     handleNextTrack();
-  }, [currentVideo?.id, handleMarkAsPlayed, queue, useNativeAudio]);
+  }, [currentVideo?.id, handleMarkAsPlayed, handleNextTrack, useNativeAudio]);
 
   // 9. Filter and Sort Videos
   const filteredVideos = useMemo(() => {
@@ -969,6 +1009,7 @@ export default function App() {
                 sleepTimerMinutes={sleepTimerMinutes}
                 sleepTimerExpiresAt={sleepTimerExpiresAt}
                 queue={queue}
+                usingNativeAudio={useNativeAudio}
                 onPlayPause={handlePlayPause}
                 onSeek={handleSeek}
                 onSkipBack={handleSkipBack}
@@ -985,7 +1026,7 @@ export default function App() {
               />
             </div>
 
-            {/* 1b. Native HTML5 <audio> Engine for Mode Audio Saja (stays alive when minimized or screen locked on mobile) */}
+            {/* 1b. Native HTML5 <audio> Engine for Mode Audio Saja (stays alive when minimized or screen locked on mobile/PWA/PC) */}
             {useNativeAudio && currentVideo && (
               <NativeAudioPlayer
                 currentVideo={currentVideo}
@@ -1015,7 +1056,10 @@ export default function App() {
                   }
                   handleNextTrack();
                 }}
-                onFallbackNeeded={() => setAudioFallbackToIframe(true)}
+                onFallbackNeeded={() => {
+                  const vidId = currentVideo.id;
+                  setAudioFallbackMap((prev) => ({ ...prev, [vidId]: true }));
+                }}
               />
             )}
 
@@ -1024,9 +1068,9 @@ export default function App() {
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : isPlaying
-                  ? 'fixed bottom-20 right-4 w-60 sm:w-72 aspect-video rounded-2xl overflow-hidden shadow-2xl border border-slate-300 dark:border-slate-700 z-40 bg-black transition-all'
-                  : 'fixed -bottom-96 -right-96 w-[200px] h-[112px] pointer-events-none opacity-0 overflow-hidden'
+                  : isPlaying && !useNativeAudio
+                  ? 'fixed bottom-24 right-3 w-44 sm:w-64 aspect-video rounded-2xl overflow-hidden shadow-2xl border border-slate-300 dark:border-slate-700 z-40 bg-black transition-all'
+                  : 'fixed bottom-24 right-3 w-44 aspect-video pointer-events-none opacity-0 -z-50 overflow-hidden'
               }
             >
               <VideoPlayerView
@@ -1049,7 +1093,11 @@ export default function App() {
                     playbackRate={playbackRate}
                     volume={volume}
                     isMuted={isMuted}
-                    initialSeekSeconds={playbackProgressMap[currentVideo.id]?.currentTime || 0}
+                    initialSeekSeconds={
+                      currentTime > 0
+                        ? currentTime
+                        : playbackProgressMap[currentVideo.id]?.currentTime || 0
+                    }
                     onTimeUpdate={handleYouTubeTimeUpdate}
                     onStateChange={handleYouTubeStateChange}
                     onEnded={handleYouTubeEnded}

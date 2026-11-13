@@ -48,12 +48,14 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
 
   const [editingName, setEditingName] = useState('');
   const [isRenaming, setIsRenaming] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const [pickerSearch, setPickerSearch] = useState('');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+    setConfirmingDelete(false);
     if (playlists.length > 0 && (!selectedPlaylistId || !playlists.some((p) => p.id === selectedPlaylistId))) {
       setSelectedPlaylistId(playlists[0].id);
     }
@@ -346,22 +348,41 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                           onClick={() => {
                             setEditingName(activePlaylist.name);
                             setIsRenaming(true);
+                            setConfirmingDelete(false);
                           }}
                           className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
                           title="Ganti nama playlist"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          onClick={() => {
-                            onDeletePlaylist(activePlaylist.id);
-                            setSelectedPlaylistId(null);
-                          }}
-                          className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
-                          title="Hapus playlist"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {confirmingDelete ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                onDeletePlaylist(activePlaylist.id);
+                                setSelectedPlaylistId(null);
+                                setConfirmingDelete(false);
+                              }}
+                              className="px-2 py-0.5 text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-md cursor-pointer"
+                            >
+                              Hapus
+                            </button>
+                            <button
+                              onClick={() => setConfirmingDelete(false)}
+                              className="px-2 py-0.5 text-[11px] font-semibold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-md cursor-pointer"
+                            >
+                              Batal
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmingDelete(true)}
+                            className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                            title="Hapus playlist"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     )}
                     <p className="text-xs text-slate-500 mt-0.5">
