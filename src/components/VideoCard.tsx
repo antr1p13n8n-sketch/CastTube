@@ -1,8 +1,9 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Play, Headphones, Plus, Check, ExternalLink, ListPlus, CheckCircle2 } from 'lucide-react';
+import { Play, Headphones, Plus, Check, ExternalLink, ListPlus, CheckCircle2, Download, Loader2 } from 'lucide-react';
 import { Video, PlaybackProgress } from '../types';
 import { formatRelativeTime, formatTime } from '../utils/format';
+import { AudioDownloadItem } from '../hooks/useAudioDownload';
 
 interface VideoCardProps {
   video: Video;
@@ -11,11 +12,13 @@ interface VideoCardProps {
   isInQueue: boolean;
   isPlayed?: boolean;
   progress?: PlaybackProgress;
+  downloadState?: AudioDownloadItem;
   onPlayVideo: (video: Video) => void;
   onPlayAudio: (video: Video) => void;
   onToggleQueue: (video: Video) => void;
   onAddToPlaylist?: (video: Video) => void;
   onTogglePlayed?: (videoId: string) => void;
+  onDownloadAudio?: (video: Video) => void;
 }
 
 export const VideoCard: React.FC<VideoCardProps> = ({
@@ -25,11 +28,13 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   isInQueue,
   isPlayed = false,
   progress,
+  downloadState,
   onPlayVideo,
   onPlayAudio,
   onToggleQueue,
   onAddToPlaylist,
   onTogglePlayed,
+  onDownloadAudio,
 }) => {
   const progressPct =
     progress && progress.duration > 0
@@ -226,6 +231,40 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           </div>
 
           <div className="flex items-center gap-1">
+            {onDownloadAudio && (
+              <motion.button
+                whileTap={{ scale: 0.88 }}
+                onClick={() => onDownloadAudio(video)}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
+                  downloadState?.status === 'completed'
+                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
+                    : downloadState?.status === 'preparing' || downloadState?.status === 'downloading'
+                    ? 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30'
+                    : 'text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+                title={
+                  downloadState?.status === 'preparing' || downloadState?.status === 'downloading'
+                    ? 'Klik untuk membatalkan unduhan'
+                    : 'Unduh Audio'
+                }
+              >
+                {downloadState?.status === 'preparing' || downloadState?.status === 'downloading' ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    {downloadState.progress !== null && (
+                      <span className="text-[10px] font-mono font-bold tabular-nums">
+                        {downloadState.progress}%
+                      </span>
+                    )}
+                  </>
+                ) : downloadState?.status === 'completed' ? (
+                  <Check className="w-4 h-4" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+              </motion.button>
+            )}
+
             {onTogglePlayed && (
               <motion.button
                 whileTap={{ scale: 0.88 }}

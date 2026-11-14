@@ -741,6 +741,45 @@ export function invalidateAudioStreamCache(videoId: string): void {
   audioStreamCache.delete(videoId);
 }
 
+export function getAudioFileExtension(mimeType: string): string {
+  const clean = (mimeType || '').split(';')[0].trim().toLowerCase();
+  if (clean.includes('webm')) return 'webm';
+  if (clean.includes('ogg') || clean.includes('opus')) return 'ogg';
+  if (clean.includes('mpeg') || clean.includes('mp3')) return 'mp3';
+  if (clean === 'video/mp4') return 'mp4';
+  return 'm4a';
+}
+
+export function buildAudioDownloadFilename(
+  rawTitle: string | undefined,
+  videoId: string,
+  mimeType: string
+): string {
+  const ext = getAudioFileExtension(mimeType);
+  const cleaned = (rawTitle || '')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100);
+  const baseName = cleaned || `casttube-${videoId}`;
+  return `${baseName}.${ext}`;
+}
+
+export function buildContentDispositionHeader(filename: string): string {
+  const asciiFallback =
+    filename
+      .normalize('NFKD')
+      .replace(/[^\x20-\x7E]/g, '')
+      .replace(/["\\]/g, '')
+      .replace(/\s+/g, '_')
+      .trim() || 'audio.m4a';
+  const encoded = encodeURIComponent(filename).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
 const INNERTUBE_AUDIO_CLIENTS = [
   {
     userAgent:

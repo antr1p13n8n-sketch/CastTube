@@ -3,6 +3,8 @@ import {
   resolveAudioStreamInfo,
   resolveAudioStreamUrl,
   invalidateAudioStreamCache,
+  buildAudioDownloadFilename,
+  buildContentDispositionHeader,
   VercelReq,
   VercelRes,
 } from '../_youtube.js';
@@ -11,6 +13,10 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    'Content-Disposition, Content-Length, Content-Type, X-Suggested-Filename'
+  );
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
@@ -84,10 +90,19 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       return res.status(502).json({ error: `Upstream audio status ${upstream.status}` });
     }
 
+    const resolvedMime = upstream.headers.get('content-type') || streamInfo.mimeType;
     res.status(upstream.status);
-    res.setHeader('Content-Type', upstream.headers.get('content-type') || streamInfo.mimeType);
+    res.setHeader('Content-Type', resolvedMime);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'no-store');
+
+    const dlFlag = Array.isArray(req.query.download) ? req.query.download[0] : req.query.download;
+    if (dlFlag === '1' || dlFlag === 'true') {
+      const rawTitle = Array.isArray(req.query.title) ? req.query.title[0] : req.query.title;
+      const filename = buildAudioDownloadFilename(rawTitle, videoId, resolvedMime);
+      res.setHeader('Content-Disposition', buildContentDispositionHeader(filename));
+      res.setHeader('X-Suggested-Filename', encodeURIComponent(filename));
+    }
 
     const contentLength = upstream.headers.get('content-length');
     if (contentLength) res.setHeader('Content-Length', contentLength);

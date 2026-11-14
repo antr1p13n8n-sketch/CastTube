@@ -18,9 +18,13 @@ import {
   ShieldAlert,
   ChevronDown,
   ChevronUp,
+  Download,
+  Loader2,
+  Check,
 } from 'lucide-react';
 import { NativeAudioStatus, Video, VisualizerStyle } from '../types';
-import { formatTime, formatRelativeTime } from '../utils/format';
+import { formatTime, formatRelativeTime, formatBytes } from '../utils/format';
+import { AudioDownloadItem } from '../hooks/useAudioDownload';
 import { AudioVisualizer } from './AudioVisualizer';
 
 interface PodcastPlayerProps {
@@ -49,6 +53,8 @@ interface PodcastPlayerProps {
   onRemoveFromQueue: (videoId: string) => void;
   usingNativeAudio?: boolean;
   nativeAudioStatus?: NativeAudioStatus;
+  downloadState?: AudioDownloadItem;
+  onDownloadAudio?: (video: Video) => void;
 }
 
 export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
@@ -77,6 +83,8 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
   onRemoveFromQueue,
   usingNativeAudio = false,
   nativeAudioStatus = 'checking',
+  downloadState,
+  onDownloadAudio,
 }) => {
   const [visualizerStyle, setVisualizerStyle] = useState<VisualizerStyle>('bars');
   const [showQueue, setShowQueue] = useState(false);
@@ -150,6 +158,52 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Download Audio button */}
+          {onDownloadAudio && (
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => onDownloadAudio(currentVideo)}
+              disabled={nativeAudioStatus === 'live_stream'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                downloadState?.status === 'completed'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                  : downloadState?.status === 'preparing' || downloadState?.status === 'downloading'
+                  ? 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400'
+                  : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+              title={
+                nativeAudioStatus === 'live_stream'
+                  ? 'Siaran Live tidak dapat diunduh'
+                  : downloadState?.status === 'downloading' || downloadState?.status === 'preparing'
+                  ? 'Klik untuk membatalkan unduhan'
+                  : 'Unduh Audio Offline'
+              }
+            >
+              {downloadState?.status === 'preparing' || downloadState?.status === 'downloading' ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="tabular-nums">
+                    {downloadState.progress !== null
+                      ? `${downloadState.progress}%`
+                      : downloadState.loadedBytes > 0
+                      ? formatBytes(downloadState.loadedBytes)
+                      : 'Menyiapkan...'}
+                  </span>
+                </>
+              ) : downloadState?.status === 'completed' ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span className="hidden sm:inline">Tersimpan</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4 text-red-600 dark:text-red-400" />
+                  <span className="hidden sm:inline">Unduh Audio</span>
+                </>
+              )}
+            </motion.button>
+          )}
+
           {/* Switch to video button */}
           <motion.button
             whileTap={{ scale: 0.95 }}

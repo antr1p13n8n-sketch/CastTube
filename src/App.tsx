@@ -11,6 +11,9 @@ import {
   Sparkles,
   Clipboard,
   Trash2,
+  Check,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
@@ -70,6 +73,7 @@ import {
 } from './utils/storage';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useBackgroundAudio } from './hooks/useBackgroundAudio';
+import { useAudioDownload } from './hooks/useAudioDownload';
 import { Header } from './components/Header';
 import { OfflineBanner } from './components/OfflineBanner';
 import { VideoCard } from './components/VideoCard';
@@ -123,6 +127,14 @@ export default function App() {
   const isOnline = useOnlineStatus();
   const [pendingSyncQueue, setPendingSyncQueue] = useState<PendingSyncTask[]>(loadPendingSyncQueue);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState<boolean>(false);
+
+  // Audio Download Manager
+  const {
+    downloads: audioDownloads,
+    notice: downloadNotice,
+    startDownload: handleDownloadAudio,
+    dismissNotice: dismissDownloadNotice,
+  } = useAudioDownload();
 
   // Playback Progress Persistence Map
   const [playbackProgressMap, setPlaybackProgressMap] = useState<Record<string, PlaybackProgress>>(
@@ -1156,6 +1168,8 @@ export default function App() {
                 queue={queue}
                 usingNativeAudio={useNativeAudio}
                 nativeAudioStatus={currentAudioStatus}
+                downloadState={audioDownloads[currentVideo.id]}
+                onDownloadAudio={handleDownloadAudio}
                 onPlayPause={handlePlayPause}
                 onSeek={handleSeek}
                 onSkipBack={handleSkipBack}
@@ -1201,6 +1215,8 @@ export default function App() {
                 }}
                 onPlayVideo={(v) => handlePlayVideo(v, 'video')}
                 onRemoveFromQueue={handleRemoveFromQueue}
+                downloadState={audioDownloads[currentVideo.id]}
+                onDownloadAudio={handleDownloadAudio}
                 playerSlot={
                   <YouTubePlayer
                     currentVideo={currentVideo}
@@ -1568,10 +1584,12 @@ export default function App() {
                   isInQueue={queue.some((q) => q.id === video.id)}
                   isPlayed={playedVideoIds.includes(video.id)}
                   progress={playbackProgressMap[video.id]}
+                  downloadState={audioDownloads[video.id]}
                   onPlayVideo={(v) => handlePlayVideo(v, 'video')}
                   onPlayAudio={(v) => handlePlayVideo(v, 'audio')}
                   onToggleQueue={handleToggleQueue}
                   onTogglePlayed={handleTogglePlayed}
+                  onDownloadAudio={handleDownloadAudio}
                   onAddToPlaylist={(v) => {
                     setVideoToAddToPlaylist(v);
                     setIsPlaylistModalOpen(true);
@@ -1810,6 +1828,46 @@ export default function App() {
                 </motion.button>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Audio Download Status Toast */}
+      <AnimatePresence>
+        {downloadNotice && (
+          <motion.div
+            key={`dl-notice-${downloadNotice.videoId}-${downloadNotice.type}`}
+            initial={{ opacity: 0, y: 16, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.96 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md pointer-events-auto"
+          >
+            <div
+              className={`flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs ${
+                downloadNotice.type === 'success'
+                  ? 'bg-emerald-950/90 border-emerald-700/80 text-emerald-50'
+                  : 'bg-red-950/90 border-red-700/80 text-red-50'
+              }`}
+            >
+              {downloadNotice.type === 'success' ? (
+                <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              )}
+              <div className="flex-1 min-w-0 text-left">
+                <div className="font-bold truncate">{downloadNotice.title}</div>
+                <div className="opacity-90 break-words">{downloadNotice.message}</div>
+              </div>
+              <button
+                type="button"
+                onClick={dismissDownloadNotice}
+                className="p-1 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                title="Tutup"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

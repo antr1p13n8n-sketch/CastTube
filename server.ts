@@ -10,6 +10,8 @@ import {
   resolveAudioStreamInfo,
   resolveAudioStreamUrl,
   invalidateAudioStreamCache,
+  buildAudioDownloadFilename,
+  buildContentDispositionHeader,
   searchYouTubeChannels,
   VideoItem,
   ChannelData,
@@ -34,6 +36,10 @@ async function startServer() {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        'Content-Disposition, Content-Length, Content-Type, X-Suggested-Filename'
+      );
       if (req.method === 'OPTIONS') {
         res.status(204).end();
         return;
@@ -205,10 +211,18 @@ async function startServer() {
         return;
       }
 
+      const resolvedMime = upstream.headers.get('content-type') || streamInfo.mimeType;
       res.status(upstream.status);
-      res.setHeader('Content-Type', upstream.headers.get('content-type') || streamInfo.mimeType);
+      res.setHeader('Content-Type', resolvedMime);
       res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Cache-Control', 'no-store');
+
+      if (req.query.download === '1' || req.query.download === 'true') {
+        const rawTitle = typeof req.query.title === 'string' ? req.query.title : undefined;
+        const filename = buildAudioDownloadFilename(rawTitle, videoId, resolvedMime);
+        res.setHeader('Content-Disposition', buildContentDispositionHeader(filename));
+        res.setHeader('X-Suggested-Filename', encodeURIComponent(filename));
+      }
 
       const contentLength = upstream.headers.get('content-length');
       if (contentLength) res.setHeader('Content-Length', contentLength);
