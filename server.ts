@@ -125,7 +125,7 @@ async function startServer() {
       }
 
       const results = await Promise.allSettled(
-        channelIds.slice(0, 20).map((id) => fetchChannelRss(id))
+        channelIds.slice(0, 20).map((id) => fetchChannelRss(id, 2))
       );
 
       const allVideos: VideoItem[] = [];

@@ -53,6 +53,7 @@ interface PodcastPlayerProps {
   onRemoveFromQueue: (videoId: string) => void;
   usingNativeAudio?: boolean;
   nativeAudioStatus?: NativeAudioStatus;
+  isVisible?: boolean;
   downloadState?: AudioDownloadItem;
   onDownloadAudio?: (video: Video) => void;
 }
@@ -83,6 +84,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
   onRemoveFromQueue,
   usingNativeAudio = false,
   nativeAudioStatus = 'checking',
+  isVisible = true,
   downloadState,
   onDownloadAudio,
 }) => {
@@ -117,19 +119,19 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
 
   return (
     <div className="relative w-full max-w-4xl mx-auto rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden p-6 md:p-8 transition-colors duration-200">
-      {/* Background ambient lighting */}
-      <motion.div
-        animate={isPlaying ? { scale: [1, 1.12, 1], opacity: [0.22, 0.34, 0.22] } : { scale: 1, opacity: 0.18 }}
-        transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
-        className="absolute -top-32 -left-32 w-80 h-80 rounded-full blur-3xl pointer-events-none"
+      {/* Static GPU-friendly ambient lighting */}
+      <div
+        className={`absolute -top-32 -left-32 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
+          isPlaying ? 'opacity-28' : 'opacity-15'
+        }`}
         style={{
           background: 'radial-gradient(circle, #ef4444 0%, #f97316 70%, transparent 100%)',
         }}
       />
-      <motion.div
-        animate={isPlaying ? { scale: [1.05, 0.95, 1.05], opacity: [0.16, 0.28, 0.16] } : { scale: 1, opacity: 0.14 }}
-        transition={{ duration: 5.2, repeat: Infinity, ease: 'easeInOut' }}
-        className="absolute -bottom-32 -right-32 w-80 h-80 rounded-full blur-3xl pointer-events-none"
+      <div
+        className={`absolute -bottom-32 -right-32 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
+          isPlaying ? 'opacity-22' : 'opacity-12'
+        }`}
         style={{
           background: 'radial-gradient(circle, #6366f1 0%, #a855f7 70%, transparent 100%)',
         }}
@@ -371,6 +373,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
           <div className="relative w-full h-24 mb-4 rounded-2xl bg-slate-100 dark:bg-slate-950/70 border border-slate-200/80 dark:border-slate-800 overflow-hidden shadow-inner flex items-center justify-center">
             <AudioVisualizer
               isPlaying={isPlaying}
+              isVisible={isVisible}
               style={visualizerStyle}
               playbackRate={playbackRate}
             />

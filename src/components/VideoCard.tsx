@@ -21,7 +21,7 @@ interface VideoCardProps {
   onDownloadAudio?: (video: Video) => void;
 }
 
-export const VideoCard: React.FC<VideoCardProps> = ({
+export const VideoCard: React.FC<VideoCardProps> = React.memo(({
   video,
   index = 0,
   isCurrentlyPlaying,
@@ -40,16 +40,17 @@ export const VideoCard: React.FC<VideoCardProps> = ({
     progress && progress.duration > 0
       ? Math.min(100, Math.max(0, (progress.currentTime / progress.duration) * 100))
       : 0;
+  const shouldStagger = index < 8;
   return (
     <motion.div
-      initial={{ opacity: 0, y: 14 }}
+      initial={shouldStagger ? { opacity: 0, y: 10 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{
-        duration: 0.24,
-        delay: Math.min(index, 11) * 0.024,
+        duration: 0.18,
+        delay: shouldStagger ? index * 0.02 : 0,
         ease: [0.16, 1, 0.3, 1],
       }}
-      whileHover={{ y: -4, transition: { duration: 0.16, ease: [0.16, 1, 0.3, 1] } }}
+      whileHover={{ y: -3, transition: { duration: 0.14 } }}
       className={`group relative flex flex-col rounded-2xl bg-white dark:bg-slate-900 border transition-all duration-200 overflow-hidden hover:shadow-xl ${
         isCurrentlyPlaying
           ? 'border-red-500 ring-2 ring-red-500/20'
@@ -61,6 +62,8 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         <img
           src={video.thumbnail}
           alt={video.title}
+          loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           onError={(e) => {
             const img = e.currentTarget;
@@ -294,4 +297,4 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       </div>
     </motion.div>
   );
-};
+});

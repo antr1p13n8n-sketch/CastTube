@@ -7,7 +7,7 @@ interface OfflineBannerProps {
   pendingCount: number;
 }
 
-export const OfflineBanner: React.FC<OfflineBannerProps> = ({
+export const OfflineBanner: React.FC<OfflineBannerProps> = React.memo(({
   isOnline,
   isSyncing,
   pendingCount,
@@ -40,4 +40,4 @@ export const OfflineBanner: React.FC<OfflineBannerProps> = ({
       </div>
     </div>
   );
-};
+});

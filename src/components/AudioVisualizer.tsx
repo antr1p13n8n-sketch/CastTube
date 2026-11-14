@@ -3,6 +3,7 @@ import { VisualizerStyle } from '../types';
 
 interface AudioVisualizerProps {
   isPlaying: boolean;
+  isVisible?: boolean;
   style?: VisualizerStyle;
   playbackRate?: number;
   className?: string;
@@ -10,6 +11,7 @@ interface AudioVisualizerProps {
 
 export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
   isPlaying,
+  isVisible = true,
   style = 'wave',
   playbackRate = 1.0,
   className = '',
@@ -17,21 +19,21 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animFrameIdRef = useRef<number | null>(null);
   const phaseRef = useRef<number>(0);
-  const energyRef = useRef<number>(0);
+  const energyRef = useRef<number>(isPlaying ? 1 : 0.05);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !isVisible) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let dpr = window.devicePixelRatio || 1;
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
 
     const resize = () => {
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      dpr = window.devicePixelRatio || 1;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.max(rect.width * dpr, 200);
       canvas.height = Math.max(rect.height * dpr, 80);
     };
@@ -39,7 +41,10 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     resize();
     window.addEventListener('resize', resize);
 
+    let stopped = false;
+
     const render = () => {
+      if (stopped) return;
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
 
@@ -49,11 +54,11 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 
       // Smooth energy transition
       const targetEnergy = isPlaying ? 1 : 0.05;
-      energyRef.current += (targetEnergy - energyRef.current) * 0.08;
+      energyRef.current += (targetEnergy - energyRef.current) * 0.1;
       const energy = energyRef.current;
 
       // Advance phase based on playbackRate
-      phaseRef.current += (0.04 * (isPlaying ? playbackRate : 0.2));
+      phaseRef.current += 0.04 * (isPlaying ? playbackRate : 0.15);
       const phase = phaseRef.current;
 
       const isDarkMode = document.documentElement.classList.contains('dark');
@@ -69,18 +74,27 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
       }
 
       ctx.restore();
+
+      // Stop 60fps rAF completely once paused and settled to save CPU/battery
+      if (!isPlaying && energy <= 0.06) {
+        animFrameIdRef.current = null;
+        return;
+      }
+
       animFrameIdRef.current = requestAnimationFrame(render);
     };
 
     animFrameIdRef.current = requestAnimationFrame(render);
 
     return () => {
+      stopped = true;
       window.removeEventListener('resize', resize);
       if (animFrameIdRef.current) {
         cancelAnimationFrame(animFrameIdRef.current);
+        animFrameIdRef.current = null;
       }
     };
-  }, [isPlaying, style, playbackRate]);
+  }, [isPlaying, isVisible, style, playbackRate]);
 
   return (
     <canvas
@@ -112,7 +126,7 @@ function renderWave(
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    for (let x = 0; x <= width; x += 3) {
+    for (let x = 0; x <= width; x += 4) {
       // Envelope so waves taper cleanly at left and right edges
       const normalizedX = x / width;
       const envelope = Math.sin(normalizedX * Math.PI);
@@ -145,10 +159,21 @@ function renderBars(
   const centerY = height / 2;
   const maxAmp = (height / 2) * 0.85;
 
+  const gradient = ctx.createLinearGradient(0, 0, 0, height);
+  if (isDark) {
+    gradient.addColorStop(0, '#f87171');
+    gradient.addColorStop(0.5, '#ef4444');
+    gradient.addColorStop(1, '#b91c1c');
+  } else {
+    gradient.addColorStop(0, '#ef4444');
+    gradient.addColorStop(0.5, '#dc2626');
+    gradient.addColorStop(1, '#991b1b');
+  }
+  ctx.fillStyle = gradient;
+
   for (let i = 0; i < barCount; i++) {
     const x = i * (barWidth + gap);
     const normalized = i / barCount;
-    // Harmonic bell curve center
     const bell = Math.sin(normalized * Math.PI);
 
     const val1 = Math.sin(i * 0.45 + phase * 1.5);
@@ -156,19 +181,6 @@ function renderBars(
     const rawVal = Math.abs(val1 * 0.6 + val2 * 0.4);
     const barHeight = Math.max(rawVal * maxAmp * energy * bell, 4);
 
-    const gradient = ctx.createLinearGradient(0, centerY - barHeight, 0, centerY + barHeight);
-    if (isDark) {
-      gradient.addColorStop(0, '#f87171');
-      gradient.addColorStop(0.5, '#ef4444');
-      gradient.addColorStop(1, '#b91c1c');
-    } else {
-      gradient.addColorStop(0, '#ef4444');
-      gradient.addColorStop(0.5, '#dc2626');
-      gradient.addColorStop(1, '#991b1b');
-    }
-
-    ctx.fillStyle = gradient;
-    // Symmetrical rounded bar from center
     const top = centerY - barHeight;
     const h = barHeight * 2;
     const radius = Math.min(barWidth / 2, 4);

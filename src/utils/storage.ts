@@ -271,7 +271,8 @@ export function loadVideos(): Video[] {
 
 export function saveVideos(videos: Video[]) {
   try {
-    localStorage.setItem(STORAGE_KEYS.VIDEOS, JSON.stringify(videos));
+    // Keep up to 200 most recent videos in localStorage to keep startup JSON parsing instant
+    localStorage.setItem(STORAGE_KEYS.VIDEOS, JSON.stringify(videos.slice(0, 200)));
   } catch (e) {
     console.error('Failed to save videos', e);
   }
@@ -313,17 +314,24 @@ export function saveFavorites(favs: string[]) {
   }
 }
 
+let inMemoryProgressMap: Record<string, PlaybackProgress> | null = null;
+
 export function loadPlaybackProgressMap(): Record<string, PlaybackProgress> {
+  if (inMemoryProgressMap) return inMemoryProgressMap;
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PROGRESS);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') return parsed;
+      if (parsed && typeof parsed === 'object') {
+        inMemoryProgressMap = parsed;
+        return inMemoryProgressMap!;
+      }
     }
   } catch {
     // ignore
   }
-  return {};
+  inMemoryProgressMap = {};
+  return inMemoryProgressMap;
 }
 
 export function saveVideoPlaybackProgress(
@@ -331,21 +339,26 @@ export function saveVideoPlaybackProgress(
   currentTime: number,
   duration: number
 ): Record<string, PlaybackProgress> {
-  const map = loadPlaybackProgressMap();
+  const current = loadPlaybackProgressMap();
   if (videoId && currentTime >= 0) {
-    map[videoId] = {
-      videoId,
-      currentTime,
-      duration,
-      updatedAt: new Date().toISOString(),
+    const updated: Record<string, PlaybackProgress> = {
+      ...current,
+      [videoId]: {
+        videoId,
+        currentTime,
+        duration,
+        updatedAt: new Date().toISOString(),
+      },
     };
+    inMemoryProgressMap = updated;
     try {
-      localStorage.setItem(STORAGE_KEYS.PROGRESS, JSON.stringify(map));
+      localStorage.setItem(STORAGE_KEYS.PROGRESS, JSON.stringify(updated));
     } catch {
       // ignore quota error
     }
+    return updated;
   }
-  return map;
+  return current;
 }
 
 export function loadLastVideoId(): string | null {

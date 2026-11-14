@@ -20,7 +20,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     }
 
     const results = await Promise.allSettled(
-      channelIds.slice(0, 20).map((id: string) => fetchChannelRss(id))
+      channelIds.slice(0, 20).map((id: string) => fetchChannelRss(id, 2))
     );
 
     const allVideos: VideoItem[] = [];

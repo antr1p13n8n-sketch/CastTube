@@ -18,7 +18,7 @@ interface MiniPlayerBarProps {
   onToggleMode: () => void;
 }
 
-export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = ({
+export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
   currentVideo,
   isPlaying,
   currentTime,
@@ -185,4 +185,4 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = ({
       )}
     </AnimatePresence>
   );
-};
+});

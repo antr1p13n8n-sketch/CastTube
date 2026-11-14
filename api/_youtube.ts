@@ -652,14 +652,26 @@ async function fetchPaginatedChannelVideos(
   return { videos: allVideos, avatar, resolvedTitle };
 }
 
+const channelFeedCache = new Map<
+  string,
+  { data: { channel: ChannelData; videos: VideoItem[] }; expiresAt: number }
+>();
+
 export async function fetchChannelRss(
-  channelId: string
+  channelId: string,
+  maxPages = 3
 ): Promise<{ channel: ChannelData; videos: VideoItem[] }> {
+  const cacheKey = `${channelId}:${maxPages}`;
+  const cached = channelFeedCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
   const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
 
   const [rssResult, browseResult] = await Promise.allSettled([
     (async () => {
-      const res = await fetchWithTimeout(rssUrl, {}, 8000);
+      const res = await fetchWithTimeout(rssUrl, {}, 7000);
       if (res.ok) {
         const xml = await res.text();
         const parsed = parseYouTubeRss(xml);
@@ -667,7 +679,7 @@ export async function fetchChannelRss(
       }
       return null;
     })(),
-    fetchPaginatedChannelVideos(channelId, `Channel ${channelId.slice(0, 8)}`, 5),
+    fetchPaginatedChannelVideos(channelId, `Channel ${channelId.slice(0, 8)}`, maxPages),
   ]);
 
   const rssData = rssResult.status === 'fulfilled' ? rssResult.value : null;
@@ -696,10 +708,15 @@ export async function fetchChannelRss(
       }
     }
 
-    return {
+    const result = {
       channel: baseChannel,
       videos: Array.from(mergedMap.values()),
     };
+    channelFeedCache.set(cacheKey, {
+      data: result,
+      expiresAt: Date.now() + 3 * 60 * 1000,
+    });
+    return result;
   }
 
   if (PRESET_CHANNELS[channelId]) {

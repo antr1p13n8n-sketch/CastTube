@@ -37,7 +37,7 @@ interface HeaderProps {
   onSignOut: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({
+export const Header: React.FC<HeaderProps> = React.memo(({
   theme,
   onThemeChange,
   onOpenAddModal,
@@ -329,4 +329,4 @@ export const Header: React.FC<HeaderProps> = ({
       </nav>
     </header>
   );
-};
+});

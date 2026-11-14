@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import {
   Folder,
@@ -80,12 +80,23 @@ import { VideoCard } from './components/VideoCard';
 import { PodcastPlayer } from './components/PodcastPlayer';
 import { VideoPlayerView } from './components/VideoPlayerView';
 import { MiniPlayerBar } from './components/MiniPlayerBar';
-import { AddChannelModal } from './components/AddChannelModal';
-import { GroupManagerModal } from './components/GroupManagerModal';
-import { ChannelDrawer } from './components/ChannelDrawer';
-import { PlaylistModal } from './components/PlaylistModal';
 import { YouTubePlayer } from './components/YouTubePlayer';
 import { NativeAudioPlayer, NativeAudioHandle } from './components/NativeAudioPlayer';
+
+const AddChannelModal = lazy(() =>
+  import('./components/AddChannelModal').then((m) => ({ default: m.AddChannelModal }))
+);
+const GroupManagerModal = lazy(() =>
+  import('./components/GroupManagerModal').then((m) => ({ default: m.GroupManagerModal }))
+);
+const ChannelDrawer = lazy(() =>
+  import('./components/ChannelDrawer').then((m) => ({ default: m.ChannelDrawer }))
+);
+const PlaylistModal = lazy(() =>
+  import('./components/PlaylistModal').then((m) => ({ default: m.PlaylistModal }))
+);
+
+const FEED_PAGE_SIZE = 24;
 
 export default function App() {
   // Firebase Auth State
@@ -95,10 +106,36 @@ export default function App() {
   // Theme State (System, Dark, Light)
   const [themePreference, setThemePreference] = useState<ThemeMode>(loadThemePreference);
 
+  // Single-pass initial localStorage hydration to avoid repeated JSON.parse on startup
+  const initialBootRef = useRef<{
+    videos: Video[];
+    progressMap: Record<string, PlaybackProgress>;
+    lastVideoId: string | null;
+    session: ReturnType<typeof loadPlayerSessionState>;
+    initialVideo: Video | null;
+  } | null>(null);
+  if (!initialBootRef.current) {
+    const bootVideos = loadVideos();
+    const bootProgress = loadPlaybackProgressMap();
+    const bootLastId = loadLastVideoId();
+    const bootSession = loadPlayerSessionState();
+    const bootVideo =
+      (bootLastId ? bootVideos.find((item) => item.id === bootLastId) : undefined) ||
+      (bootVideos.length > 0 ? bootVideos[0] : null);
+    initialBootRef.current = {
+      videos: bootVideos,
+      progressMap: bootProgress,
+      lastVideoId: bootLastId,
+      session: bootSession,
+      initialVideo: bootVideo,
+    };
+  }
+  const boot = initialBootRef.current;
+
   // Core Data States
   const [groups, setGroups] = useState<ChannelGroup[]>(loadGroups);
   const [channels, setChannels] = useState<Channel[]>(loadChannels);
-  const [videos, setVideos] = useState<Video[]>(loadVideos);
+  const [videos, setVideos] = useState<Video[]>(boot.videos);
   const [playlists, setPlaylists] = useState<Playlist[]>(loadPlaylists);
   const [playedVideoIds, setPlayedVideoIds] = useState<string[]>(loadPlayedVideoIds);
 
@@ -121,7 +158,9 @@ export default function App() {
   const [channelToDelete, setChannelToDelete] = useState<Channel | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title'>('newest');
-  const [activeTab, setActiveTab] = useState<'feed' | 'player'>(() => loadPlayerSessionState().activeTab);
+  const [visibleCount, setVisibleCount] = useState<number>(FEED_PAGE_SIZE);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const [activeTab, setActiveTab] = useState<'feed' | 'player'>(boot.session.activeTab);
 
   // Connectivity & Background Sync States
   const isOnline = useOnlineStatus();
@@ -138,48 +177,39 @@ export default function App() {
 
   // Playback Progress Persistence Map
   const [playbackProgressMap, setPlaybackProgressMap] = useState<Record<string, PlaybackProgress>>(
-    loadPlaybackProgressMap
+    boot.progressMap
   );
   const lastSavedProgressTimeRef = useRef<number>(0);
 
   // Player States (Restores last played video and saved progress offline/online)
-  const [currentVideo, setCurrentVideo] = useState<Video | null>(() => {
-    const v = loadVideos();
-    const lastId = loadLastVideoId();
-    if (lastId) {
-      const found = v.find((item) => item.id === lastId);
-      if (found) return found;
-    }
-    return v.length > 0 ? v[0] : null;
-  });
-  const [playerMode, setPlayerMode] = useState<PlayerMode>(() => loadPlayerSessionState().playerMode);
+  const [currentVideo, setCurrentVideo] = useState<Video | null>(boot.initialVideo);
+  const [playerMode, setPlayerMode] = useState<PlayerMode>(boot.session.playerMode);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(() => {
-    const v = loadVideos();
-    const lastId = loadLastVideoId() || (v.length > 0 ? v[0].id : null);
-    if (!lastId) return 0;
-    const map = loadPlaybackProgressMap();
-    return map[lastId]?.currentTime || 0;
+    const vid = boot.initialVideo?.id;
+    return vid ? boot.progressMap[vid]?.currentTime || 0 : 0;
   });
   const [duration, setDuration] = useState<number>(() => {
-    const v = loadVideos();
-    const lastId = loadLastVideoId() || (v.length > 0 ? v[0].id : null);
-    if (!lastId) return 0;
-    const map = loadPlaybackProgressMap();
-    return map[lastId]?.duration || 0;
+    const vid = boot.initialVideo?.id;
+    return vid ? boot.progressMap[vid]?.duration || 0 : 0;
   });
+  const currentTimeRef = useRef<number>(currentTime);
+  currentTimeRef.current = currentTime;
+  const durationRef = useRef<number>(duration);
+  durationRef.current = duration;
+
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
   const [volume, setVolume] = useState<number>(85);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [queue, setQueue] = useState<Video[]>(() => {
-    const v = loadVideos();
-    return v.length > 1 ? v.slice(1, 6) : [];
-  });
+  const [queue, setQueue] = useState<Video[]>(() =>
+    boot.videos.length > 1 ? boot.videos.slice(1, 6) : []
+  );
   const [seekCommand, setSeekCommand] = useState<number | null>(null);
   const [audioStatusMap, setAudioStatusMap] = useState<Record<string, NativeAudioStatus>>({});
   const nativeAudioRef = useRef<NativeAudioHandle | null>(null);
   const autoSwitchedToAudioRef = useRef<boolean>(false);
   const probedAudioIdsRef = useRef<Set<string>>(new Set());
+  const [hasActivatedYouTube, setHasActivatedYouTube] = useState<boolean>(false);
 
   const currentAudioStatus: NativeAudioStatus = currentVideo
     ? audioStatusMap[currentVideo.id] || 'checking'
@@ -239,26 +269,62 @@ export default function App() {
 
   useEffect(() => {
     // When switching between Native <audio> and YouTube IFrame, keep playback timestamp synced
-    if (prevUseNativeAudioRef.current !== useNativeAudio && currentTime > 0) {
-      setSeekCommand(currentTime);
+    if (prevUseNativeAudioRef.current !== useNativeAudio && currentTimeRef.current > 0) {
+      setSeekCommand(currentTimeRef.current);
     }
     prevUseNativeAudioRef.current = useNativeAudio;
-  }, [useNativeAudio, currentTime]);
+  }, [useNativeAudio]);
+
+  // Defer heavy YouTube IFrame API & embed initialization until video mode or fallback actually needs it
+  useEffect(() => {
+    if (hasActivatedYouTube || !currentVideo) return;
+    const needsYouTubeNow =
+      (playerMode === 'video' && (activeTab === 'player' || isPlaying)) ||
+      (isPlaying && !useNativeAudio && !isCheckingNativeAudio);
+    if (needsYouTubeNow) {
+      setHasActivatedYouTube(true);
+    }
+  }, [
+    hasActivatedYouTube,
+    currentVideo,
+    playerMode,
+    activeTab,
+    isPlaying,
+    useNativeAudio,
+    isCheckingNativeAudio,
+  ]);
 
   // Sleep Timer States
   const [sleepTimerMinutes, setSleepTimerMinutes] = useState<number | null>(null);
   const [sleepTimerExpiresAt, setSleepTimerExpiresAt] = useState<number | null>(null);
 
-  // Modals & Drawers
+  // Modals & Drawers (track first-open so lazy bundles aren't downloaded until requested)
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
+  const [hasOpenedAddModal, setHasOpenedAddModal] = useState<boolean>(false);
   const [addModalTab, setAddModalTab] = useState<'search' | 'paste'>('search');
   const [addModalSearchQuery, setAddModalSearchQuery] = useState<string>('');
   const [pastedLinkForModal, setPastedLinkForModal] = useState<string>('');
   const [isGroupModalOpen, setIsGroupModalOpen] = useState<boolean>(false);
+  const [hasOpenedGroupModal, setHasOpenedGroupModal] = useState<boolean>(false);
   const [isChannelDrawerOpen, setIsChannelDrawerOpen] = useState<boolean>(false);
+  const [hasOpenedChannelDrawer, setHasOpenedChannelDrawer] = useState<boolean>(false);
   const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState<boolean>(false);
+  const [hasOpenedPlaylistModal, setHasOpenedPlaylistModal] = useState<boolean>(false);
   const [videoToAddToPlaylist, setVideoToAddToPlaylist] = useState<Video | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isAddModalOpen) setHasOpenedAddModal(true);
+  }, [isAddModalOpen]);
+  useEffect(() => {
+    if (isGroupModalOpen) setHasOpenedGroupModal(true);
+  }, [isGroupModalOpen]);
+  useEffect(() => {
+    if (isChannelDrawerOpen) setHasOpenedChannelDrawer(true);
+  }, [isChannelDrawerOpen]);
+  useEffect(() => {
+    if (isPlaylistModalOpen) setHasOpenedPlaylistModal(true);
+  }, [isPlaylistModalOpen]);
 
   const openSearchChannelModal = (initialQuery = '') => {
     setPastedLinkForModal('');
@@ -319,13 +385,16 @@ export default function App() {
     return () => mediaQuery.removeEventListener('change', listener);
   }, [themePreference]);
 
-  const handleThemeChange = (newTheme: ThemeMode) => {
-    setThemePreference(newTheme);
-    saveThemePreference(newTheme);
-    if (user) {
-      updateThemeInFirestore(user.uid, newTheme).catch(console.error);
-    }
-  };
+  const handleThemeChange = useCallback(
+    (newTheme: ThemeMode) => {
+      setThemePreference(newTheme);
+      saveThemePreference(newTheme);
+      if (user) {
+        updateThemeInFirestore(user.uid, newTheme).catch(console.error);
+      }
+    },
+    [user]
+  );
 
   // 1b. Firebase Auth & Real-Time Firestore Sync
   useEffect(() => {
@@ -382,7 +451,7 @@ export default function App() {
     };
   }, [user?.uid]);
 
-  const handleSignIn = async () => {
+  const handleSignIn = useCallback(async () => {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error: unknown) {
@@ -397,26 +466,33 @@ export default function App() {
       }
       console.warn('Gagal masuk dengan Google:', error);
     }
-  };
+  }, []);
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     try {
       await signOut(auth);
     } catch (error) {
       console.error('Gagal keluar dari akun Google:', error);
     }
-  };
+  }, []);
 
-  // 2. Persistence sync (LocalStorage fallback)
+  // 2. Persistence sync (LocalStorage fallback - skip redundant initial mount write)
+  const didMountPersistRef = useRef(false);
   useEffect(() => {
+    if (!didMountPersistRef.current) return;
     saveGroups(groups);
   }, [groups]);
 
   useEffect(() => {
+    if (!didMountPersistRef.current) return;
     saveChannels(channels);
   }, [channels]);
 
   useEffect(() => {
+    if (!didMountPersistRef.current) {
+      didMountPersistRef.current = true;
+      return;
+    }
     saveVideos(videos);
   }, [videos]);
 
@@ -463,34 +539,56 @@ export default function App() {
     [playbackProgressMap]
   );
 
-  const handlePlayPause = () => {
-    if (!isPlaying) {
-      nativeAudioRef.current?.unlock();
-    }
-    setIsPlaying((prev) => !prev);
-  };
+  const handlePlayPause = useCallback(() => {
+    setIsPlaying((prev) => {
+      if (!prev) {
+        nativeAudioRef.current?.unlock();
+      }
+      return !prev;
+    });
+  }, []);
 
-  const handleSeek = (seconds: number) => {
+  const handleSeek = useCallback((seconds: number) => {
     setCurrentTime(seconds);
     setSeekCommand(seconds);
-  };
+  }, []);
 
-  const handleSkipBack = (secs: number = 15) => {
-    const target = Math.max(0, currentTime - secs);
-    handleSeek(target);
-  };
+  const handleSkipBack = useCallback(
+    (secs: number = 15) => {
+      const target = Math.max(0, currentTimeRef.current - secs);
+      handleSeek(target);
+    },
+    [handleSeek]
+  );
 
-  const handleSkipForward = (secs: number = 30) => {
-    const target = Math.min(duration || Infinity, currentTime + secs);
-    handleSeek(target);
-  };
+  const handleSkipForward = useCallback(
+    (secs: number = 30) => {
+      const dur = durationRef.current;
+      const target = Math.min(dur || Infinity, currentTimeRef.current + secs);
+      handleSeek(target);
+    },
+    [handleSeek]
+  );
 
-  const handlePlayVideo = (video: Video, mode: PlayerMode = 'video') => {
-    nativeAudioRef.current?.unlock();
-    autoSwitchedToAudioRef.current = false;
-    selectVideoForPlayback(video, mode, true);
-    setActiveTab('player');
-  };
+  const handlePlayVideo = useCallback(
+    (video: Video, mode: PlayerMode = 'video') => {
+      nativeAudioRef.current?.unlock();
+      autoSwitchedToAudioRef.current = false;
+      selectVideoForPlayback(video, mode, true);
+      setActiveTab('player');
+    },
+    [selectVideoForPlayback]
+  );
+
+  const handlePlayVideoCard = useCallback(
+    (video: Video) => handlePlayVideo(video, 'video'),
+    [handlePlayVideo]
+  );
+
+  const handlePlayAudioCard = useCallback(
+    (video: Video) => handlePlayVideo(video, 'audio'),
+    [handlePlayVideo]
+  );
 
   const handleNextTrack = useCallback(() => {
     setQueue((prevQueue) => {
@@ -501,11 +599,11 @@ export default function App() {
     });
   }, [selectVideoForPlayback]);
 
-  const handlePrevTrack = () => {
+  const handlePrevTrack = useCallback(() => {
     handleSeek(0);
-  };
+  }, [handleSeek]);
 
-  const handleToggleQueue = (video: Video) => {
+  const handleToggleQueue = useCallback((video: Video) => {
     setQueue((prev) => {
       const exists = prev.some((v) => v.id === video.id);
       if (exists) {
@@ -514,11 +612,16 @@ export default function App() {
         return [...prev, video];
       }
     });
-  };
+  }, []);
 
-  const handleRemoveFromQueue = (videoId: string) => {
+  const handleRemoveFromQueue = useCallback((videoId: string) => {
     setQueue((prev) => prev.filter((v) => v.id !== videoId));
-  };
+  }, []);
+
+  const handleAddToPlaylistCard = useCallback((video: Video) => {
+    setVideoToAddToPlaylist(video);
+    setIsPlaylistModalOpen(true);
+  }, []);
 
   // 5. Group Management (Create, Rename, Delete)
   const handleAddGroup = (name: string) => {
@@ -629,56 +732,74 @@ export default function App() {
     const newChannels: Channel[] = [];
     const newVideos: Video[] = [];
 
-    for (const input of inputs) {
-      try {
-        const res = await fetch('/api/youtube/resolve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ input }),
-        });
-
-        if (res.ok) {
+    const resolveResults = await Promise.all(
+      inputs.map(async (input) => {
+        try {
+          const res = await fetch('/api/youtube/resolve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input }),
+          });
+          if (!res.ok) {
+            let errMsg = `Gagal menghubungi server (HTTP ${res.status}).`;
+            try {
+              const errData = await res.json();
+              if (errData?.error) errMsg = errData.error;
+            } catch {
+              // ignore json error
+            }
+            return { ok: false as const, error: errMsg };
+          }
           const data = await res.json();
-          if (data.channel && data.channel.id) {
-            const ch = data.channel;
-            const channelObj: Channel = {
-              id: ch.id,
-              title: ch.title || 'YouTube Channel',
-              handle: ch.handle,
-              avatar: ch.avatar,
-              description: ch.description,
-              url: ch.url,
-              groupId: targetGroupId,
-              addedAt: new Date().toISOString(),
-              videoCount: data.videos?.length || 0,
-            };
-
-            if (!channels.some((c) => c.id === ch.id) && !newChannels.some((c) => c.id === ch.id)) {
-              newChannels.push(channelObj);
-            }
-
-            if (Array.isArray(data.videos)) {
-              data.videos.forEach((v: Video) => {
-                if (!videos.some((existing) => existing.id === v.id) && !newVideos.some((nv) => nv.id === v.id)) {
-                  newVideos.push(v);
-                }
-              });
-            }
-            success++;
-          } else {
-            failed++;
-          }
-        } else {
-          try {
-            const errData = await res.json();
-            if (errData?.error) lastError = errData.error;
-          } catch {
-            lastError = `Gagal menghubungi server (HTTP ${res.status}).`;
-          }
-          failed++;
+          return { ok: true as const, data };
+        } catch (err) {
+          return {
+            ok: false as const,
+            error: err instanceof Error ? err.message : 'Gagal menghubungi server.',
+          };
         }
-      } catch (err) {
-        if (err instanceof Error) lastError = err.message;
+      })
+    );
+
+    const existingChannelIds = new Set(channels.map((c) => c.id));
+    const existingVideoIds = new Set(videos.map((v) => v.id));
+
+    for (const item of resolveResults) {
+      if (!item.ok) {
+        if (item.error) lastError = item.error;
+        failed++;
+        continue;
+      }
+      const data = item.data;
+      if (data?.channel && data.channel.id) {
+        const ch = data.channel;
+        const channelObj: Channel = {
+          id: ch.id,
+          title: ch.title || 'YouTube Channel',
+          handle: ch.handle,
+          avatar: ch.avatar,
+          description: ch.description,
+          url: ch.url,
+          groupId: targetGroupId,
+          addedAt: new Date().toISOString(),
+          videoCount: data.videos?.length || 0,
+        };
+
+        if (!existingChannelIds.has(ch.id)) {
+          existingChannelIds.add(ch.id);
+          newChannels.push(channelObj);
+        }
+
+        if (Array.isArray(data.videos)) {
+          for (const v of data.videos as Video[]) {
+            if (!existingVideoIds.has(v.id)) {
+              existingVideoIds.add(v.id);
+              newVideos.push(v);
+            }
+          }
+        }
+        success++;
+      } else {
         failed++;
       }
     }
@@ -1029,7 +1150,7 @@ export default function App() {
       if (useNativeAudio || isCheckingNativeAudio || !currentVideo) return;
       setCurrentTime(cur);
       if (dur > 0) setDuration(dur);
-      if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
+      if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 5) {
         lastSavedProgressTimeRef.current = cur;
         persistProgress(currentVideo.id, cur, dur);
       }
@@ -1093,6 +1214,38 @@ export default function App() {
     return result;
   }, [videos, channels, activeGroupId, selectedChannelId, searchQuery, sortBy]);
 
+  // Reset pagination when filters change
+  useEffect(() => {
+    setVisibleCount(FEED_PAGE_SIZE);
+  }, [activeGroupId, selectedChannelId, searchQuery, sortBy]);
+
+  const visibleVideos = useMemo(
+    () => filteredVideos.slice(0, visibleCount),
+    [filteredVideos, visibleCount]
+  );
+  const hasMoreVideos = visibleCount < filteredVideos.length;
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel || !hasMoreVideos || activeTab !== 'feed') return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((prev) => Math.min(filteredVideos.length, prev + FEED_PAGE_SIZE));
+        }
+      },
+      { rootMargin: '320px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMoreVideos, filteredVideos.length, activeTab]);
+
+  const queueIdSet = useMemo(() => new Set(queue.map((q) => q.id)), [queue]);
+  const playedIdSet = useMemo(() => new Set(playedVideoIds), [playedVideoIds]);
+  const existingChannelIds = useMemo(() => channels.map((c) => c.id), [channels]);
+
   const activeGroupChannels = useMemo(() => {
     if (activeGroupId === 'all') return channels;
     return channels.filter((c) => c.groupId === activeGroupId);
@@ -1101,6 +1254,22 @@ export default function App() {
   const activeGroup = groups.find((g) => g.id === activeGroupId) || groups[0];
   const selectedChannel = channels.find((c) => c.id === selectedChannelId);
 
+  const handleOpenAddFromHeader = useCallback(() => openSearchChannelModal(''), []);
+  const handleOpenGroupFromHeader = useCallback(() => setIsGroupModalOpen(true), []);
+  const handleOpenDrawerFromHeader = useCallback(() => setIsChannelDrawerOpen(true), []);
+  const handleOpenPlaylistFromHeader = useCallback(() => {
+    setVideoToAddToPlaylist(null);
+    setIsPlaylistModalOpen(true);
+  }, []);
+  const handleTogglePlayerModeFromHeader = useCallback(() => {
+    autoSwitchedToAudioRef.current = false;
+    setPlayerMode((prev) => {
+      if (prev === 'video') nativeAudioRef.current?.unlock();
+      return prev === 'video' ? 'audio' : 'video';
+    });
+  }, []);
+  const handleExpandPlayerTab = useCallback(() => setActiveTab('player'), []);
+
   return (
     <MotionConfig reducedMotion="user">
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 selection:bg-red-500 selection:text-white transition-colors duration-200 pb-28">
@@ -1108,20 +1277,13 @@ export default function App() {
       <Header
         theme={themePreference}
         onThemeChange={handleThemeChange}
-        onOpenAddModal={() => openSearchChannelModal('')}
-        onOpenGroupModal={() => setIsGroupModalOpen(true)}
-        onOpenChannelDrawer={() => setIsChannelDrawerOpen(true)}
-        onOpenPlaylistModal={() => {
-          setVideoToAddToPlaylist(null);
-          setIsPlaylistModalOpen(true);
-        }}
+        onOpenAddModal={handleOpenAddFromHeader}
+        onOpenGroupModal={handleOpenGroupFromHeader}
+        onOpenChannelDrawer={handleOpenDrawerFromHeader}
+        onOpenPlaylistModal={handleOpenPlaylistFromHeader}
         playlistCount={playlists.length}
         playerMode={playerMode}
-        onTogglePlayerMode={() => {
-          autoSwitchedToAudioRef.current = false;
-          if (playerMode === 'video') nativeAudioRef.current?.unlock();
-          setPlayerMode(playerMode === 'video' ? 'audio' : 'video');
-        }}
+        onTogglePlayerMode={handleTogglePlayerModeFromHeader}
         activeFilterGroup={activeGroupId}
         onSelectGroup={setActiveGroupId}
         activeTab={activeTab}
@@ -1158,6 +1320,7 @@ export default function App() {
               <PodcastPlayer
                 currentVideo={currentVideo}
                 isPlaying={isPlaying}
+                isVisible={activeTab === 'player' && playerMode === 'audio'}
                 currentTime={currentTime}
                 duration={duration}
                 playbackRate={playbackRate}
@@ -1189,7 +1352,7 @@ export default function App() {
               />
             </motion.div>
 
-            {/* 2. Video Player View (Hosts the actual YouTube iframe without unmounting) */}
+            {/* 2. Video Player View (Hosts the actual YouTube iframe without unmounting once activated) */}
             <div
               className={
                 activeTab === 'player' && playerMode === 'video'
@@ -1218,25 +1381,27 @@ export default function App() {
                 downloadState={audioDownloads[currentVideo.id]}
                 onDownloadAudio={handleDownloadAudio}
                 playerSlot={
-                  <YouTubePlayer
-                    currentVideo={currentVideo}
-                    isPlaying={useNativeAudio || isCheckingNativeAudio ? false : isPlaying}
-                    mode={playerMode}
-                    isVisible={activeTab === 'player' && playerMode === 'video'}
-                    playbackRate={playbackRate}
-                    volume={volume}
-                    isMuted={isMuted}
-                    initialSeekSeconds={
-                      currentTime > 0
-                        ? currentTime
-                        : playbackProgressMap[currentVideo.id]?.currentTime || 0
-                    }
-                    onTimeUpdate={handleYouTubeTimeUpdate}
-                    onStateChange={handleYouTubeStateChange}
-                    onEnded={handleYouTubeEnded}
-                    seekCommand={useNativeAudio || isCheckingNativeAudio ? null : seekCommand}
-                    onSeekHandled={() => setSeekCommand(null)}
-                  />
+                  hasActivatedYouTube ? (
+                    <YouTubePlayer
+                      currentVideo={currentVideo}
+                      isPlaying={useNativeAudio || isCheckingNativeAudio ? false : isPlaying}
+                      mode={playerMode}
+                      isVisible={activeTab === 'player' && playerMode === 'video'}
+                      playbackRate={playbackRate}
+                      volume={volume}
+                      isMuted={isMuted}
+                      initialSeekSeconds={
+                        currentTime > 0
+                          ? currentTime
+                          : playbackProgressMap[currentVideo.id]?.currentTime || 0
+                      }
+                      onTimeUpdate={handleYouTubeTimeUpdate}
+                      onStateChange={handleYouTubeStateChange}
+                      onEnded={handleYouTubeEnded}
+                      seekCommand={useNativeAudio || isCheckingNativeAudio ? null : seekCommand}
+                      onSeekHandled={() => setSeekCommand(null)}
+                    />
+                  ) : null
                 }
               />
             </div>
@@ -1574,29 +1739,42 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredVideos.map((video, idx) => (
-                <VideoCard
-                  key={video.id}
-                  video={video}
-                  index={idx}
-                  isCurrentlyPlaying={currentVideo?.id === video.id && isPlaying}
-                  isInQueue={queue.some((q) => q.id === video.id)}
-                  isPlayed={playedVideoIds.includes(video.id)}
-                  progress={playbackProgressMap[video.id]}
-                  downloadState={audioDownloads[video.id]}
-                  onPlayVideo={(v) => handlePlayVideo(v, 'video')}
-                  onPlayAudio={(v) => handlePlayVideo(v, 'audio')}
-                  onToggleQueue={handleToggleQueue}
-                  onTogglePlayed={handleTogglePlayed}
-                  onDownloadAudio={handleDownloadAudio}
-                  onAddToPlaylist={(v) => {
-                    setVideoToAddToPlaylist(v);
-                    setIsPlaylistModalOpen(true);
-                  }}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {visibleVideos.map((video, idx) => (
+                  <VideoCard
+                    key={video.id}
+                    video={video}
+                    index={idx}
+                    isCurrentlyPlaying={currentVideo?.id === video.id && isPlaying}
+                    isInQueue={queueIdSet.has(video.id)}
+                    isPlayed={playedIdSet.has(video.id)}
+                    progress={playbackProgressMap[video.id]}
+                    downloadState={audioDownloads[video.id]}
+                    onPlayVideo={handlePlayVideoCard}
+                    onPlayAudio={handlePlayAudioCard}
+                    onToggleQueue={handleToggleQueue}
+                    onTogglePlayed={handleTogglePlayed}
+                    onDownloadAudio={handleDownloadAudio}
+                    onAddToPlaylist={handleAddToPlaylistCard}
+                  />
+                ))}
+              </div>
+
+              {hasMoreVideos && (
+                <div ref={loadMoreSentinelRef} className="pt-4 flex flex-col items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setVisibleCount((prev) => Math.min(filteredVideos.length, prev + FEED_PAGE_SIZE))
+                    }
+                    className="px-5 py-2.5 text-xs font-bold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
+                  >
+                    Muat Lebih Banyak ({filteredVideos.length - visibleCount} video tersisa)
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </section>
 
@@ -1670,7 +1848,7 @@ export default function App() {
           if (!currentVideo) return;
           setCurrentTime(cur);
           if (dur > 0) setDuration(dur);
-          if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 2) {
+          if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 5) {
             lastSavedProgressTimeRef.current = cur;
             persistProgress(currentVideo.id, cur, dur);
           }
@@ -1700,67 +1878,73 @@ export default function App() {
         onPlayPause={handlePlayPause}
         onSkipBack={handleSkipBack}
         onSkipForward={handleSkipForward}
-        onExpand={() => setActiveTab('player')}
-        onToggleMode={() => {
-          autoSwitchedToAudioRef.current = false;
-          if (playerMode === 'video') nativeAudioRef.current?.unlock();
-          setPlayerMode(playerMode === 'video' ? 'audio' : 'video');
-        }}
+        onExpand={handleExpandPlayerTab}
+        onToggleMode={handleTogglePlayerModeFromHeader}
       />
 
-      {/* Modals & Drawers */}
-      <AddChannelModal
-        isOpen={isAddModalOpen}
-        onClose={() => {
-          setIsAddModalOpen(false);
-          setPastedLinkForModal('');
-          setAddModalSearchQuery('');
-        }}
-        groups={groups}
-        existingChannelIds={channels.map((c) => c.id)}
-        onAddChannels={handleAddChannels}
-        initialPastedText={pastedLinkForModal}
-        initialTab={addModalTab}
-        initialSearchQuery={addModalSearchQuery}
-      />
+      {/* Lazy-Loaded Modals & Drawers */}
+      <Suspense fallback={null}>
+        {hasOpenedAddModal && (
+          <AddChannelModal
+            isOpen={isAddModalOpen}
+            onClose={() => {
+              setIsAddModalOpen(false);
+              setPastedLinkForModal('');
+              setAddModalSearchQuery('');
+            }}
+            groups={groups}
+            existingChannelIds={existingChannelIds}
+            onAddChannels={handleAddChannels}
+            initialPastedText={pastedLinkForModal}
+            initialTab={addModalTab}
+            initialSearchQuery={addModalSearchQuery}
+          />
+        )}
 
-      <GroupManagerModal
-        isOpen={isGroupModalOpen}
-        onClose={() => setIsGroupModalOpen(false)}
-        groups={groups}
-        channels={channels}
-        onAddGroup={handleAddGroup}
-        onRenameGroup={handleRenameGroup}
-        onDeleteGroup={handleDeleteGroup}
-      />
+        {hasOpenedGroupModal && (
+          <GroupManagerModal
+            isOpen={isGroupModalOpen}
+            onClose={() => setIsGroupModalOpen(false)}
+            groups={groups}
+            channels={channels}
+            onAddGroup={handleAddGroup}
+            onRenameGroup={handleRenameGroup}
+            onDeleteGroup={handleDeleteGroup}
+          />
+        )}
 
-      <ChannelDrawer
-        isOpen={isChannelDrawerOpen}
-        onClose={() => setIsChannelDrawerOpen(false)}
-        channels={channels}
-        groups={groups}
-        onDeleteChannel={handleDeleteChannel}
-        onChangeChannelGroup={handleChangeChannelGroup}
-        onSelectChannelFilter={(chId) => {
-          setSelectedChannelId(chId);
-          setActiveGroupId('all');
-        }}
-      />
+        {hasOpenedChannelDrawer && (
+          <ChannelDrawer
+            isOpen={isChannelDrawerOpen}
+            onClose={() => setIsChannelDrawerOpen(false)}
+            channels={channels}
+            groups={groups}
+            onDeleteChannel={handleDeleteChannel}
+            onChangeChannelGroup={handleChangeChannelGroup}
+            onSelectChannelFilter={(chId) => {
+              setSelectedChannelId(chId);
+              setActiveGroupId('all');
+            }}
+          />
+        )}
 
-      <PlaylistModal
-        isOpen={isPlaylistModalOpen}
-        onClose={() => {
-          setIsPlaylistModalOpen(false);
-          setVideoToAddToPlaylist(null);
-        }}
-        playlists={playlists}
-        videos={videos}
-        initialVideoToAdd={videoToAddToPlaylist}
-        onCreatePlaylist={handleCreatePlaylist}
-        onUpdatePlaylist={handleUpdatePlaylist}
-        onDeletePlaylist={handleDeletePlaylist}
-        onPlayPlaylist={handlePlayPlaylist}
-      />
+        {hasOpenedPlaylistModal && (
+          <PlaylistModal
+            isOpen={isPlaylistModalOpen}
+            onClose={() => {
+              setIsPlaylistModalOpen(false);
+              setVideoToAddToPlaylist(null);
+            }}
+            playlists={playlists}
+            videos={videos}
+            initialVideoToAdd={videoToAddToPlaylist}
+            onCreatePlaylist={handleCreatePlaylist}
+            onUpdatePlaylist={handleUpdatePlaylist}
+            onDeletePlaylist={handleDeletePlaylist}
+            onPlayPlaylist={handlePlayPlaylist}
+          />
+        )}
+      </Suspense>
 
       {/* Delete Channel Confirmation Modal */}
       <AnimatePresence>
