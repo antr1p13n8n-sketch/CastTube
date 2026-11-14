@@ -41,6 +41,15 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     resize();
     window.addEventListener('resize', resize);
 
+    let isDarkMode = document.documentElement.classList.contains('dark');
+    const themeObserver = new MutationObserver(() => {
+      isDarkMode = document.documentElement.classList.contains('dark');
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+
     let stopped = false;
 
     const render = () => {
@@ -60,8 +69,6 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
       // Advance phase based on playbackRate
       phaseRef.current += 0.04 * (isPlaying ? playbackRate : 0.15);
       const phase = phaseRef.current;
-
-      const isDarkMode = document.documentElement.classList.contains('dark');
 
       if (style === 'wave') {
         renderWave(ctx, width, height, phase, energy, isDarkMode);
@@ -88,6 +95,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 
     return () => {
       stopped = true;
+      themeObserver.disconnect();
       window.removeEventListener('resize', resize);
       if (animFrameIdRef.current) {
         cancelAnimationFrame(animFrameIdRef.current);
@@ -104,6 +112,12 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
   );
 };
 
+const WAVE_LAYER_CONFIGS = [
+  { freq: 0.02, speed: 1.0, baseAmp: 26, darkColor: 'rgba(239, 68, 68, 0.45)', lightColor: 'rgba(220, 38, 38, 0.35)', width: 2 },
+  { freq: 0.035, speed: -0.8, baseAmp: 20, darkColor: 'rgba(249, 115, 22, 0.6)', lightColor: 'rgba(234, 88, 12, 0.5)', width: 2.5 },
+  { freq: 0.015, speed: 1.4, baseAmp: 34, darkColor: 'rgba(255, 255, 255, 0.9)', lightColor: 'rgba(15, 23, 42, 0.85)', width: 3 },
+];
+
 function renderWave(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -113,26 +127,22 @@ function renderWave(
   isDark: boolean
 ) {
   const centerY = height / 2;
-  const layers = [
-    { freq: 0.02, speed: 1.0, amp: 26 * energy, color: isDark ? 'rgba(239, 68, 68, 0.45)' : 'rgba(220, 38, 38, 0.35)', width: 2 },
-    { freq: 0.035, speed: -0.8, amp: 20 * energy, color: isDark ? 'rgba(249, 115, 22, 0.6)' : 'rgba(234, 88, 12, 0.5)', width: 2.5 },
-    { freq: 0.015, speed: 1.4, amp: 34 * energy, color: isDark ? 'rgba(255, 255, 255, 0.9)' : 'rgba(15, 23, 42, 0.85)', width: 3 },
-  ];
 
-  layers.forEach((layer) => {
+  for (let l = 0; l < WAVE_LAYER_CONFIGS.length; l++) {
+    const layer = WAVE_LAYER_CONFIGS[l];
+    const amp = layer.baseAmp * energy;
     ctx.beginPath();
     ctx.lineWidth = layer.width;
-    ctx.strokeStyle = layer.color;
+    ctx.strokeStyle = isDark ? layer.darkColor : layer.lightColor;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    for (let x = 0; x <= width; x += 4) {
-      // Envelope so waves taper cleanly at left and right edges
+    for (let x = 0; x <= width; x += 5) {
       const normalizedX = x / width;
       const envelope = Math.sin(normalizedX * Math.PI);
       const wave1 = Math.sin(x * layer.freq + phase * layer.speed);
       const wave2 = Math.cos(x * layer.freq * 1.8 - phase * 0.5);
-      const y = centerY + (wave1 * 0.7 + wave2 * 0.3) * layer.amp * envelope;
+      const y = centerY + (wave1 * 0.7 + wave2 * 0.3) * amp * envelope;
 
       if (x === 0) {
         ctx.moveTo(x, y);
@@ -141,7 +151,7 @@ function renderWave(
       }
     }
     ctx.stroke();
-  });
+  }
 }
 
 function renderBars(

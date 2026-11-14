@@ -81,3 +81,21 @@ export interface YouTubeChannelSearchResult {
   url: string;
 }
 
+export interface YouTubeOAuthTokens {
+  access_token: string;
+  refresh_token: string;
+  expiry_date: string;
+  token_type?: string;
+  scope?: string;
+  client?: {
+    client_id: string;
+    client_secret: string;
+  };
+}
+
+export interface AudioExtractorConfig {
+  oauthTokens?: YouTubeOAuthTokens;
+  cookies?: string;
+  extractorUrl?: string;
+  updatedAt?: string;
+}

@@ -40,18 +40,17 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
     progress && progress.duration > 0
       ? Math.min(100, Math.max(0, (progress.currentTime / progress.duration) * 100))
       : 0;
-  const shouldStagger = index < 8;
+  const shouldStagger = index < 6;
   return (
     <motion.div
-      initial={shouldStagger ? { opacity: 0, y: 10 } : false}
+      initial={shouldStagger ? { opacity: 0, y: 8 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{
-        duration: 0.18,
-        delay: shouldStagger ? index * 0.02 : 0,
+        duration: 0.16,
+        delay: shouldStagger ? index * 0.015 : 0,
         ease: [0.16, 1, 0.3, 1],
       }}
-      whileHover={{ y: -3, transition: { duration: 0.14 } }}
-      className={`group relative flex flex-col rounded-2xl bg-white dark:bg-slate-900 border transition-all duration-200 overflow-hidden hover:shadow-xl ${
+      className={`video-card-auto group relative flex flex-col rounded-2xl bg-white dark:bg-slate-900 border transition-[transform,colors,shadow] duration-200 overflow-hidden hover:-translate-y-0.5 hover:shadow-xl ${
         isCurrentlyPlaying
           ? 'border-red-500 ring-2 ring-red-500/20'
           : 'border-slate-200/90 dark:border-slate-800/90 hover:border-slate-300 dark:hover:border-slate-700'
@@ -62,7 +61,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         <img
           src={video.thumbnail}
           alt={video.title}
-          loading="lazy"
+          loading={index < 4 ? 'eager' : 'lazy'}
           decoding="async"
           referrerPolicy="no-referrer"
           onError={(e) => {
@@ -72,21 +71,17 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
               img.src = `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`;
             }
           }}
-          className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-105 ${
+          className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${
             isPlayed ? 'opacity-70' : ''
           }`}
         />
 
         {/* Gradient shadow overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent pointer-events-none" />
 
         {/* Currently playing badge */}
         {isCurrentlyPlaying && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold tracking-wide uppercase shadow-sm flex items-center gap-1.5"
-          >
+          <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold tracking-wide uppercase shadow-sm flex items-center gap-1.5">
             <span className="flex items-end gap-0.5 h-2.5" aria-hidden="true">
               <motion.span
                 animate={{ scaleY: [0.35, 1, 0.45, 0.9, 0.35] }}
@@ -105,7 +100,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
               />
             </span>
             Sedang Diputar
-          </motion.div>
+          </div>
         )}
 
         {/* Played status badge */}
@@ -117,27 +112,23 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         )}
 
         {/* Hover quick play buttons in center */}
-        <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/40 backdrop-blur-[1px]">
-          <motion.button
-            whileHover={{ scale: 1.06 }}
-            whileTap={{ scale: 0.93 }}
+        <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150 bg-black/45">
+          <button
             onClick={() => onPlayVideo(video)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-lg cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
             title="Putar Video"
           >
             <Play className="w-3.5 h-3.5 fill-white" />
             <span>Video</span>
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.06 }}
-            whileTap={{ scale: 0.93 }}
+          </button>
+          <button
             onClick={() => onPlayAudio(video)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-xl shadow-lg cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-xl shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
             title="Dengarkan Audio Podcast"
           >
             <Headphones className="w-3.5 h-3.5 text-red-600" />
             <span>Audio</span>
-          </motion.button>
+          </button>
         </div>
 
         {/* Duration / Live info bottom right */}
@@ -151,7 +142,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         {progressPct > 0 && (
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">
             <div
-              className="h-full bg-red-600 transition-all duration-300"
+              className="h-full bg-red-600"
               style={{ width: `${progressPct}%` }}
             />
           </div>
@@ -196,20 +187,18 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         {/* Card Footer Actions */}
         <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <motion.button
-              whileTap={{ scale: 0.93 }}
+            <button
               onClick={() => onPlayAudio(video)}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-all active:scale-95 cursor-pointer"
               title="Dengarkan Mode Podcast"
             >
               <Headphones className="w-3.5 h-3.5" />
               <span>Podcast</span>
-            </motion.button>
+            </button>
 
-            <motion.button
-              whileTap={{ scale: 0.93 }}
+            <button
               onClick={() => onToggleQueue(video)}
-              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer ${
                 isInQueue
                   ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
                   : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -218,27 +207,25 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
             >
               {isInQueue ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
               <span>{isInQueue ? 'Antrean' : '+ Antrean'}</span>
-            </motion.button>
+            </button>
 
             {onAddToPlaylist && (
-              <motion.button
-                whileTap={{ scale: 0.93 }}
+              <button
                 onClick={() => onAddToPlaylist(video)}
-                className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-all active:scale-95 cursor-pointer"
                 title="Simpan ke Playlist"
               >
                 <ListPlus className="w-3.5 h-3.5" />
                 <span>Playlist</span>
-              </motion.button>
+              </button>
             )}
           </div>
 
           <div className="flex items-center gap-1">
             {onDownloadAudio && (
-              <motion.button
-                whileTap={{ scale: 0.88 }}
+              <button
                 onClick={() => onDownloadAudio(video)}
-                className={`p-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
+                className={`p-1.5 rounded-lg transition-all active:scale-90 cursor-pointer flex items-center gap-1 ${
                   downloadState?.status === 'completed'
                     ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
                     : downloadState?.status === 'preparing' || downloadState?.status === 'downloading'
@@ -265,14 +252,13 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
                 ) : (
                   <Download className="w-4 h-4" />
                 )}
-              </motion.button>
+              </button>
             )}
 
             {onTogglePlayed && (
-              <motion.button
-                whileTap={{ scale: 0.88 }}
+              <button
                 onClick={() => onTogglePlayed(video.id)}
-                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                className={`p-1.5 rounded-lg transition-all active:scale-90 cursor-pointer ${
                   isPlayed
                     ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
                     : 'text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -280,7 +266,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
                 title={isPlayed ? 'Tandai belum diputar' : 'Tandai sudah diputar'}
               >
                 <CheckCircle2 className="w-4 h-4" />
-              </motion.button>
+              </button>
             )}
 
             <a

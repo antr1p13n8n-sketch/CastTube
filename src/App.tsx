@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, lazy, Suspense } from 'react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import {
   Folder,
@@ -17,27 +17,15 @@ import {
 } from 'lucide-react';
 import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
-import {
-  ensureUserProfile,
-  updateThemeInFirestore,
-  subscribeToUserGroups,
-  subscribeToUserChannels,
-  subscribeToUserVideos,
-  seedInitialDataIfEmpty,
-  createGroupInFirestore,
-  renameGroupInFirestore,
-  deleteGroupInFirestore,
-  saveChannelInFirestore,
-  changeChannelGroupInFirestore,
-  deleteChannelInFirestore,
-  saveVideosInFirestore,
-  subscribeToUserPlaylists,
-  createPlaylistInFirestore,
-  updatePlaylistInFirestore,
-  deletePlaylistInFirestore,
-  subscribeToPlayedVideos,
-  updatePlayedVideosInFirestore,
-} from './services/firestoreService';
+
+type FirestoreServiceModule = typeof import('./services/firestoreService');
+let firestoreServicePromise: Promise<FirestoreServiceModule> | null = null;
+function loadFirestoreService(): Promise<FirestoreServiceModule> {
+  if (!firestoreServicePromise) {
+    firestoreServicePromise = import('./services/firestoreService');
+  }
+  return firestoreServicePromise;
+}
 import {
   Channel,
   ChannelGroup,
@@ -74,6 +62,12 @@ import {
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useBackgroundAudio } from './hooks/useBackgroundAudio';
 import { useAudioDownload } from './hooks/useAudioDownload';
+import { buildExtractorHeaders, syncExtractorConfigToServer } from './utils/extractorConfig';
+import {
+  getPlaybackClockSnapshot,
+  resetPlaybackClock,
+  setPlaybackClock,
+} from './utils/playbackClock';
 import { Header } from './components/Header';
 import { OfflineBanner } from './components/OfflineBanner';
 import { VideoCard } from './components/VideoCard';
@@ -95,6 +89,9 @@ const ChannelDrawer = lazy(() =>
 const PlaylistModal = lazy(() =>
   import('./components/PlaylistModal').then((m) => ({ default: m.PlaylistModal }))
 );
+const AudioExtractorModal = lazy(() =>
+  import('./components/AudioExtractorModal').then((m) => ({ default: m.AudioExtractorModal }))
+);
 
 const FEED_PAGE_SIZE = 24;
 
@@ -113,6 +110,8 @@ export default function App() {
     lastVideoId: string | null;
     session: ReturnType<typeof loadPlayerSessionState>;
     initialVideo: Video | null;
+    initialTime: number;
+    initialDuration: number;
   } | null>(null);
   if (!initialBootRef.current) {
     const bootVideos = loadVideos();
@@ -122,12 +121,17 @@ export default function App() {
     const bootVideo =
       (bootLastId ? bootVideos.find((item) => item.id === bootLastId) : undefined) ||
       (bootVideos.length > 0 ? bootVideos[0] : null);
+    const initialTime = bootVideo ? bootProgress[bootVideo.id]?.currentTime || 0 : 0;
+    const initialDuration = bootVideo ? bootProgress[bootVideo.id]?.duration || 0 : 0;
+    resetPlaybackClock(bootVideo?.id || null, initialTime, initialDuration);
     initialBootRef.current = {
       videos: bootVideos,
       progressMap: bootProgress,
       lastVideoId: bootLastId,
       session: bootSession,
       initialVideo: bootVideo,
+      initialTime,
+      initialDuration,
     };
   }
   const boot = initialBootRef.current;
@@ -167,13 +171,27 @@ export default function App() {
   const [pendingSyncQueue, setPendingSyncQueue] = useState<PendingSyncTask[]>(loadPendingSyncQueue);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState<boolean>(false);
 
+  // Audio Extractor Restriction Recovery States
+  const [isExtractorModalOpen, setIsExtractorModalOpen] = useState<boolean>(false);
+  const [hasOpenedExtractorModal, setHasOpenedExtractorModal] = useState<boolean>(false);
+  const [pendingExtractorVideo, setPendingExtractorVideo] = useState<Video | null>(null);
+  const [extractorVersion, setExtractorVersion] = useState<number>(0);
+
   // Audio Download Manager
+  const handleDownloadRestrictionBlocked = useCallback((blockedVideo: Video) => {
+    setPendingExtractorVideo(blockedVideo);
+    setHasOpenedExtractorModal(true);
+    setIsExtractorModalOpen(true);
+  }, []);
+
   const {
     downloads: audioDownloads,
     notice: downloadNotice,
     startDownload: handleDownloadAudio,
     dismissNotice: dismissDownloadNotice,
-  } = useAudioDownload();
+  } = useAudioDownload({
+    onRestrictionBlocked: handleDownloadRestrictionBlocked,
+  });
 
   // Playback Progress Persistence Map
   const [playbackProgressMap, setPlaybackProgressMap] = useState<Record<string, PlaybackProgress>>(
@@ -185,18 +203,6 @@ export default function App() {
   const [currentVideo, setCurrentVideo] = useState<Video | null>(boot.initialVideo);
   const [playerMode, setPlayerMode] = useState<PlayerMode>(boot.session.playerMode);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [currentTime, setCurrentTime] = useState<number>(() => {
-    const vid = boot.initialVideo?.id;
-    return vid ? boot.progressMap[vid]?.currentTime || 0 : 0;
-  });
-  const [duration, setDuration] = useState<number>(() => {
-    const vid = boot.initialVideo?.id;
-    return vid ? boot.progressMap[vid]?.duration || 0 : 0;
-  });
-  const currentTimeRef = useRef<number>(currentTime);
-  currentTimeRef.current = currentTime;
-  const durationRef = useRef<number>(duration);
-  durationRef.current = duration;
 
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
   const [volume, setVolume] = useState<number>(85);
@@ -226,15 +232,17 @@ export default function App() {
   );
   const prevUseNativeAudioRef = useRef<boolean>(useNativeAudio);
 
-  // Probe stream availability for currentVideo regardless of mode so switching or minimizing is instant
+  // Probe stream availability only when user opens player or starts playback (avoids startup latency)
   useEffect(() => {
-    if (!currentVideo) return;
+    if (!currentVideo || (activeTab !== 'player' && !isPlaying)) return;
     const videoId = currentVideo.id;
     if (probedAudioIdsRef.current.has(videoId)) return;
     probedAudioIdsRef.current.add(videoId);
 
     let cancelled = false;
-    fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&check=1`)
+    fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&check=1`, {
+      headers: buildExtractorHeaders(),
+    })
       .then((res) => (res.ok ? res.json() : { available: false, status: 'unavailable' }))
       .then((data) => {
         if (!cancelled) {
@@ -265,12 +273,19 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentVideo?.id]);
+  }, [currentVideo?.id, activeTab, isPlaying, extractorVersion]);
+
+  useEffect(() => {
+    void syncExtractorConfigToServer();
+  }, []);
 
   useEffect(() => {
     // When switching between Native <audio> and YouTube IFrame, keep playback timestamp synced
-    if (prevUseNativeAudioRef.current !== useNativeAudio && currentTimeRef.current > 0) {
-      setSeekCommand(currentTimeRef.current);
+    if (prevUseNativeAudioRef.current !== useNativeAudio) {
+      const snap = getPlaybackClockSnapshot();
+      if (snap.currentTime > 0) {
+        setSeekCommand(snap.currentTime);
+      }
     }
     prevUseNativeAudioRef.current = useNativeAudio;
   }, [useNativeAudio]);
@@ -325,6 +340,22 @@ export default function App() {
   useEffect(() => {
     if (isPlaylistModalOpen) setHasOpenedPlaylistModal(true);
   }, [isPlaylistModalOpen]);
+  useEffect(() => {
+    if (isExtractorModalOpen) setHasOpenedExtractorModal(true);
+  }, [isExtractorModalOpen]);
+
+  const handleExtractorResolved = useCallback(
+    (_cfg: unknown, retryVideo: Video | null) => {
+      probedAudioIdsRef.current.clear();
+      setAudioStatusMap({});
+      setExtractorVersion((v) => v + 1);
+      setPendingExtractorVideo(null);
+      if (retryVideo) {
+        void handleDownloadAudio(retryVideo);
+      }
+    },
+    [handleDownloadAudio]
+  );
 
   const openSearchChannelModal = (initialQuery = '') => {
     setPastedLinkForModal('');
@@ -390,13 +421,15 @@ export default function App() {
       setThemePreference(newTheme);
       saveThemePreference(newTheme);
       if (user) {
-        updateThemeInFirestore(user.uid, newTheme).catch(console.error);
+        loadFirestoreService()
+          .then((fs) => fs.updateThemeInFirestore(user.uid, newTheme))
+          .catch(console.error);
       }
     },
     [user]
   );
 
-  // 1b. Firebase Auth & Real-Time Firestore Sync
+  // 1b. Firebase Auth & Lazy Real-Time Firestore Sync
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
@@ -404,10 +437,11 @@ export default function App() {
 
       if (firebaseUser) {
         try {
+          const fs = await loadFirestoreService();
           const { groups: curGroups, channels: curChannels, videos: curVideos, themePreference: curTheme } =
             latestStateRef.current;
-          await ensureUserProfile(firebaseUser, curTheme);
-          await seedInitialDataIfEmpty(firebaseUser.uid, curGroups, curChannels, curVideos);
+          await fs.ensureUserProfile(firebaseUser, curTheme);
+          await fs.seedInitialDataIfEmpty(firebaseUser.uid, curGroups, curChannels, curVideos);
         } catch (err) {
           console.error('Gagal sinkronisasi awal Firebase:', err);
         }
@@ -419,35 +453,37 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
+    const unsubs: Array<() => void> = [];
 
-    const unsubGroups = subscribeToUserGroups(user.uid, (cloudGroups) => {
-      if (cloudGroups.length > 0) {
-        setGroups(cloudGroups);
-      }
-    });
-
-    const unsubChannels = subscribeToUserChannels(user.uid, (cloudChannels) => {
-      setChannels(cloudChannels);
-    });
-
-    const unsubVideos = subscribeToUserVideos(user.uid, (cloudVideos) => {
-      setVideos(cloudVideos);
-    });
-
-    const unsubPlaylists = subscribeToUserPlaylists(user.uid, (cloudPlaylists) => {
-      setPlaylists(cloudPlaylists);
-    });
-
-    const unsubPlayed = subscribeToPlayedVideos(user.uid, (cloudPlayedIds) => {
-      setPlayedVideoIds(cloudPlayedIds);
-    });
+    loadFirestoreService()
+      .then((fs) => {
+        if (cancelled) return;
+        unsubs.push(
+          fs.subscribeToUserGroups(user.uid, (cloudGroups) => {
+            if (cloudGroups.length > 0) {
+              setGroups(cloudGroups);
+            }
+          }),
+          fs.subscribeToUserChannels(user.uid, (cloudChannels) => {
+            setChannels(cloudChannels);
+          }),
+          fs.subscribeToUserVideos(user.uid, (cloudVideos) => {
+            setVideos(cloudVideos);
+          }),
+          fs.subscribeToUserPlaylists(user.uid, (cloudPlaylists) => {
+            setPlaylists(cloudPlaylists);
+          }),
+          fs.subscribeToPlayedVideos(user.uid, (cloudPlayedIds) => {
+            setPlayedVideoIds(cloudPlayedIds);
+          })
+        );
+      })
+      .catch(console.error);
 
     return () => {
-      unsubGroups();
-      unsubChannels();
-      unsubVideos();
-      unsubPlaylists();
-      unsubPlayed();
+      cancelled = true;
+      unsubs.forEach((fn) => fn());
     };
   }, [user?.uid]);
 
@@ -512,31 +548,35 @@ export default function App() {
     return () => clearInterval(interval);
   }, [sleepTimerExpiresAt]);
 
-  const handleSetSleepTimer = (minutes: number | null) => {
+  const handleSetSleepTimer = useCallback((minutes: number | null) => {
     setSleepTimerMinutes(minutes);
     if (minutes === null) {
       setSleepTimerExpiresAt(null);
     } else {
       setSleepTimerExpiresAt(Date.now() + minutes * 60 * 1000);
     }
-  };
+  }, []);
+
+  const currentVideoIdRef = useRef<string | null>(currentVideo?.id || null);
+  currentVideoIdRef.current = currentVideo?.id || null;
+  const playbackProgressMapRef = useRef(playbackProgressMap);
+  playbackProgressMapRef.current = playbackProgressMap;
 
   // 4. Playback Controls
   const selectVideoForPlayback = useCallback(
     (video: Video, mode?: PlayerMode, autoPlay = true) => {
-      const saved = playbackProgressMap[video.id];
+      const saved = playbackProgressMapRef.current[video.id];
       const resumeTime = saved?.currentTime && saved.currentTime > 0 ? saved.currentTime : 0;
       const savedDur = saved?.duration && saved.duration > 0 ? saved.duration : 0;
 
       lastSavedProgressTimeRef.current = resumeTime;
       setSeekCommand(null);
-      setCurrentTime(resumeTime);
-      setDuration(savedDur);
+      resetPlaybackClock(video.id, resumeTime, savedDur);
       setCurrentVideo(video);
       if (mode) setPlayerMode(mode);
       setIsPlaying(autoPlay);
     },
-    [playbackProgressMap]
+    []
   );
 
   const handlePlayPause = useCallback(() => {
@@ -549,13 +589,14 @@ export default function App() {
   }, []);
 
   const handleSeek = useCallback((seconds: number) => {
-    setCurrentTime(seconds);
+    setPlaybackClock(currentVideoIdRef.current, seconds);
     setSeekCommand(seconds);
   }, []);
 
   const handleSkipBack = useCallback(
     (secs: number = 15) => {
-      const target = Math.max(0, currentTimeRef.current - secs);
+      const snap = getPlaybackClockSnapshot();
+      const target = Math.max(0, snap.currentTime - secs);
       handleSeek(target);
     },
     [handleSeek]
@@ -563,8 +604,8 @@ export default function App() {
 
   const handleSkipForward = useCallback(
     (secs: number = 30) => {
-      const dur = durationRef.current;
-      const target = Math.min(dur || Infinity, currentTimeRef.current + secs);
+      const snap = getPlaybackClockSnapshot();
+      const target = Math.min(snap.duration || Infinity, snap.currentTime + secs);
       handleSeek(target);
     },
     [handleSeek]
@@ -632,7 +673,9 @@ export default function App() {
     };
     setGroups((prev) => [...prev, newGroup]);
     if (user) {
-      createGroupInFirestore(user.uid, newGroup).catch(console.error);
+      loadFirestoreService()
+        .then((fs) => fs.createGroupInFirestore(user.uid, newGroup))
+        .catch(console.error);
     }
   };
 
@@ -641,7 +684,9 @@ export default function App() {
       prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g))
     );
     if (user) {
-      renameGroupInFirestore(user.uid, groupId, newName).catch(console.error);
+      loadFirestoreService()
+        .then((fs) => fs.renameGroupInFirestore(user.uid, groupId, newName))
+        .catch(console.error);
     }
   };
 
@@ -655,7 +700,9 @@ export default function App() {
       setActiveGroupId('all');
     }
     if (user) {
-      deleteGroupInFirestore(user.uid, groupId, channelsInGroup).catch(console.error);
+      loadFirestoreService()
+        .then((fs) => fs.deleteGroupInFirestore(user.uid, groupId, channelsInGroup))
+        .catch(console.error);
     }
   };
 
@@ -671,11 +718,12 @@ export default function App() {
     if (currentVideo?.channelId === channelId) {
       setIsPlaying(false);
       setCurrentVideo(null);
-      setCurrentTime(0);
-      setDuration(0);
+      resetPlaybackClock(null, 0, 0);
     }
     if (user) {
-      deleteChannelInFirestore(user.uid, channelId, videoIdsToDelete).catch(console.error);
+      loadFirestoreService()
+        .then((fs) => fs.deleteChannelInFirestore(user.uid, channelId, videoIdsToDelete))
+        .catch(console.error);
     }
   };
 
@@ -684,7 +732,9 @@ export default function App() {
       prev.map((c) => (c.id === channelId ? { ...c, groupId: newGroupId } : c))
     );
     if (user) {
-      changeChannelGroupInFirestore(user.uid, channelId, newGroupId).catch(console.error);
+      loadFirestoreService()
+        .then((fs) => fs.changeChannelGroupInFirestore(user.uid, channelId, newGroupId))
+        .catch(console.error);
     }
   };
 
@@ -811,7 +861,9 @@ export default function App() {
         return unique.length > 0 ? [...unique, ...prev] : prev;
       });
       if (user) {
-        Promise.all(newChannels.map((ch) => saveChannelInFirestore(user.uid, ch))).catch(console.error);
+        loadFirestoreService()
+          .then((fs) => Promise.all(newChannels.map((ch) => fs.saveChannelInFirestore(user.uid, ch))))
+          .catch(console.error);
       }
     }
 
@@ -828,7 +880,9 @@ export default function App() {
         return combined;
       });
       if (user) {
-        saveVideosInFirestore(user.uid, newVideos).catch(console.error);
+        loadFirestoreService()
+          .then((fs) => fs.saveVideosInFirestore(user.uid, newVideos))
+          .catch(console.error);
       }
       if (!currentVideo && newVideos.length > 0) {
         selectVideoForPlayback(newVideos[0], playerMode, false);
@@ -915,9 +969,9 @@ export default function App() {
             return mergedCh;
           });
           if (user && updatedList.length > 0) {
-            updatedList.forEach((ch) => {
-              saveChannelInFirestore(user.uid, ch).catch(console.error);
-            });
+            loadFirestoreService()
+              .then((fs) => Promise.all(updatedList.map((ch) => fs.saveChannelInFirestore(user.uid, ch))))
+              .catch(console.error);
           }
           return nextChannels;
         });
@@ -932,7 +986,9 @@ export default function App() {
           return merged;
         });
         if (user) {
-          saveVideosInFirestore(user.uid, fetchedVideos).catch(console.error);
+          loadFirestoreService()
+            .then((fs) => fs.saveVideosInFirestore(user.uid, fetchedVideos))
+            .catch(console.error);
         }
       }
     } catch (e) {
@@ -1003,8 +1059,9 @@ export default function App() {
         activeTab,
         wasPlaying: isPlaying,
       });
-      if (currentVideo && currentTime > 0) {
-        saveVideoPlaybackProgress(currentVideo.id, currentTime, duration);
+      const snap = getPlaybackClockSnapshot();
+      if (snap.videoId && snap.currentTime > 0) {
+        saveVideoPlaybackProgress(snap.videoId, snap.currentTime, snap.duration);
       }
     };
     const handleVisibilityFlush = () => {
@@ -1020,7 +1077,7 @@ export default function App() {
       window.removeEventListener('beforeunload', flushOnExit);
       document.removeEventListener('visibilitychange', handleVisibilityFlush);
     };
-  }, [playerMode, activeTab, isPlaying, currentVideo?.id, currentTime, duration]);
+  }, [playerMode, activeTab, isPlaying]);
 
   // Persist playlists & played videos locally
   useEffect(() => {
@@ -1037,7 +1094,9 @@ export default function App() {
         const exists = prev.includes(videoId);
         const next = exists ? prev.filter((id) => id !== videoId) : [videoId, ...prev];
         if (user) {
-          updatePlayedVideosInFirestore(user.uid, next).catch(console.error);
+          loadFirestoreService()
+            .then((fs) => fs.updatePlayedVideosInFirestore(user.uid, next))
+            .catch(console.error);
         }
         return next;
       });
@@ -1051,7 +1110,9 @@ export default function App() {
         if (prev.includes(videoId)) return prev;
         const next = [videoId, ...prev];
         if (user) {
-          updatePlayedVideosInFirestore(user.uid, next).catch(console.error);
+          loadFirestoreService()
+            .then((fs) => fs.updatePlayedVideosInFirestore(user.uid, next))
+            .catch(console.error);
         }
         return next;
       });
@@ -1071,7 +1132,9 @@ export default function App() {
     };
     setPlaylists((prev) => [newPlaylist, ...prev]);
     if (user) {
-      createPlaylistInFirestore(user.uid, newPlaylist).catch(console.error);
+      loadFirestoreService()
+        .then((fs) => fs.createPlaylistInFirestore(user.uid, newPlaylist))
+        .catch(console.error);
     }
   };
 
@@ -1092,14 +1155,18 @@ export default function App() {
       )
     );
     if (user) {
-      updatePlaylistInFirestore(user.uid, playlistId, updates).catch(console.error);
+      loadFirestoreService()
+        .then((fs) => fs.updatePlaylistInFirestore(user.uid, playlistId, updates))
+        .catch(console.error);
     }
   };
 
   const handleDeletePlaylist = (playlistId: string) => {
     setPlaylists((prev) => prev.filter((pl) => pl.id !== playlistId));
     if (user) {
-      deletePlaylistInFirestore(user.uid, playlistId).catch(console.error);
+      loadFirestoreService()
+        .then((fs) => fs.deletePlaylistInFirestore(user.uid, playlistId))
+        .catch(console.error);
     }
   };
 
@@ -1118,8 +1185,6 @@ export default function App() {
   useBackgroundAudio({
     currentVideo,
     isPlaying,
-    currentTime,
-    duration,
     playbackRate,
     onPlay: () => {
       nativeAudioRef.current?.unlock();
@@ -1147,15 +1212,15 @@ export default function App() {
 
   const handleYouTubeTimeUpdate = useCallback(
     (cur: number, dur: number) => {
-      if (useNativeAudio || isCheckingNativeAudio || !currentVideo) return;
-      setCurrentTime(cur);
-      if (dur > 0) setDuration(dur);
-      if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 5) {
+      if (useNativeAudio || isCheckingNativeAudio || !currentVideoIdRef.current) return;
+      const vid = currentVideoIdRef.current;
+      setPlaybackClock(vid, cur, dur);
+      if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 10) {
         lastSavedProgressTimeRef.current = cur;
-        persistProgress(currentVideo.id, cur, dur);
+        persistProgress(vid, cur, dur);
       }
     },
-    [currentVideo?.id, persistProgress, useNativeAudio, isCheckingNativeAudio]
+    [persistProgress, useNativeAudio, isCheckingNativeAudio]
   );
 
   const handleYouTubeStateChange = useCallback(
@@ -1168,56 +1233,107 @@ export default function App() {
 
   const handleYouTubeEnded = useCallback(() => {
     if (useNativeAudio || isCheckingNativeAudio) return;
-    if (currentVideo) {
-      handleMarkAsPlayed(currentVideo.id);
+    if (currentVideoIdRef.current) {
+      handleMarkAsPlayed(currentVideoIdRef.current);
     }
     handleNextTrack();
-  }, [currentVideo?.id, handleMarkAsPlayed, handleNextTrack, useNativeAudio, isCheckingNativeAudio]);
+  }, [handleMarkAsPlayed, handleNextTrack, useNativeAudio, isCheckingNativeAudio]);
+
+  const handleNativeTimeUpdate = useCallback(
+    (cur: number, dur: number) => {
+      const vid = currentVideoIdRef.current;
+      if (!vid) return;
+      setPlaybackClock(vid, cur, dur);
+      if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 10) {
+        lastSavedProgressTimeRef.current = cur;
+        persistProgress(vid, cur, dur);
+      }
+    },
+    [persistProgress]
+  );
+
+  const handleNativeEnded = useCallback(() => {
+    if (currentVideoIdRef.current) {
+      handleMarkAsPlayed(currentVideoIdRef.current);
+    }
+    handleNextTrack();
+  }, [handleMarkAsPlayed, handleNextTrack]);
+
+  const handleNativeFallbackNeeded = useCallback(
+    (reason: 'login_required' | 'live_stream' | 'unavailable' = 'unavailable') => {
+      const vidId = currentVideoIdRef.current;
+      if (!vidId) return;
+      setAudioStatusMap((prev) => ({ ...prev, [vidId]: reason }));
+    },
+    []
+  );
+
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
+  // Precompute group channel counts and channel video counts in O(N) instead of O(N*M) per render
+  const groupChannelCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    map.set('all', channels.length);
+    for (const c of channels) {
+      map.set(c.groupId, (map.get(c.groupId) || 0) + 1);
+    }
+    return map;
+  }, [channels]);
+
+  const channelVideoCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const v of videos) {
+      map.set(v.channelId, (map.get(v.channelId) || 0) + 1);
+    }
+    return map;
+  }, [videos]);
 
   // 9. Filter and Sort Videos
   const filteredVideos = useMemo(() => {
-    let result = [...videos];
-
-    // Filter by Group
+    let channelIdsInGroup: Set<string> | null = null;
     if (activeGroupId !== 'all') {
-      const channelIdsInGroup = new Set(
+      channelIdsInGroup = new Set(
         channels.filter((c) => c.groupId === activeGroupId).map((c) => c.id)
       );
-      result = result.filter((v) => channelIdsInGroup.has(v.channelId));
     }
+    const q = deferredSearchQuery.trim().toLowerCase();
 
-    // Filter by specific selected channel
-    if (selectedChannelId) {
-      result = result.filter((v) => v.channelId === selectedChannelId);
-    }
+    const result = videos.filter((v) => {
+      if (channelIdsInGroup && !channelIdsInGroup.has(v.channelId)) return false;
+      if (selectedChannelId && v.channelId !== selectedChannelId) return false;
+      if (
+        q &&
+        !v.title.toLowerCase().includes(q) &&
+        !v.channelTitle.toLowerCase().includes(q) &&
+        !(v.description && v.description.toLowerCase().includes(q))
+      ) {
+        return false;
+      }
+      return true;
+    });
 
-    // Filter by search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (v) =>
-          v.title.toLowerCase().includes(q) ||
-          v.channelTitle.toLowerCase().includes(q) ||
-          (v.description && v.description.toLowerCase().includes(q))
+    // Sort with precomputed timestamps for fast O(N log N)
+    if (sortBy === 'newest' || sortBy === 'oldest') {
+      const timeById = new Map<string, number>();
+      for (const v of result) {
+        timeById.set(v.id, Date.parse(v.publishedAt) || 0);
+      }
+      result.sort((a, b) =>
+        sortBy === 'newest'
+          ? (timeById.get(b.id) || 0) - (timeById.get(a.id) || 0)
+          : (timeById.get(a.id) || 0) - (timeById.get(b.id) || 0)
       );
-    }
-
-    // Sort
-    if (sortBy === 'newest') {
-      result.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-    } else if (sortBy === 'oldest') {
-      result.sort((a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime());
     } else if (sortBy === 'title') {
       result.sort((a, b) => a.title.localeCompare(b.title));
     }
 
     return result;
-  }, [videos, channels, activeGroupId, selectedChannelId, searchQuery, sortBy]);
+  }, [videos, channels, activeGroupId, selectedChannelId, deferredSearchQuery, sortBy]);
 
   // Reset pagination when filters change
   useEffect(() => {
     setVisibleCount(FEED_PAGE_SIZE);
-  }, [activeGroupId, selectedChannelId, searchQuery, sortBy]);
+  }, [activeGroupId, selectedChannelId, deferredSearchQuery, sortBy]);
 
   const visibleVideos = useMemo(
     () => filteredVideos.slice(0, visibleCount),
@@ -1268,6 +1384,35 @@ export default function App() {
       return prev === 'video' ? 'audio' : 'video';
     });
   }, []);
+  const handleToggleMute = useCallback(() => setIsMuted((prev) => !prev), []);
+  const handleSwitchToVideoMode = useCallback(() => {
+    autoSwitchedToAudioRef.current = false;
+    setPlayerMode('video');
+  }, []);
+  const handleSwitchToAudioMode = useCallback(() => {
+    autoSwitchedToAudioRef.current = false;
+    nativeAudioRef.current?.unlock();
+    setPlayerMode('audio');
+  }, []);
+  const handleExpandPiP = useCallback(() => {
+    autoSwitchedToAudioRef.current = false;
+    setPlayerMode('video');
+    setActiveTab('player');
+  }, []);
+  const handlePlayVideoQueueItem = useCallback(
+    (v: Video) => handlePlayVideo(v, 'video'),
+    [handlePlayVideo]
+  );
+  const handlePlayAudioQueueItem = useCallback(
+    (v: Video) => handlePlayVideo(v, 'audio'),
+    [handlePlayVideo]
+  );
+  const handleOpenAudioExtractorSettings = useCallback(() => {
+    setPendingExtractorVideo(currentVideo);
+    setHasOpenedExtractorModal(true);
+    setIsExtractorModalOpen(true);
+  }, [currentVideo]);
+  const handleSeekHandled = useCallback(() => setSeekCommand(null), []);
   const handleExpandPlayerTab = useCallback(() => setActiveTab('player'), []);
 
   return (
@@ -1321,8 +1466,6 @@ export default function App() {
                 currentVideo={currentVideo}
                 isPlaying={isPlaying}
                 isVisible={activeTab === 'player' && playerMode === 'audio'}
-                currentTime={currentTime}
-                duration={duration}
                 playbackRate={playbackRate}
                 volume={volume}
                 isMuted={isMuted}
@@ -1333,6 +1476,7 @@ export default function App() {
                 nativeAudioStatus={currentAudioStatus}
                 downloadState={audioDownloads[currentVideo.id]}
                 onDownloadAudio={handleDownloadAudio}
+                onOpenAudioExtractorSettings={handleOpenAudioExtractorSettings}
                 onPlayPause={handlePlayPause}
                 onSeek={handleSeek}
                 onSkipBack={handleSkipBack}
@@ -1341,13 +1485,10 @@ export default function App() {
                 onPrev={handlePrevTrack}
                 onSpeedChange={setPlaybackRate}
                 onVolumeChange={setVolume}
-                onToggleMute={() => setIsMuted(!isMuted)}
-                onSwitchToVideo={() => {
-                  autoSwitchedToAudioRef.current = false;
-                  setPlayerMode('video');
-                }}
+                onToggleMute={handleToggleMute}
+                onSwitchToVideo={handleSwitchToVideoMode}
                 onSetSleepTimer={handleSetSleepTimer}
-                onPlayQueueItem={(v) => handlePlayVideo(v, 'audio')}
+                onPlayQueueItem={handlePlayAudioQueueItem}
                 onRemoveFromQueue={handleRemoveFromQueue}
               />
             </motion.div>
@@ -1366,17 +1507,9 @@ export default function App() {
                 currentVideo={currentVideo}
                 queue={queue}
                 isMiniPiP={!(activeTab === 'player' && playerMode === 'video')}
-                onExpandPiP={() => {
-                  autoSwitchedToAudioRef.current = false;
-                  setPlayerMode('video');
-                  setActiveTab('player');
-                }}
-                onSwitchToAudio={() => {
-                  autoSwitchedToAudioRef.current = false;
-                  nativeAudioRef.current?.unlock();
-                  setPlayerMode('audio');
-                }}
-                onPlayVideo={(v) => handlePlayVideo(v, 'video')}
+                onExpandPiP={handleExpandPiP}
+                onSwitchToAudio={handleSwitchToAudioMode}
+                onPlayVideo={handlePlayVideoQueueItem}
                 onRemoveFromQueue={handleRemoveFromQueue}
                 downloadState={audioDownloads[currentVideo.id]}
                 onDownloadAudio={handleDownloadAudio}
@@ -1390,16 +1523,12 @@ export default function App() {
                       playbackRate={playbackRate}
                       volume={volume}
                       isMuted={isMuted}
-                      initialSeekSeconds={
-                        currentTime > 0
-                          ? currentTime
-                          : playbackProgressMap[currentVideo.id]?.currentTime || 0
-                      }
+                      initialSeekSeconds={playbackProgressMap[currentVideo.id]?.currentTime || 0}
                       onTimeUpdate={handleYouTubeTimeUpdate}
                       onStateChange={handleYouTubeStateChange}
                       onEnded={handleYouTubeEnded}
                       seekCommand={useNativeAudio || isCheckingNativeAudio ? null : seekCommand}
-                      onSeekHandled={() => setSeekCommand(null)}
+                      onSeekHandled={handleSeekHandled}
                     />
                   ) : null
                 }
@@ -1415,10 +1544,7 @@ export default function App() {
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
               {groups.map((group) => {
                 const isActive = activeGroupId === group.id && !selectedChannelId;
-                const count =
-                  group.id === 'all'
-                    ? channels.length
-                    : channels.filter((c) => c.groupId === group.id).length;
+                const count = groupChannelCounts.get(group.id) || 0;
 
                 return (
                   <motion.button
@@ -1548,7 +1674,7 @@ export default function App() {
 
                   {activeGroupChannels.map((ch) => {
                     const isSelected = selectedChannelId === ch.id;
-                    const chVideoCount = videos.filter((v) => v.channelId === ch.id).length;
+                    const chVideoCount = channelVideoCounts.get(ch.id) || 0;
 
                     return (
                       <motion.div
@@ -1836,43 +1962,20 @@ export default function App() {
         volume={volume}
         isMuted={isMuted}
         initialSeekSeconds={
-          currentTime > 0
-            ? currentTime
-            : currentVideo
-            ? playbackProgressMap[currentVideo.id]?.currentTime || 0
-            : 0
+          currentVideo ? playbackProgressMap[currentVideo.id]?.currentTime || 0 : 0
         }
         seekCommand={useNativeAudio ? seekCommand : null}
-        onSeekHandled={() => setSeekCommand(null)}
-        onTimeUpdate={(cur, dur) => {
-          if (!currentVideo) return;
-          setCurrentTime(cur);
-          if (dur > 0) setDuration(dur);
-          if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 5) {
-            lastSavedProgressTimeRef.current = cur;
-            persistProgress(currentVideo.id, cur, dur);
-          }
-        }}
-        onStateChange={(playing) => setIsPlaying(playing)}
-        onEnded={() => {
-          if (currentVideo) {
-            handleMarkAsPlayed(currentVideo.id);
-          }
-          handleNextTrack();
-        }}
-        onFallbackNeeded={(reason = 'unavailable') => {
-          if (!currentVideo) return;
-          const vidId = currentVideo.id;
-          setAudioStatusMap((prev) => ({ ...prev, [vidId]: reason }));
-        }}
+        onSeekHandled={handleSeekHandled}
+        onTimeUpdate={handleNativeTimeUpdate}
+        onStateChange={setIsPlaying}
+        onEnded={handleNativeEnded}
+        onFallbackNeeded={handleNativeFallbackNeeded}
       />
 
       {/* Sticky Mini Player Bar (when playing and scrolled or on feed tab) */}
       <MiniPlayerBar
         currentVideo={currentVideo}
         isPlaying={isPlaying}
-        currentTime={currentTime}
-        duration={duration}
         mode={playerMode}
         usingNativeAudio={useNativeAudio}
         onPlayPause={handlePlayPause}
@@ -1942,6 +2045,15 @@ export default function App() {
             onUpdatePlaylist={handleUpdatePlaylist}
             onDeletePlaylist={handleDeletePlaylist}
             onPlayPlaylist={handlePlayPlaylist}
+          />
+        )}
+
+        {hasOpenedExtractorModal && (
+          <AudioExtractorModal
+            isOpen={isExtractorModalOpen}
+            onClose={() => setIsExtractorModalOpen(false)}
+            pendingVideo={pendingExtractorVideo}
+            onResolved={handleExtractorResolved}
           />
         )}
       </Suspense>
@@ -2042,6 +2154,23 @@ export default function App() {
               <div className="flex-1 min-w-0 text-left">
                 <div className="font-bold truncate">{downloadNotice.title}</div>
                 <div className="opacity-90 break-words">{downloadNotice.message}</div>
+                {downloadNotice.requiresAuth && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetVideo =
+                        videos.find((v) => v.id === downloadNotice.videoId) ||
+                        (currentVideo?.id === downloadNotice.videoId ? currentVideo : null);
+                      setPendingExtractorVideo(targetVideo);
+                      setHasOpenedExtractorModal(true);
+                      setIsExtractorModalOpen(true);
+                      dismissDownloadNotice();
+                    }}
+                    className="mt-2 px-3 py-1 rounded-lg bg-white text-red-700 font-bold text-[11px] hover:bg-red-50 transition-colors cursor-pointer"
+                  >
+                    Atasi Pembatasan YouTube
+                  </button>
+                )}
               </div>
               <button
                 type="button"

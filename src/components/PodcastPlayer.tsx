@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Play,
@@ -24,14 +24,13 @@ import {
 } from 'lucide-react';
 import { NativeAudioStatus, Video, VisualizerStyle } from '../types';
 import { formatTime, formatRelativeTime, formatBytes } from '../utils/format';
+import { usePlaybackClock } from '../utils/playbackClock';
 import { AudioDownloadItem } from '../hooks/useAudioDownload';
 import { AudioVisualizer } from './AudioVisualizer';
 
 interface PodcastPlayerProps {
   currentVideo: Video;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
   playbackRate: number;
   volume: number;
   isMuted: boolean;
@@ -56,13 +55,63 @@ interface PodcastPlayerProps {
   isVisible?: boolean;
   downloadState?: AudioDownloadItem;
   onDownloadAudio?: (video: Video) => void;
+  onOpenAudioExtractorSettings?: () => void;
 }
 
-export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
+const PodcastScrubber: React.FC<{
+  videoId: string;
+  onSeek: (seconds: number) => void;
+}> = React.memo(({ videoId, onSeek }) => {
+  const clock = usePlaybackClock();
+  const currentTime = clock.videoId === videoId ? clock.currentTime : 0;
+  const duration = clock.videoId === videoId ? clock.duration : 0;
+  const progressPercent =
+    duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+
+  return (
+    <div className="space-y-2 mb-6">
+      <div className="relative w-full flex items-center group">
+        <input
+          type="range"
+          min={0}
+          max={duration || 100}
+          value={currentTime}
+          onChange={(e) => onSeek(Number(e.target.value))}
+          className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-hidden"
+          style={{
+            background: `linear-gradient(to right, #dc2626 0%, #dc2626 ${progressPercent}%, rgba(148, 163, 184, 0.35) ${progressPercent}%, rgba(148, 163, 184, 0.35) 100%)`,
+          }}
+        />
+      </div>
+      <div className="flex justify-between text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+        <span>{formatTime(currentTime)}</span>
+        <span>{formatTime(duration)}</span>
+      </div>
+    </div>
+  );
+});
+
+const SleepTimerLabel: React.FC<{ expiresAt: number | null }> = React.memo(({ expiresAt }) => {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [expiresAt]);
+
+  if (!expiresAt) return <span>Waktu Tidur</span>;
+  const remainingMs = expiresAt - Date.now();
+  if (remainingMs <= 0) return <span>Tidur: 00:00</span>;
+  const totalSecs = Math.floor(remainingMs / 1000);
+  const m = Math.floor(totalSecs / 60);
+  const s = totalSecs % 60;
+  return <span>Tidur: {m}:{s.toString().padStart(2, '0')}</span>;
+});
+
+export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
   currentVideo,
   isPlaying,
-  currentTime,
-  duration,
   playbackRate,
   volume,
   isMuted,
@@ -87,26 +136,13 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
   isVisible = true,
   downloadState,
   onDownloadAudio,
+  onOpenAudioExtractorSettings,
 }) => {
   const [visualizerStyle, setVisualizerStyle] = useState<VisualizerStyle>('bars');
   const [showQueue, setShowQueue] = useState(false);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
   const [isHoveringArt, setIsHoveringArt] = useState(false);
   const [showMobileTips, setShowMobileTips] = useState(false);
-
-  const progressPercent =
-    duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
-
-  // Calculate sleep timer countdown
-  const getSleepCountdown = () => {
-    if (!sleepTimerExpiresAt) return null;
-    const remainingMs = sleepTimerExpiresAt - Date.now();
-    if (remainingMs <= 0) return '00:00';
-    const totalSecs = Math.floor(remainingMs / 1000);
-    const m = Math.floor(totalSecs / 60);
-    const s = totalSecs % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
 
   const speedOptions = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
   const sleepOptions: { label: string; value: number | null }[] = [
@@ -247,14 +283,25 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
                   : 'YouTube membatasi ekstraksi audio langsung untuk video ini dari server cloud, sehingga pemutaran beralih ke iframe YouTube yang otomatis dijeda browser HP saat diminimize/layar dikunci.'}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowMobileTips(!showMobileTips)}
-              className="flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-300 hover:underline whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <span>Panduan</span>
-              {showMobileTips ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
+            <div className="flex items-center gap-3 shrink-0">
+              {nativeAudioStatus !== 'live_stream' && onOpenAudioExtractorSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenAudioExtractorSettings}
+                  className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Atasi Pembatasan
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowMobileTips(!showMobileTips)}
+                className="flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-300 hover:underline whitespace-nowrap cursor-pointer"
+              >
+                <span>Panduan</span>
+                {showMobileTips ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
 
           <AnimatePresence>
@@ -399,26 +446,8 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
             </div>
           </div>
 
-          {/* Scrubber Progress Bar */}
-          <div className="space-y-2 mb-6">
-            <div className="relative w-full flex items-center group">
-              <input
-                type="range"
-                min={0}
-                max={duration || 100}
-                value={currentTime}
-                onChange={(e) => onSeek(Number(e.target.value))}
-                className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-hidden"
-                style={{
-                  background: `linear-gradient(to right, #dc2626 0%, #dc2626 ${progressPercent}%, rgba(148, 163, 184, 0.35) ${progressPercent}%, rgba(148, 163, 184, 0.35) 100%)`,
-                }}
-              />
-            </div>
-            <div className="flex justify-between text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              <span>{formatTime(currentTime)}</span>
-              <span>{formatTime(duration)}</span>
-            </div>
-          </div>
+          {/* Scrubber Progress Bar (Isolated clock subscription) */}
+          <PodcastScrubber videoId={currentVideo.id} onSeek={onSeek} />
 
           {/* Primary Controls Row */}
           <div className="flex items-center justify-between gap-2 sm:gap-4">
@@ -528,11 +557,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
                   title="Pengatur Waktu Tidur"
                 >
                   <Moon className="w-3.5 h-3.5" />
-                  <span>
-                    {sleepTimerExpiresAt
-                      ? `Tidur: ${getSleepCountdown()}`
-                      : 'Waktu Tidur'}
-                  </span>
+                  <SleepTimerLabel expiresAt={sleepTimerExpiresAt} />
                 </motion.button>
 
                 <AnimatePresence>
@@ -666,4 +691,4 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = ({
       </AnimatePresence>
     </div>
   );
-};
+});

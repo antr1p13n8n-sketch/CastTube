@@ -29,7 +29,7 @@ interface VideoPlayerViewProps {
   onDownloadAudio?: (video: Video) => void;
 }
 
-export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
+export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
   currentVideo,
   queue,
   onSwitchToAudio,
@@ -76,7 +76,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
         {playerSlot}
         <button
           onClick={onExpandPiP}
-          className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white text-xs font-semibold backdrop-blur-xs transition-opacity cursor-pointer z-10"
+          className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white text-xs font-semibold transition-opacity cursor-pointer z-10"
           title="Perbesar Pemutar Video"
         >
           <Maximize2 className="w-4 h-4" />
@@ -245,10 +245,8 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
               </div>
             ) : (
               queue.map((item, idx) => (
-                <motion.div
+                <div
                   key={`${item.id}-${idx}`}
-                  whileHover={{ x: 2 }}
-                  transition={{ duration: 0.14 }}
                   className="group flex items-center justify-between gap-2.5 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 >
                   <div
@@ -258,6 +256,8 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
                     <img
                       src={item.thumbnail}
                       alt={item.title}
+                      loading="lazy"
+                      decoding="async"
                       referrerPolicy="no-referrer"
                       className="w-16 h-10 rounded-lg object-cover shrink-0 group-hover:opacity-90 transition-opacity"
                     />
@@ -278,7 +278,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
                   >
                     ×
                   </button>
-                </motion.div>
+                </div>
               ))
             )}
           </div>
@@ -286,4 +286,4 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
       </div>
     </div>
   );
-};
+});

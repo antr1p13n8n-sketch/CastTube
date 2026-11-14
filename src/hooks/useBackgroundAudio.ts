@@ -1,11 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { Video } from '../types';
+import { getPlaybackClockSnapshot, subscribePlaybackClock } from '../utils/playbackClock';
 
 interface UseBackgroundAudioOptions {
   currentVideo: Video | null;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
   playbackRate: number;
   onPlay: () => void;
   onPause: () => void;
@@ -20,13 +19,11 @@ interface UseBackgroundAudioOptions {
 
 /**
  * Registers Media Session metadata, lock-screen / OS notification controls,
- * playback position state, and visibility lifecycle hooks for background playback.
+ * throttled playback position state, and visibility lifecycle hooks.
  */
 export function useBackgroundAudio({
   currentVideo,
   isPlaying,
-  currentTime,
-  duration,
   playbackRate,
   onPlay,
   onPause,
@@ -50,19 +47,7 @@ export function useBackgroundAudio({
     onVisibilityVisible,
   });
 
-  useEffect(() => {
-    handlersRef.current = {
-      onPlay,
-      onPause,
-      onNext,
-      onPrev,
-      onSeek,
-      onSkipBack,
-      onSkipForward,
-      onVisibilityHiddenWhilePlaying,
-      onVisibilityVisible,
-    };
-  }, [
+  handlersRef.current = {
     onPlay,
     onPause,
     onNext,
@@ -72,10 +57,12 @@ export function useBackgroundAudio({
     onSkipForward,
     onVisibilityHiddenWhilePlaying,
     onVisibilityVisible,
-  ]);
+  };
 
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
+  const playbackRateRef = useRef(playbackRate);
+  playbackRateRef.current = playbackRate;
 
   // 1. Media Session API metadata & action handlers
   useEffect(() => {
@@ -132,28 +119,43 @@ export function useBackgroundAudio({
     }
   }, [currentVideo?.id, currentVideo?.title, currentVideo?.channelTitle, currentVideo?.thumbnail]);
 
-  // 2. Keep Media Session playbackState & position synced
+  // 2. Keep Media Session playbackState & throttled position synced without App re-renders
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
-    try {
-      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-      if (
-        typeof navigator.mediaSession.setPositionState === 'function' &&
-        duration > 0 &&
-        Number.isFinite(duration) &&
-        currentTime >= 0 &&
-        currentTime <= duration
-      ) {
-        navigator.mediaSession.setPositionState({
-          duration,
-          playbackRate: playbackRate || 1,
-          position: Math.min(duration, Math.max(0, currentTime)),
-        });
+
+    const pushPosition = () => {
+      try {
+        navigator.mediaSession.playbackState = isPlayingRef.current ? 'playing' : 'paused';
+        const snap = getPlaybackClockSnapshot();
+        if (
+          typeof navigator.mediaSession.setPositionState === 'function' &&
+          snap.duration > 0 &&
+          Number.isFinite(snap.duration) &&
+          snap.currentTime >= 0 &&
+          snap.currentTime <= snap.duration
+        ) {
+          navigator.mediaSession.setPositionState({
+            duration: snap.duration,
+            playbackRate: playbackRateRef.current || 1,
+            position: Math.min(snap.duration, Math.max(0, snap.currentTime)),
+          });
+        }
+      } catch {
+        // Ignore invalid position state
       }
-    } catch {
-      // Ignore invalid position state
-    }
-  }, [isPlaying, currentTime, duration, playbackRate]);
+    };
+
+    pushPosition();
+    let lastSyncMs = Date.now();
+    const unsub = subscribePlaybackClock(() => {
+      const now = Date.now();
+      if (now - lastSyncMs >= 2000) {
+        lastSyncMs = now;
+        pushPosition();
+      }
+    });
+    return unsub;
+  }, [isPlaying, playbackRate, currentVideo?.id]);
 
   // 3. Re-assert Media Session & notify handler when app goes to background / returns
   useEffect(() => {

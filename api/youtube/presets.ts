@@ -16,5 +16,6 @@ export default function handler(req: VercelReq, res: VercelRes) {
     videoCount: p.videos.length,
   }));
 
+  res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
   return res.status(200).json({ presets });
 }

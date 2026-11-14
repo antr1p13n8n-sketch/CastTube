@@ -5,6 +5,8 @@ import {
   invalidateAudioStreamCache,
   buildAudioDownloadFilename,
   buildContentDispositionHeader,
+  extractAuthFromRequest,
+  buildExtractorSetCookieHeader,
   VercelReq,
   VercelRes,
 } from '../_youtube.js';
@@ -12,7 +14,10 @@ import {
 export default async function handler(req: VercelReq, res: VercelRes) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Range, Content-Type, X-YouTube-Cookies, X-YouTube-OAuth, X-Extractor-Url'
+  );
   res.setHeader(
     'Access-Control-Expose-Headers',
     'Content-Disposition, Content-Length, Content-Type, X-Suggested-Filename'
@@ -33,7 +38,30 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       return res.status(400).json({ error: 'Parameter videoId diperlukan' });
     }
 
-    const resolution = await resolveAudioStreamInfo(videoId);
+    const reqAny = req as unknown as {
+      headers?: Record<string, string | string[] | undefined>;
+      on?: (event: string, cb: () => void) => void;
+    };
+    const resAny = res as unknown as {
+      writableEnded?: boolean;
+      headersSent?: boolean;
+    };
+
+    const authConfig = extractAuthFromRequest(reqAny.headers);
+    const resolution = await resolveAudioStreamInfo(videoId, authConfig);
+
+    if (resolution.refreshedOAuth) {
+      const proto = reqAny.headers?.['x-forwarded-proto'];
+      const secure = (Array.isArray(proto) ? proto[0] : proto) === 'https';
+      res.setHeader(
+        'Set-Cookie',
+        buildExtractorSetCookieHeader(
+          { ...authConfig, oauthTokens: resolution.refreshedOAuth },
+          secure
+        )
+      );
+    }
+
     if (req.query.check === '1') {
       return res.status(200).json({
         available: Boolean(resolution.stream),
@@ -50,15 +78,6 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       });
     }
 
-    const reqAny = req as unknown as {
-      headers?: Record<string, string | string[] | undefined>;
-      on?: (event: string, cb: () => void) => void;
-    };
-    const resAny = res as unknown as {
-      writableEnded?: boolean;
-      headersSent?: boolean;
-    };
-
     const rangeHeader = reqAny.headers?.range;
     const rangeStr = rangeHeader
       ? Array.isArray(rangeHeader)
@@ -69,17 +88,18 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     const fetchUpstream = async (info: NonNullable<typeof streamInfo>) => {
       const headers: Record<string, string> = {
         'User-Agent': info.userAgent,
+        ...(info.extraHeaders || {}),
       };
       if (rangeStr) {
         headers['Range'] = rangeStr;
       }
-      return fetch(info.url, { headers });
+      return fetch(info.url, { headers, redirect: 'follow' });
     };
 
     let upstream = await fetchUpstream(streamInfo);
     if (upstream.status === 403 || upstream.status === 410) {
       invalidateAudioStreamCache(videoId);
-      const refreshed = await resolveAudioStreamUrl(videoId);
+      const refreshed = await resolveAudioStreamUrl(videoId, authConfig);
       if (refreshed) {
         streamInfo = refreshed;
         upstream = await fetchUpstream(refreshed);

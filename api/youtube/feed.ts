@@ -19,6 +19,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     }
 
     const data = await fetchChannelRss(channelId);
+    res.setHeader('Cache-Control', 'public, max-age=180, stale-while-revalidate=300');
     return res.status(200).json(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Gagal mengambil feed channel';

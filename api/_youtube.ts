@@ -1,13 +1,50 @@
+import dns from 'node:dns';
+import { JSDOM } from 'jsdom';
+import { BotGuardClient, getChallenge } from 'bgutils-js/botguard';
+import { WebPoMinter } from 'bgutils-js/webpo';
+import { Innertube } from 'youtubei.js';
+
+interface OAuth2ClientID {
+  client_id: string;
+  client_secret: string;
+}
+
+interface OAuth2Tokens {
+  access_token: string;
+  expiry_date: string;
+  expires_in?: number;
+  refresh_token: string;
+  scope?: string;
+  token_type?: string;
+  client?: OAuth2ClientID;
+}
+
+interface DeviceAndUserCode {
+  device_code: string;
+  expires_in: number;
+  interval: number;
+  user_code: string;
+  verification_url: string;
+  error_code?: string;
+}
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // ignore in non-Node runtimes
+}
+
 export interface VercelReq {
   method?: string;
   body?: any;
+  headers?: Record<string, string | string[] | undefined>;
   query: Record<string, string | string[] | undefined>;
 }
 
 export interface VercelRes {
   status: (code: number) => VercelRes;
   json: (data: any) => void;
-  setHeader: (name: string, value: string) => void;
+  setHeader: (name: string, value: string | string[]) => void;
   end: () => void;
 }
 
@@ -591,10 +628,14 @@ async function fetchPaginatedChannelVideos(
     );
     if (!res.ok) return { videos: allVideos };
     const html = await res.text();
-    const match = html.match(/var ytInitialData = (\{[\s\S]*?\});<\/script>/);
-    if (!match) return { videos: allVideos };
+    const marker = 'var ytInitialData = ';
+    const startIdx = html.indexOf(marker);
+    if (startIdx === -1) return { videos: allVideos };
+    const jsonStart = startIdx + marker.length;
+    const endIdx = html.indexOf(';</script>', jsonStart);
+    if (endIdx === -1) return { videos: allVideos };
 
-    const data = JSON.parse(match[1]);
+    const data = JSON.parse(html.slice(jsonStart, endIdx));
     avatar = data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources?.slice(-1)?.[0]?.url
       || data?.header?.c4TabbedHeaderRenderer?.avatar?.thumbnails?.slice(-1)?.[0]?.url;
     resolvedTitle =
@@ -652,9 +693,30 @@ async function fetchPaginatedChannelVideos(
   return { videos: allVideos, avatar, resolvedTitle };
 }
 
+function pruneCacheMap<K, V extends { expiresAt: number }>(
+  map: Map<K, V>,
+  maxSize = 200
+): void {
+  const now = Date.now();
+  for (const [k, v] of map) {
+    if (v.expiresAt <= now) {
+      map.delete(k);
+    }
+  }
+  while (map.size > maxSize) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
 const channelFeedCache = new Map<
   string,
   { data: { channel: ChannelData; videos: VideoItem[] }; expiresAt: number }
+>();
+const pendingFeedRequests = new Map<
+  string,
+  Promise<{ channel: ChannelData; videos: VideoItem[] }>
 >();
 
 export async function fetchChannelRss(
@@ -667,70 +729,127 @@ export async function fetchChannelRss(
     return cached.data;
   }
 
-  const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-
-  const [rssResult, browseResult] = await Promise.allSettled([
-    (async () => {
-      const res = await fetchWithTimeout(rssUrl, {}, 7000);
-      if (res.ok) {
-        const xml = await res.text();
-        const parsed = parseYouTubeRss(xml);
-        if (parsed.channel.id) return parsed;
-      }
-      return null;
-    })(),
-    fetchPaginatedChannelVideos(channelId, `Channel ${channelId.slice(0, 8)}`, maxPages),
-  ]);
-
-  const rssData = rssResult.status === 'fulfilled' ? rssResult.value : null;
-  const browseData =
-    browseResult.status === 'fulfilled' ? browseResult.value : { videos: [] };
-
-  if (rssData || browseData.videos.length > 0) {
-    const baseChannel: ChannelData = rssData?.channel || {
-      id: channelId,
-      title: browseData.resolvedTitle || `Channel ${channelId.slice(0, 8)}...`,
-      url: `https://www.youtube.com/channel/${channelId}`,
-      avatar: browseData.avatar || `https://avatar.vercel.sh/${channelId}?size=120`,
-    };
-    if (browseData.avatar) baseChannel.avatar = browseData.avatar;
-    if (browseData.resolvedTitle && (!baseChannel.title || baseChannel.title.startsWith('Channel '))) {
-      baseChannel.title = browseData.resolvedTitle;
-    }
-
-    const mergedMap = new Map<string, VideoItem>();
-    for (const v of rssData?.videos || []) {
-      mergedMap.set(v.id, v);
-    }
-    for (const v of browseData.videos) {
-      if (!mergedMap.has(v.id)) {
-        mergedMap.set(v.id, { ...v, channelTitle: baseChannel.title });
-      }
-    }
-
-    const result = {
-      channel: baseChannel,
-      videos: Array.from(mergedMap.values()),
-    };
-    channelFeedCache.set(cacheKey, {
-      data: result,
-      expiresAt: Date.now() + 3 * 60 * 1000,
-    });
-    return result;
+  const inFlight = pendingFeedRequests.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
   }
 
-  if (PRESET_CHANNELS[channelId]) {
-    return PRESET_CHANNELS[channelId];
-  }
+  const promise = (async (): Promise<{ channel: ChannelData; videos: VideoItem[] }> => {
+    const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
 
+    const [rssResult, browseResult] = await Promise.allSettled([
+      (async () => {
+        const res = await fetchWithTimeout(rssUrl, {}, 7000);
+        if (res.ok) {
+          const xml = await res.text();
+          const parsed = parseYouTubeRss(xml);
+          if (parsed.channel.id) return parsed;
+        }
+        return null;
+      })(),
+      fetchPaginatedChannelVideos(channelId, `Channel ${channelId.slice(0, 8)}`, maxPages),
+    ]);
+
+    const rssData = rssResult.status === 'fulfilled' ? rssResult.value : null;
+    const browseData =
+      browseResult.status === 'fulfilled' ? browseResult.value : { videos: [] };
+
+    if (rssData || browseData.videos.length > 0) {
+      const baseChannel: ChannelData = rssData?.channel || {
+        id: channelId,
+        title: browseData.resolvedTitle || `Channel ${channelId.slice(0, 8)}...`,
+        url: `https://www.youtube.com/channel/${channelId}`,
+        avatar: browseData.avatar || `https://avatar.vercel.sh/${channelId}?size=120`,
+      };
+      if (browseData.avatar) baseChannel.avatar = browseData.avatar;
+      if (browseData.resolvedTitle && (!baseChannel.title || baseChannel.title.startsWith('Channel '))) {
+        baseChannel.title = browseData.resolvedTitle;
+      }
+
+      const mergedMap = new Map<string, VideoItem>();
+      for (const v of rssData?.videos || []) {
+        mergedMap.set(v.id, v);
+      }
+      for (const v of browseData.videos) {
+        if (!mergedMap.has(v.id)) {
+          mergedMap.set(v.id, { ...v, channelTitle: baseChannel.title });
+        }
+      }
+
+      const result = {
+        channel: baseChannel,
+        videos: Array.from(mergedMap.values()),
+      };
+      channelFeedCache.set(cacheKey, {
+        data: result,
+        expiresAt: Date.now() + 3 * 60 * 1000,
+      });
+      pruneCacheMap(channelFeedCache, 150);
+      return result;
+    }
+
+    if (PRESET_CHANNELS[channelId]) {
+      return PRESET_CHANNELS[channelId];
+    }
+
+    return {
+      channel: {
+        id: channelId,
+        title: `Channel ${channelId.slice(0, 8)}...`,
+        url: `https://www.youtube.com/channel/${channelId}`,
+        avatar: `https://avatar.vercel.sh/${channelId}?size=120`,
+      },
+      videos: [],
+    };
+  })().finally(() => {
+    pendingFeedRequests.delete(cacheKey);
+  });
+
+  pendingFeedRequests.set(cacheKey, promise);
+  return promise;
+}
+
+export async function fetchBatchChannelFeeds(
+  rawChannelIds: string[],
+  maxPages = 2,
+  concurrency = 6
+): Promise<{ channels: Record<string, ChannelData>; videos: VideoItem[] }> {
+  const uniqueIds = Array.from(
+    new Set(
+      rawChannelIds
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        .slice(0, 20)
+    )
+  );
+
+  const channels: Record<string, ChannelData> = {};
+  const videoWithTs: Array<{ video: VideoItem; ts: number }> = [];
+  let cursor = 0;
+  const workerCount = Math.min(concurrency, uniqueIds.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (cursor < uniqueIds.length) {
+        const idx = cursor++;
+        const id = uniqueIds[idx];
+        try {
+          const { channel, videos } = await fetchChannelRss(id, maxPages);
+          channels[channel.id] = channel;
+          for (const video of videos) {
+            const parsed = Date.parse(video.publishedAt);
+            videoWithTs.push({ video, ts: Number.isNaN(parsed) ? 0 : parsed });
+          }
+        } catch {
+          // ignore individual channel feed failure
+        }
+      }
+    })
+  );
+
+  videoWithTs.sort((a, b) => b.ts - a.ts);
   return {
-    channel: {
-      id: channelId,
-      title: `Channel ${channelId.slice(0, 8)}...`,
-      url: `https://www.youtube.com/channel/${channelId}`,
-      avatar: `https://avatar.vercel.sh/${channelId}?size=120`,
-    },
-    videos: [],
+    channels,
+    videos: videoWithTs.map((item) => item.video),
   };
 }
 
@@ -741,21 +860,493 @@ export interface ResolvedAudioStream {
   mimeType: string;
   contentLength?: string;
   userAgent: string;
+  extraHeaders?: Record<string, string>;
 }
 
 export interface AudioStreamResolution {
   stream: ResolvedAudioStream | null;
   status: 'available' | AudioStreamFailureReason;
   reason?: string;
+  refreshedOAuth?: YouTubeOAuthTokens;
 }
+
+export interface YouTubeOAuthClientIdentity {
+  client_id: string;
+  client_secret: string;
+}
+
+export interface YouTubeOAuthTokens {
+  access_token: string;
+  refresh_token: string;
+  expiry_date: string;
+  token_type?: string;
+  scope?: string;
+  client?: YouTubeOAuthClientIdentity;
+}
+
+export interface ExtractorAuthConfig {
+  oauthTokens?: YouTubeOAuthTokens;
+  cookies?: string;
+  extractorUrl?: string;
+}
+
+export const EXTRACTOR_COOKIE_NAME = 'ct_yt_extract';
 
 const audioStreamCache = new Map<
   string,
   { resolution: AudioStreamResolution; expiresAt: number }
 >();
+const pendingAudioResolutions = new Map<string, Promise<AudioStreamResolution>>();
+
+function buildAuthCacheKey(auth?: ExtractorAuthConfig): string {
+  if (!auth) return 'anon';
+  const parts: string[] = [];
+  if (auth.oauthTokens?.access_token) {
+    parts.push(`oauth:${auth.oauthTokens.access_token.slice(-10)}`);
+  }
+  if (auth.cookies) {
+    parts.push(`ck:${auth.cookies.length}:${auth.cookies.slice(0, 12)}`);
+  }
+  if (auth.extractorUrl) {
+    parts.push(`ext:${auth.extractorUrl}`);
+  }
+  return parts.length > 0 ? parts.join('|') : 'anon';
+}
 
 export function invalidateAudioStreamCache(videoId: string): void {
-  audioStreamCache.delete(videoId);
+  for (const key of audioStreamCache.keys()) {
+    if (key === videoId || key.startsWith(`${videoId}::`)) {
+      audioStreamCache.delete(key);
+    }
+  }
+}
+
+export function normalizeYouTubeCookies(rawInput: string | undefined): string {
+  if (!rawInput) return '';
+  const trimmed = rawInput.trim();
+  if (!trimmed) return '';
+
+  // Detect Netscape cookies.txt format (lines with tab-separated 7 columns)
+  const lines = trimmed.split(/\r?\n/);
+  const hasNetscapeLines = lines.some((line) => {
+    const l = line.trim();
+    return l && !l.startsWith('#') && l.split('\t').length >= 7;
+  });
+
+  if (hasNetscapeLines) {
+    const pairs: string[] = [];
+    const seen = new Set<string>();
+    for (const line of lines) {
+      const l = line.trim();
+      if (!l || l.startsWith('#')) continue;
+      const cols = line.split('\t');
+      if (cols.length < 7) continue;
+      const domain = (cols[0] || '').toLowerCase();
+      if (domain && !domain.includes('youtube.com') && !domain.includes('google.com')) {
+        continue;
+      }
+      const name = (cols[5] || '').trim();
+      const value = (cols[6] || '').trim();
+      if (!name || !value || seen.has(name)) continue;
+      seen.add(name);
+      pairs.push(`${name}=${value}`);
+    }
+    return pairs.join('; ');
+  }
+
+  return trimmed
+    .replace(/^cookie:\s*/i, '')
+    .replace(/[\r\n]+/g, '; ')
+    .trim();
+}
+
+export function parseCookiesHeaderMap(cookieHeader: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!cookieHeader) return out;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    if (key) out[key] = val;
+  }
+  return out;
+}
+
+export function encodeExtractorCookieValue(config: ExtractorAuthConfig): string {
+  return Buffer.from(JSON.stringify(config), 'utf8').toString('base64url');
+}
+
+export function decodeExtractorCookieValue(raw: string | undefined): ExtractorAuthConfig | null {
+  if (!raw) return null;
+  try {
+    const json = Buffer.from(raw, 'base64url').toString('utf8');
+    const parsed = JSON.parse(json) as ExtractorAuthConfig;
+    if (parsed && typeof parsed === 'object') {
+      return {
+        oauthTokens: parsed.oauthTokens,
+        cookies: parsed.cookies ? normalizeYouTubeCookies(parsed.cookies) : undefined,
+        extractorUrl: parsed.extractorUrl?.trim().replace(/\/+$/, '') || undefined,
+      };
+    }
+  } catch {
+    // ignore malformed cookie
+  }
+  return null;
+}
+
+export function buildExtractorSetCookieHeader(
+  config: ExtractorAuthConfig | null,
+  isSecure = false
+): string {
+  const baseAttrs = `Path=/api/youtube; HttpOnly; SameSite=Lax${isSecure ? '; Secure' : ''}`;
+  if (!config || (!config.oauthTokens && !config.cookies && !config.extractorUrl)) {
+    return `${EXTRACTOR_COOKIE_NAME}=; Max-Age=0; ${baseAttrs}`;
+  }
+  const encoded = encodeExtractorCookieValue(config);
+  // Keep cookie safe under browser 4KB limit; large cookies stay in localStorage + X-YouTube-Cookies header
+  if (encoded.length > 3600 && config.cookies) {
+    const compact: ExtractorAuthConfig = {
+      oauthTokens: config.oauthTokens,
+      extractorUrl: config.extractorUrl,
+    };
+    const compactEncoded = encodeExtractorCookieValue(compact);
+    return `${EXTRACTOR_COOKIE_NAME}=${compactEncoded}; Max-Age=${60 * 60 * 24 * 30}; ${baseAttrs}`;
+  }
+  return `${EXTRACTOR_COOKIE_NAME}=${encoded}; Max-Age=${60 * 60 * 24 * 30}; ${baseAttrs}`;
+}
+
+export function extractAuthFromRequest(
+  headers?: Record<string, string | string[] | undefined>
+): ExtractorAuthConfig {
+  const getHeader = (name: string): string | undefined => {
+    if (!headers) return undefined;
+    const raw = headers[name] ?? headers[name.toLowerCase()];
+    const str = Array.isArray(raw) ? raw[0] : raw;
+    return typeof str === 'string' && str.trim() ? str.trim() : undefined;
+  };
+
+  const cookieMap = parseCookiesHeaderMap(getHeader('cookie'));
+  const fromCookie = decodeExtractorCookieValue(cookieMap[EXTRACTOR_COOKIE_NAME]) || {};
+
+  let oauthTokens = fromCookie.oauthTokens;
+  const headerOAuth = getHeader('x-youtube-oauth');
+  if (headerOAuth) {
+    try {
+      const decoded = JSON.parse(Buffer.from(headerOAuth, 'base64url').toString('utf8'));
+      if (decoded?.access_token) oauthTokens = decoded;
+    } catch {
+      try {
+        const direct = JSON.parse(headerOAuth);
+        if (direct?.access_token) oauthTokens = direct;
+      } catch {
+        // ignore invalid oauth header
+      }
+    }
+  }
+
+  const headerCookies = normalizeYouTubeCookies(getHeader('x-youtube-cookies'));
+  const cookies = headerCookies || fromCookie.cookies;
+
+  const headerExtractorUrl = getHeader('x-extractor-url')?.replace(/\/+$/, '');
+  const extractorUrl = headerExtractorUrl || fromCookie.extractorUrl;
+
+  return {
+    oauthTokens,
+    cookies: cookies || undefined,
+    extractorUrl: extractorUrl || undefined,
+  };
+}
+
+let cachedInnertubeBase: { yt: Innertube; expiresAt: number } | null = null;
+let pendingInnertubeBasePromise: Promise<Innertube> | null = null;
+
+async function getSharedInnertubeBase(): Promise<Innertube> {
+  if (cachedInnertubeBase && cachedInnertubeBase.expiresAt > Date.now()) {
+    return cachedInnertubeBase.yt;
+  }
+  if (pendingInnertubeBasePromise) {
+    return pendingInnertubeBasePromise;
+  }
+  pendingInnertubeBasePromise = Innertube.create({ retrieve_player: false })
+    .then((yt) => {
+      cachedInnertubeBase = { yt, expiresAt: Date.now() + 30 * 60 * 1000 };
+      return yt;
+    })
+    .finally(() => {
+      pendingInnertubeBasePromise = null;
+    });
+  return pendingInnertubeBasePromise;
+}
+
+const cachedInnertubePlayers = new Map<string, { yt: Innertube; expiresAt: number }>();
+
+async function getCachedInnertubePlayer(options: {
+  cookies?: string;
+  poToken?: string;
+  visitorData?: string;
+  generateSessionLocally: boolean;
+}): Promise<Innertube> {
+  const key = `${options.cookies ? `ck:${options.cookies.length}:${options.cookies.slice(0, 12)}` : 'nock'}|${options.poToken ? options.poToken.slice(0, 16) : 'nopo'}|${options.visitorData ? options.visitorData.slice(0, 16) : 'novd'}|${options.generateSessionLocally ? '1' : '0'}`;
+  const cached = cachedInnertubePlayers.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.yt;
+  }
+  const yt = await Innertube.create({
+    cookie: options.cookies || undefined,
+    po_token: options.poToken || undefined,
+    visitor_data: options.visitorData || undefined,
+    generate_session_locally: options.generateSessionLocally,
+  });
+  cachedInnertubePlayers.set(key, {
+    yt,
+    expiresAt: Date.now() + 20 * 60 * 1000,
+  });
+  pruneCacheMap(cachedInnertubePlayers, 8);
+  return yt;
+}
+
+let cachedTvClientIdentity: { identity: OAuth2ClientID; expiresAt: number } | null = null;
+
+async function getYouTubeTvClientIdentity(): Promise<OAuth2ClientID> {
+  if (cachedTvClientIdentity && cachedTvClientIdentity.expiresAt > Date.now()) {
+    return cachedTvClientIdentity.identity;
+  }
+  const yt = await getSharedInnertubeBase();
+  const oauth = (yt.session as unknown as { oauth: { getClientID: () => Promise<OAuth2ClientID> } }).oauth;
+  const identity = await oauth.getClientID();
+  cachedTvClientIdentity = {
+    identity,
+    expiresAt: Date.now() + 12 * 60 * 60 * 1000,
+  };
+  return identity;
+}
+
+export async function startYouTubeDeviceAuth(): Promise<{
+  verificationUrl: string;
+  userCode: string;
+  deviceCode: string;
+  expiresIn: number;
+  interval: number;
+  client: YouTubeOAuthClientIdentity;
+}> {
+  const yt = await Innertube.create({ retrieve_player: false });
+  const client = await getYouTubeTvClientIdentity();
+  const oauth = (
+    yt.session as unknown as {
+      oauth: {
+        client_id?: OAuth2ClientID;
+        getDeviceAndUserCode: () => Promise<DeviceAndUserCode>;
+      };
+    }
+  ).oauth;
+  oauth.client_id = client;
+  const codeData = await oauth.getDeviceAndUserCode();
+  return {
+    verificationUrl: codeData.verification_url || 'https://www.google.com/device',
+    userCode: codeData.user_code,
+    deviceCode: codeData.device_code,
+    expiresIn: codeData.expires_in || 1800,
+    interval: codeData.interval || 5,
+    client,
+  };
+}
+
+export async function pollYouTubeDeviceAuth(params: {
+  deviceCode: string;
+  client?: YouTubeOAuthClientIdentity;
+}): Promise<{
+  status: 'pending' | 'authorized' | 'expired' | 'denied';
+  credentials?: YouTubeOAuthTokens;
+  error?: string;
+}> {
+  const client = params.client?.client_id && params.client?.client_secret
+    ? params.client
+    : await getYouTubeTvClientIdentity();
+
+  const res = await fetchWithTimeout(
+    'https://www.youtube.com/o/oauth2/token',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: client.client_id,
+        client_secret: client.client_secret,
+        code: params.deviceCode,
+        grant_type: 'http://oauth.net/grant_type/device/1.0',
+      }),
+    },
+    10000
+  );
+
+  const data = (await res.json()) as Record<string, any>;
+  if (data.error) {
+    if (data.error === 'authorization_pending' || data.error === 'slow_down') {
+      return { status: 'pending' };
+    }
+    if (data.error === 'expired_token') {
+      return { status: 'expired', error: 'Kode verifikasi kedaluwarsa. Buat kode baru.' };
+    }
+    if (data.error === 'access_denied') {
+      return { status: 'denied', error: 'Otorisasi ditolak oleh pengguna.' };
+    }
+    return { status: 'denied', error: String(data.error_description || data.error) };
+  }
+
+  if (!data.access_token || !data.refresh_token) {
+    return { status: 'pending' };
+  }
+
+  const expiresIn = Number(data.expires_in || 3600);
+  const credentials: YouTubeOAuthTokens = {
+    access_token: String(data.access_token),
+    refresh_token: String(data.refresh_token),
+    expiry_date: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    token_type: data.token_type ? String(data.token_type) : 'Bearer',
+    scope: data.scope ? String(data.scope) : undefined,
+    client,
+  };
+
+  return { status: 'authorized', credentials };
+}
+
+export async function refreshYouTubeOAuthTokens(
+  tokens: YouTubeOAuthTokens
+): Promise<YouTubeOAuthTokens> {
+  const client = tokens.client?.client_id && tokens.client?.client_secret
+    ? tokens.client
+    : await getYouTubeTvClientIdentity();
+
+  const res = await fetchWithTimeout(
+    'https://www.youtube.com/o/oauth2/token',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: client.client_id,
+        client_secret: client.client_secret,
+        refresh_token: tokens.refresh_token,
+        grant_type: 'refresh_token',
+      }),
+    },
+    10000
+  );
+
+  if (!res.ok) {
+    throw new Error(`Gagal memperbarui token YouTube (${res.status})`);
+  }
+  const data = (await res.json()) as Record<string, any>;
+  if (!data.access_token) {
+    throw new Error(String(data.error_description || data.error || 'Token refresh gagal'));
+  }
+  const expiresIn = Number(data.expires_in || 3600);
+  return {
+    ...tokens,
+    access_token: String(data.access_token),
+    expiry_date: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    client,
+  };
+}
+
+interface BotGuardPoSession {
+  poToken: string;
+  visitorData: string;
+  minter: WebPoMinter;
+  expiresAt: number;
+}
+
+let cachedBotGuardPo: BotGuardPoSession | null = null;
+let pendingBotGuardPromise: Promise<BotGuardPoSession | null> | null = null;
+
+async function getOrCreateBotGuardSession(): Promise<BotGuardPoSession | null> {
+  if (cachedBotGuardPo && cachedBotGuardPo.expiresAt > Date.now()) {
+    return cachedBotGuardPo;
+  }
+  if (pendingBotGuardPromise) {
+    return pendingBotGuardPromise;
+  }
+
+  pendingBotGuardPromise = (async () => {
+    try {
+      const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+        url: 'https://www.youtube.com/',
+        referrer: 'https://www.youtube.com/',
+        runScripts: 'dangerously',
+      });
+
+      const g = globalThis as Record<string, any>;
+      if (!g.window) g.window = dom.window;
+      if (!g.document) g.document = dom.window.document;
+
+      const yt = await getSharedInnertubeBase();
+      const visitorData = yt.session.context.client.visitorData || '';
+      const requestKey = 'O43z0dpjhgX20SCx4KAo';
+
+      const challenge = await getChallenge({
+        requestKey,
+        fetchFunction: fetch,
+        useYouTubeAPI: true,
+      });
+
+      const script =
+        challenge?.interpreterJavascript?.privateDoNotAccessOrElseSafeScriptWrappedValue;
+      if (script) {
+        const fn = new Function(script);
+        fn();
+      }
+
+      const bgClient = await BotGuardClient.create({
+        globalObject: globalThis,
+        globalName: challenge.globalName,
+        program: challenge.program,
+      });
+
+      const webPoSignalOutput: any[] = [];
+      const botguardResponse = await bgClient.snapshot({ webPoSignalOutput });
+
+      const jnnRes = await fetchWithTimeout(
+        'https://jnn-pa.googleapis.com/$rpc/google.internal.waa.v1.Waa/GenerateIT',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json+protobuf',
+            'x-goog-api-key': 'AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw',
+            'x-user-agent': 'grpc-web-javascript/0.1',
+          },
+          body: JSON.stringify([requestKey, botguardResponse]),
+        },
+        7000
+      );
+
+      if (!jnnRes.ok) return null;
+      const jnnArr = (await jnnRes.json()) as unknown[];
+      const integrityToken = typeof jnnArr?.[0] === 'string' ? jnnArr[0] : '';
+      if (!integrityToken) return null;
+
+      const minter = await WebPoMinter.create(
+        {
+          integrityToken,
+          estimatedTtlSecs: typeof jnnArr?.[1] === 'number' ? jnnArr[1] : undefined,
+        },
+        webPoSignalOutput
+      );
+
+      const poToken = await minter.mintAsWebsafeString(visitorData);
+      cachedBotGuardPo = {
+        poToken,
+        visitorData,
+        minter,
+        expiresAt: Date.now() + 3 * 60 * 60 * 1000,
+      };
+      return cachedBotGuardPo;
+    } catch {
+      return null;
+    } finally {
+      pendingBotGuardPromise = null;
+    }
+  })();
+
+  return pendingBotGuardPromise;
 }
 
 export function getAudioFileExtension(mimeType: string): string {
@@ -812,14 +1403,14 @@ const INNERTUBE_AUDIO_CLIENTS = [
     },
   },
   {
-    userAgent: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)',
+    userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
     client: {
       clientName: 'IOS',
-      clientVersion: '19.45.4',
+      clientVersion: '20.10.4',
       deviceMake: 'Apple',
       deviceModel: 'iPhone16,2',
       osName: 'iPhone',
-      osVersion: '18.1.0.22B83',
+      osVersion: '18.3.2.22D82',
     },
   },
   {
@@ -837,200 +1428,519 @@ const INNERTUBE_AUDIO_CLIENTS = [
   },
 ];
 
-async function tryExternalExtractor(videoId: string): Promise<ResolvedAudioStream | null> {
-  const pipedBase = process.env.PIPED_API_URL?.trim().replace(/\/+$/, '');
-  if (pipedBase) {
-    try {
-      const res = await fetchWithTimeout(`${pipedBase}/streams/${encodeURIComponent(videoId)}`, {}, 6000);
-      if (res.ok) {
-        const data = await res.json();
-        const streams: any[] = Array.isArray(data?.audioStreams) ? data.audioStreams : [];
-        const selected =
-          streams.find((s) => typeof s?.url === 'string' && String(s.mimeType || '').includes('audio/mp4')) ||
-          streams.find((s) => typeof s?.url === 'string' && String(s.mimeType || '').startsWith('audio/'));
-        if (selected?.url) {
-          return {
-            url: String(selected.url),
-            mimeType: String(selected.mimeType || 'audio/mp4').split(';')[0].trim(),
-            contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
-            userAgent:
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          };
-        }
-      }
-    } catch {
-      // continue
-    }
-  }
+const DEFAULT_BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 
-  const invidiousBase = process.env.INVIDIOUS_API_URL?.trim().replace(/\/+$/, '');
-  if (invidiousBase) {
-    try {
-      const res = await fetchWithTimeout(
-        `${invidiousBase}/api/v1/videos/${encodeURIComponent(videoId)}`,
-        {},
-        6000
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const adaptive: any[] = Array.isArray(data?.adaptiveFormats) ? data.adaptiveFormats : [];
-        const selected =
-          adaptive.find((f) => typeof f?.url === 'string' && String(f.type || '').includes('audio/mp4')) ||
-          adaptive.find((f) => typeof f?.url === 'string' && String(f.type || '').startsWith('audio/'));
-        if (selected?.url) {
-          return {
-            url: String(selected.url),
-            mimeType: String(selected.type || 'audio/mp4').split(';')[0].trim(),
-            contentLength: selected.clen ? String(selected.clen) : undefined,
-            userAgent:
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          };
-        }
-      }
-    } catch {
-      // continue
-    }
-  }
+async function resolveFromExternalEndpoint(
+  baseUrl: string,
+  videoId: string
+): Promise<ResolvedAudioStream | null> {
+  const cleanBase = baseUrl.trim().replace(/\/+$/, '');
+  if (!cleanBase || !/^https?:\/\//i.test(cleanBase)) return null;
 
-  return null;
+  const tryPiped = async (): Promise<ResolvedAudioStream> => {
+    const res = await fetchWithTimeout(
+      `${cleanBase}/streams/${encodeURIComponent(videoId)}`,
+      { headers: { Accept: 'application/json' } },
+      5500
+    );
+    if (!res.ok) throw new Error('piped_not_ok');
+    const data = await res.json();
+    const streams: any[] = Array.isArray(data?.audioStreams) ? data.audioStreams : [];
+    const selected =
+      streams.find((s) => typeof s?.url === 'string' && String(s.mimeType || '').includes('audio/mp4')) ||
+      streams.find((s) => typeof s?.url === 'string' && String(s.mimeType || '').startsWith('audio/'));
+    if (!selected?.url) throw new Error('piped_empty');
+    return {
+      url: String(selected.url),
+      mimeType: String(selected.mimeType || 'audio/mp4').split(';')[0].trim(),
+      contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
+      userAgent: DEFAULT_BROWSER_UA,
+    };
+  };
+
+  const tryInvidious = async (): Promise<ResolvedAudioStream> => {
+    const res = await fetchWithTimeout(
+      `${cleanBase}/api/v1/videos/${encodeURIComponent(videoId)}`,
+      { headers: { Accept: 'application/json' } },
+      5500
+    );
+    if (!res.ok) throw new Error('invidious_not_ok');
+    const data = await res.json();
+    const adaptive: any[] = Array.isArray(data?.adaptiveFormats) ? data.adaptiveFormats : [];
+    const selected =
+      adaptive.find((f) => typeof f?.url === 'string' && String(f.type || '').includes('audio/mp4')) ||
+      adaptive.find((f) => typeof f?.url === 'string' && String(f.type || '').startsWith('audio/'));
+    if (!selected?.url) throw new Error('invidious_empty');
+    return {
+      url: String(selected.url),
+      mimeType: String(selected.type || 'audio/mp4').split(';')[0].trim(),
+      contentLength: selected.clen ? String(selected.clen) : undefined,
+      userAgent: DEFAULT_BROWSER_UA,
+    };
+  };
+
+  const tryCobalt = async (): Promise<ResolvedAudioStream> => {
+    const res = await fetchWithTimeout(
+      `${cleanBase}/`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          url: `https://www.youtube.com/watch?v=${videoId}`,
+          downloadMode: 'audio',
+          audioFormat: 'best',
+        }),
+      },
+      6500
+    );
+    if (!res.ok) throw new Error('cobalt_not_ok');
+    const data = (await res.json()) as Record<string, any>;
+    if ((data.status !== 'tunnel' && data.status !== 'redirect') || typeof data.url !== 'string') {
+      throw new Error('cobalt_empty');
+    }
+    return {
+      url: data.url,
+      mimeType: 'audio/mp4',
+      userAgent: DEFAULT_BROWSER_UA,
+    };
+  };
+
+  try {
+    return await Promise.any([tryPiped(), tryInvidious(), tryCobalt()]);
+  } catch {
+    return null;
+  }
 }
 
-export async function resolveAudioStreamInfo(videoId: string): Promise<AudioStreamResolution> {
+async function tryExternalExtractor(
+  videoId: string,
+  customExtractorUrl?: string
+): Promise<ResolvedAudioStream | null> {
+  const candidates = [
+    customExtractorUrl,
+    process.env.COBALT_API_URL,
+    process.env.PIPED_API_URL,
+    process.env.INVIDIOUS_API_URL,
+  ]
+    .map((u) => (typeof u === 'string' ? u.trim().replace(/\/+$/, '') : ''))
+    .filter(Boolean);
+
+  if (candidates.length === 0) return null;
+
+  try {
+    return await Promise.any(
+      candidates.map(async (base) => {
+        const resolved = await resolveFromExternalEndpoint(base, videoId);
+        if (!resolved) throw new Error('no_stream');
+        return resolved;
+      })
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function resolveViaYouTubeJs(
+  videoId: string,
+  options: {
+    oauthTokens?: YouTubeOAuthTokens;
+    cookies?: string;
+    poToken?: string;
+    visitorData?: string;
+  }
+): Promise<{
+  stream: ResolvedAudioStream | null;
+  status: 'available' | AudioStreamFailureReason;
+  reason?: string;
+  refreshedOAuth?: YouTubeOAuthTokens;
+}> {
+  let detectedStatus: AudioStreamFailureReason = 'unavailable';
+  let detectedReason: string | undefined;
+  let activeOAuth = options.oauthTokens;
+  let refreshedOAuth: YouTubeOAuthTokens | undefined;
+
+  if (activeOAuth) {
+    const expMs = new Date(activeOAuth.expiry_date || 0).getTime();
+    if (!Number.isFinite(expMs) || Date.now() >= expMs - 60_000) {
+      try {
+        activeOAuth = await refreshYouTubeOAuthTokens(activeOAuth);
+        refreshedOAuth = activeOAuth;
+      } catch {
+        // continue with existing token and let YouTube reject if invalid
+      }
+    }
+  }
+
+  try {
+    let yt: Innertube;
+    if (activeOAuth) {
+      yt = await Innertube.create({
+        cookie: options.cookies || undefined,
+        po_token: options.poToken || undefined,
+        visitor_data: options.visitorData || undefined,
+        generate_session_locally: false,
+      });
+      await yt.session.signIn(activeOAuth as unknown as OAuth2Tokens);
+    } else {
+      yt = await getCachedInnertubePlayer({
+        cookies: options.cookies,
+        poToken: options.poToken,
+        visitorData: options.visitorData,
+        generateSessionLocally: !options.cookies,
+      });
+    }
+
+    const clientsToTry: Array<'TV' | 'ANDROID_VR' | 'IOS' | 'MWEB' | 'WEB'> = activeOAuth
+      ? ['TV', 'ANDROID_VR', 'IOS', 'WEB']
+      : options.cookies
+      ? ['MWEB', 'WEB', 'TV', 'IOS', 'ANDROID_VR']
+      : ['MWEB', 'ANDROID_VR', 'IOS', 'WEB'];
+
+    for (const client of clientsToTry) {
+      try {
+        const info = await yt.getBasicInfo(videoId, { client });
+        const playStatus = info.playability_status?.status;
+        const playReason = info.playability_status?.reason;
+
+        if (playStatus !== 'OK') {
+          if (playStatus === 'LOGIN_REQUIRED') {
+            detectedStatus = 'login_required';
+            detectedReason = playReason;
+          } else if (
+            info.basic_info?.is_live ||
+            (playReason && playReason.toLowerCase().includes('live stream'))
+          ) {
+            detectedStatus = 'live_stream';
+            detectedReason = playReason;
+          } else if (!detectedReason && playReason) {
+            detectedReason = playReason;
+          }
+          continue;
+        }
+
+        const adaptiveFormats = info.streaming_data?.adaptive_formats || [];
+        const audioFormats = adaptiveFormats.filter((f) =>
+          String(f.mime_type || '').startsWith('audio/')
+        );
+
+        let selected: any =
+          audioFormats.find((f) => f.itag === 140) ||
+          audioFormats.find((f) => f.itag === 139) ||
+          audioFormats.find((f) => String(f.mime_type || '').includes('audio/mp4')) ||
+          audioFormats.find((f) => f.itag === 251) ||
+          audioFormats[0];
+
+        if (!selected) {
+          const muxed = info.streaming_data?.formats || [];
+          selected =
+            muxed.find((f) => f.itag === 18) ||
+            muxed.find((f) => String(f.mime_type || '').startsWith('video/mp4'));
+        }
+
+        if (!selected) {
+          if (info.basic_info?.is_live || info.streaming_data?.hls_manifest_url) {
+            detectedStatus = 'live_stream';
+            detectedReason = 'Siaran Live memakai streaming HLS/IFrame';
+          }
+          continue;
+        }
+
+        const decipheredUrl = await selected.decipher(yt.session.player);
+        if (!decipheredUrl) continue;
+
+        const mimeType = String(selected.mime_type || 'audio/mp4').split(';')[0].trim();
+        return {
+          stream: {
+            url: decipheredUrl,
+            mimeType,
+            contentLength: selected.content_length ? String(selected.content_length) : undefined,
+            userAgent: yt.session.context.client.userAgent || DEFAULT_BROWSER_UA,
+          },
+          status: 'available',
+          refreshedOAuth,
+        };
+      } catch {
+        // try next client
+      }
+    }
+  } catch (err: unknown) {
+    detectedReason = err instanceof Error ? err.message : detectedReason;
+  }
+
+  return {
+    stream: null,
+    status: detectedStatus,
+    reason: detectedReason,
+    refreshedOAuth,
+  };
+}
+
+export async function resolveAudioStreamInfo(
+  videoId: string,
+  authConfig?: ExtractorAuthConfig
+): Promise<AudioStreamResolution> {
   if (!videoId || !/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) {
     return { stream: null, status: 'unavailable', reason: 'Video ID tidak valid' };
   }
 
-  const cached = audioStreamCache.get(videoId);
+  const effectiveCookies =
+    normalizeYouTubeCookies(authConfig?.cookies) ||
+    normalizeYouTubeCookies(process.env.YOUTUBE_COOKIES);
+  const effectiveAuth: ExtractorAuthConfig = {
+    oauthTokens: authConfig?.oauthTokens,
+    cookies: effectiveCookies || undefined,
+    extractorUrl: authConfig?.extractorUrl,
+  };
+
+  const cacheKey = `${videoId}::${buildAuthCacheKey(effectiveAuth)}`;
+  const cached = audioStreamCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.resolution;
   }
 
-  const customCookies = process.env.YOUTUBE_COOKIES?.trim();
-  let detectedStatus: AudioStreamFailureReason = 'unavailable';
-  let detectedReason: string | undefined;
+  const inFlight = pendingAudioResolutions.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
 
-  for (const cfg of INNERTUBE_AUDIO_CLIENTS) {
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'User-Agent': cfg.userAgent,
-      };
-      if (customCookies) {
-        headers['Cookie'] = customCookies;
-      }
+  const work = (async (): Promise<AudioStreamResolution> => {
+    let detectedStatus: AudioStreamFailureReason = 'unavailable';
+    let detectedReason: string | undefined;
+    let refreshedOAuth: YouTubeOAuthTokens | undefined;
 
-      const res = await fetchWithTimeout(
-        'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            videoId,
-            context: {
-              client: cfg.client,
-            },
-            contentCheckOk: true,
-            racyCheckOk: true,
-          }),
-        },
-        7000
-      );
-
-      if (!res.ok) continue;
-      const data = await res.json();
-      const playStatus = data?.playabilityStatus?.status;
-      const playReason = typeof data?.playabilityStatus?.reason === 'string' ? data.playabilityStatus.reason : undefined;
-
-      if (playStatus !== 'OK') {
-        if (playStatus === 'LOGIN_REQUIRED') {
-          detectedStatus = 'login_required';
-          detectedReason = playReason;
-        } else if (
-          data?.videoDetails?.isLiveContent ||
-          (playReason && playReason.toLowerCase().includes('live stream'))
-        ) {
-          detectedStatus = 'live_stream';
-          detectedReason = playReason;
-        } else if (!detectedReason && playReason) {
-          detectedReason = playReason;
-        }
-        continue;
-      }
-
-      const adaptiveFormats: any[] = data?.streamingData?.adaptiveFormats || [];
-      const audioFormats = adaptiveFormats.filter(
-        (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('audio/') && typeof f.url === 'string'
-      );
-
-      // Prefer audio/mp4 (AAC itag 140/139) for universal iOS Safari + Android Chrome compatibility
-      let selected =
-        audioFormats.find((f) => f.itag === 140) ||
-        audioFormats.find((f) => f.itag === 139) ||
-        audioFormats.find((f) => f.mimeType.startsWith('audio/mp4')) ||
-        audioFormats.find((f) => f.itag === 251) ||
-        audioFormats[0];
-
-      // Fallback to progressive muxed MP4 stream (itag 18) if no standalone audio format exposes a direct URL
-      if (!selected) {
-        const muxedFormats: any[] = data?.streamingData?.formats || [];
-        selected =
-          muxedFormats.find((f) => f.itag === 18 && typeof f.url === 'string') ||
-          muxedFormats.find((f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('video/mp4') && typeof f.url === 'string');
-      }
-
-      if (!selected) {
-        if (data?.videoDetails?.isLiveContent || data?.streamingData?.hlsManifestUrl) {
-          detectedStatus = 'live_stream';
-          detectedReason = 'Siaran Live memakai streaming HLS/IFrame';
-        }
-        continue;
-      }
-
-      const mimeType = String(selected.mimeType).split(';')[0].trim() || 'audio/mp4';
-      const stream: ResolvedAudioStream = {
-        url: selected.url as string,
-        mimeType,
-        contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
-        userAgent: cfg.userAgent,
-      };
-
-      const resolution: AudioStreamResolution = { stream, status: 'available' };
-      audioStreamCache.set(videoId, {
-        resolution,
-        expiresAt: Date.now() + 30 * 60 * 1000,
-      });
+    const cacheAndReturn = (resolution: AudioStreamResolution, ttlMs: number): AudioStreamResolution => {
+      audioStreamCache.set(cacheKey, { resolution, expiresAt: Date.now() + ttlMs });
+      pruneCacheMap(audioStreamCache, 250);
       return resolution;
-    } catch {
-      // try next client
+    };
+
+    // 1. User-configured external extractor first if custom URL explicitly set
+    if (effectiveAuth.extractorUrl) {
+      const customStream = await resolveFromExternalEndpoint(effectiveAuth.extractorUrl, videoId);
+      if (customStream) {
+        return cacheAndReturn({ stream: customStream, status: 'available' }, 25 * 60 * 1000);
+      }
     }
-  }
 
-  const external = await tryExternalExtractor(videoId);
-  if (external) {
-    const resolution: AudioStreamResolution = { stream: external, status: 'available' };
-    audioStreamCache.set(videoId, {
-      resolution,
-      expiresAt: Date.now() + 25 * 60 * 1000,
+    // 2. If authenticated via YouTube TV OAuth or YouTube Cookies, run youtubei.js authenticated session
+    if (effectiveAuth.oauthTokens || effectiveAuth.cookies) {
+      const authRes = await resolveViaYouTubeJs(videoId, {
+        oauthTokens: effectiveAuth.oauthTokens,
+        cookies: effectiveAuth.cookies,
+      });
+      if (authRes.refreshedOAuth) refreshedOAuth = authRes.refreshedOAuth;
+      if (authRes.stream) {
+        return cacheAndReturn(
+          { stream: authRes.stream, status: 'available', refreshedOAuth },
+          30 * 60 * 1000
+        );
+      }
+      if (authRes.status !== 'available') {
+        detectedStatus = authRes.status;
+      }
+      detectedReason = authRes.reason;
+    }
+
+    // 3. Fast parallel direct InnerTube audio clients (ANDROID_VR, IOS, ANDROID_MUSIC)
+    const clientAttempts = INNERTUBE_AUDIO_CLIENTS.map(async (cfg): Promise<{
+      stream: ResolvedAudioStream | null;
+      status: AudioStreamFailureReason;
+      reason?: string;
+    }> => {
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'User-Agent': cfg.userAgent,
+        };
+        if (effectiveAuth.cookies) {
+          headers['Cookie'] = effectiveAuth.cookies;
+        }
+
+        const res = await fetchWithTimeout(
+          'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              videoId,
+              context: {
+                client: cfg.client,
+              },
+              contentCheckOk: true,
+              racyCheckOk: true,
+            }),
+          },
+          5500
+        );
+
+        if (!res.ok) return { stream: null, status: 'unavailable' };
+        const data = await res.json();
+        const playStatus = data?.playabilityStatus?.status;
+        const playReason =
+          typeof data?.playabilityStatus?.reason === 'string'
+            ? data.playabilityStatus.reason
+            : undefined;
+
+        if (playStatus !== 'OK') {
+          if (playStatus === 'LOGIN_REQUIRED') {
+            return { stream: null, status: 'login_required', reason: playReason };
+          }
+          if (
+            data?.videoDetails?.isLiveContent ||
+            (playReason && playReason.toLowerCase().includes('live stream'))
+          ) {
+            return { stream: null, status: 'live_stream', reason: playReason };
+          }
+          return { stream: null, status: 'unavailable', reason: playReason };
+        }
+
+        const adaptiveFormats: any[] = data?.streamingData?.adaptiveFormats || [];
+        const audioFormats = adaptiveFormats.filter(
+          (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('audio/') && typeof f.url === 'string'
+        );
+
+        let selected =
+          audioFormats.find((f) => f.itag === 140) ||
+          audioFormats.find((f) => f.itag === 139) ||
+          audioFormats.find((f) => f.mimeType.startsWith('audio/mp4')) ||
+          audioFormats.find((f) => f.itag === 251) ||
+          audioFormats[0];
+
+        if (!selected) {
+          const muxedFormats: any[] = data?.streamingData?.formats || [];
+          selected =
+            muxedFormats.find((f) => f.itag === 18 && typeof f.url === 'string') ||
+            muxedFormats.find(
+              (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('video/mp4') && typeof f.url === 'string'
+            );
+        }
+
+        if (!selected) {
+          if (data?.videoDetails?.isLiveContent || data?.streamingData?.hlsManifestUrl) {
+            return {
+              stream: null,
+              status: 'live_stream',
+              reason: 'Siaran Live memakai streaming HLS/IFrame',
+            };
+          }
+          return { stream: null, status: 'unavailable' };
+        }
+
+        const mimeType = String(selected.mimeType).split(';')[0].trim() || 'audio/mp4';
+        return {
+          stream: {
+            url: selected.url as string,
+            mimeType,
+            contentLength: selected.contentLength ? String(selected.contentLength) : undefined,
+            userAgent: cfg.userAgent,
+          },
+          status: 'unavailable',
+        };
+      } catch {
+        return { stream: null, status: 'unavailable' };
+      }
     });
-    return resolution;
-  }
 
-  const negativeResolution: AudioStreamResolution = {
-    stream: null,
-    status: detectedStatus,
-    reason: detectedReason,
-  };
-  audioStreamCache.set(videoId, {
-    resolution: negativeResolution,
-    expiresAt: Date.now() + 3 * 60 * 1000,
+    // Resolve immediately as soon as any client yields a playable audio stream; otherwise collect statuses
+    const fastWinner = await new Promise<ResolvedAudioStream | null>((resolve) => {
+      let settledCount = 0;
+      let resolved = false;
+      for (const p of clientAttempts) {
+        p.then((attempt) => {
+          if (resolved) return;
+          if (attempt.stream) {
+            resolved = true;
+            resolve(attempt.stream);
+            return;
+          }
+          if (attempt.status === 'live_stream') {
+            detectedStatus = 'live_stream';
+            detectedReason = attempt.reason || detectedReason;
+          } else if (attempt.status === 'login_required' && detectedStatus !== 'live_stream') {
+            detectedStatus = 'login_required';
+            detectedReason = attempt.reason || detectedReason;
+          } else if (!detectedReason && attempt.reason) {
+            detectedReason = attempt.reason;
+          }
+          settledCount += 1;
+          if (settledCount >= clientAttempts.length) {
+            resolved = true;
+            resolve(null);
+          }
+        });
+      }
+    });
+
+    if (fastWinner) {
+      return cacheAndReturn(
+        { stream: fastWinner, status: 'available', refreshedOAuth },
+        30 * 60 * 1000
+      );
+    }
+
+    // 4. BotGuard PoToken + signatureCipher deciphering via youtubei.js
+    if (detectedStatus !== 'live_stream') {
+      const bgSession = await getOrCreateBotGuardSession();
+      let contentPoToken = bgSession?.poToken;
+      if (bgSession?.minter) {
+        try {
+          contentPoToken = await bgSession.minter.mintAsWebsafeString(videoId);
+        } catch {
+          // fallback to session poToken
+        }
+      }
+      const ytRes = await resolveViaYouTubeJs(videoId, {
+        cookies: effectiveAuth.cookies,
+        poToken: contentPoToken,
+        visitorData: bgSession?.visitorData,
+      });
+      if (ytRes.stream) {
+        return cacheAndReturn(
+          { stream: ytRes.stream, status: 'available', refreshedOAuth },
+          25 * 60 * 1000
+        );
+      }
+      if (ytRes.status !== 'unavailable' && ytRes.status !== 'available') {
+        detectedStatus = ytRes.status;
+        detectedReason = ytRes.reason || detectedReason;
+      }
+    }
+
+    // 5. Fallback to configured environment external extractors (Cobalt / Piped / Invidious)
+    const external = await tryExternalExtractor(videoId, effectiveAuth.extractorUrl);
+    if (external) {
+      return cacheAndReturn(
+        { stream: external, status: 'available', refreshedOAuth },
+        25 * 60 * 1000
+      );
+    }
+
+    return cacheAndReturn(
+      {
+        stream: null,
+        status: detectedStatus,
+        reason: detectedReason,
+        refreshedOAuth,
+      },
+      2 * 60 * 1000
+    );
+  })().finally(() => {
+    pendingAudioResolutions.delete(cacheKey);
   });
-  return negativeResolution;
+
+  pendingAudioResolutions.set(cacheKey, work);
+  return work;
 }
 
 export async function resolveAudioStreamUrl(
-  videoId: string
+  videoId: string,
+  authConfig?: ExtractorAuthConfig
 ): Promise<ResolvedAudioStream | null> {
-  const result = await resolveAudioStreamInfo(videoId);
+  const result = await resolveAudioStreamInfo(videoId, authConfig);
   return result.stream;
 }
 
@@ -1044,111 +1954,140 @@ export interface ChannelSearchResult {
   url: string;
 }
 
+const channelSearchCache = new Map<
+  string,
+  { results: ChannelSearchResult[]; expiresAt: number }
+>();
+const pendingChannelSearches = new Map<string, Promise<ChannelSearchResult[]>>();
+
 export async function searchYouTubeChannels(queryText: string): Promise<ChannelSearchResult[]> {
   const cleaned = queryText.trim();
   if (!cleaned) return [];
 
-  const res = await fetchWithTimeout(
-    'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept-Language': 'id,en-US,en;q=0.9',
-      },
-      body: JSON.stringify({
-        context: {
-          client: {
-            clientName: 'WEB',
-            clientVersion: '2.20240501.00.00',
-            hl: 'id',
-            gl: 'ID',
-          },
-        },
-        query: cleaned,
-        params: 'EgIQAg==', // Filter strictly to Channels
-      }),
-    },
-    10000
-  );
-
-  if (!res.ok) {
-    throw new Error(`YouTube search merespons status ${res.status}`);
+  const cacheKey = cleaned.toLowerCase();
+  const cached = channelSearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.results;
   }
 
-  const data = await res.json();
-  const sections =
-    data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer
-      ?.contents || [];
+  const inFlight = pendingChannelSearches.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
 
-  const results: ChannelSearchResult[] = [];
-  const seenIds = new Set<string>();
+  const promise = (async (): Promise<ChannelSearchResult[]> => {
+    const res = await fetchWithTimeout(
+      'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept-Language': 'id,en-US,en;q=0.9',
+        },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: 'WEB',
+              clientVersion: '2.20240501.00.00',
+              hl: 'id',
+              gl: 'ID',
+            },
+          },
+          query: cleaned,
+          params: 'EgIQAg==', // Filter strictly to Channels
+        }),
+      },
+      10000
+    );
 
-  for (const section of sections) {
-    const items = section?.itemSectionRenderer?.contents || [];
-    for (const item of items) {
-      const cr = item?.channelRenderer;
-      if (!cr || !cr.channelId || seenIds.has(cr.channelId)) continue;
-      seenIds.add(cr.channelId);
+    if (!res.ok) {
+      throw new Error(`YouTube search merespons status ${res.status}`);
+    }
 
-      const channelId = String(cr.channelId);
-      const title =
-        cr.title?.simpleText ||
-        cr.title?.runs?.map((r: any) => r.text).join('') ||
-        'YouTube Channel';
+    const data = await res.json();
+    const sections =
+      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer
+        ?.contents || [];
 
-      const subText: string | undefined =
-        cr.subscriberCountText?.simpleText ||
-        cr.subscriberCountText?.runs?.map((r: any) => r.text).join('');
-      const vidText: string | undefined =
-        cr.videoCountText?.simpleText ||
-        cr.videoCountText?.runs?.map((r: any) => r.text).join('');
-      const canonicalBaseUrl: string | undefined =
-        cr.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl;
+    const results: ChannelSearchResult[] = [];
+    const seenIds = new Set<string>();
 
-      let handle: string | undefined;
-      let subscriberCount: string | undefined;
+    for (const section of sections) {
+      const items = section?.itemSectionRenderer?.contents || [];
+      for (const item of items) {
+        const cr = item?.channelRenderer;
+        if (!cr || !cr.channelId || seenIds.has(cr.channelId)) continue;
+        seenIds.add(cr.channelId);
 
-      if (subText && subText.trim().startsWith('@')) {
-        handle = subText.trim();
-        subscriberCount = vidText?.trim();
-      } else {
-        subscriberCount = subText?.trim() || vidText?.trim();
-        if (canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')) {
-          handle = canonicalBaseUrl.slice(1);
+        const channelId = String(cr.channelId);
+        const title =
+          cr.title?.simpleText ||
+          cr.title?.runs?.map((r: any) => r.text).join('') ||
+          'YouTube Channel';
+
+        const subText: string | undefined =
+          cr.subscriberCountText?.simpleText ||
+          cr.subscriberCountText?.runs?.map((r: any) => r.text).join('');
+        const vidText: string | undefined =
+          cr.videoCountText?.simpleText ||
+          cr.videoCountText?.runs?.map((r: any) => r.text).join('');
+        const canonicalBaseUrl: string | undefined =
+          cr.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl;
+
+        let handle: string | undefined;
+        let subscriberCount: string | undefined;
+
+        if (subText && subText.trim().startsWith('@')) {
+          handle = subText.trim();
+          subscriberCount = vidText?.trim();
+        } else {
+          subscriberCount = subText?.trim() || vidText?.trim();
+          if (canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')) {
+            handle = canonicalBaseUrl.slice(1);
+          }
         }
+
+        const rawThumb = cr.thumbnail?.thumbnails?.slice(-1)?.[0]?.url || '';
+        const avatar = rawThumb
+          ? rawThumb.startsWith('//')
+            ? `https:${rawThumb}`
+            : rawThumb
+          : `https://avatar.vercel.sh/${channelId}?size=120`;
+
+        const description = cr.descriptionSnippet?.runs
+          ? cr.descriptionSnippet.runs.map((r: any) => r.text).join('').trim()
+          : undefined;
+
+        const url = canonicalBaseUrl
+          ? `https://www.youtube.com${canonicalBaseUrl}`
+          : `https://www.youtube.com/channel/${channelId}`;
+
+        results.push({
+          id: channelId,
+          title,
+          handle,
+          avatar,
+          subscriberCount,
+          description,
+          url,
+        });
+
+        if (results.length >= 20) break;
       }
-
-      const rawThumb = cr.thumbnail?.thumbnails?.slice(-1)?.[0]?.url || '';
-      const avatar = rawThumb
-        ? rawThumb.startsWith('//')
-          ? `https:${rawThumb}`
-          : rawThumb
-        : `https://avatar.vercel.sh/${channelId}?size=120`;
-
-      const description = cr.descriptionSnippet?.runs
-        ? cr.descriptionSnippet.runs.map((r: any) => r.text).join('').trim()
-        : undefined;
-
-      const url = canonicalBaseUrl
-        ? `https://www.youtube.com${canonicalBaseUrl}`
-        : `https://www.youtube.com/channel/${channelId}`;
-
-      results.push({
-        id: channelId,
-        title,
-        handle,
-        avatar,
-        subscriberCount,
-        description,
-        url,
-      });
-
       if (results.length >= 20) break;
     }
-    if (results.length >= 20) break;
-  }
 
-  return results;
+    channelSearchCache.set(cacheKey, {
+      results,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    });
+    pruneCacheMap(channelSearchCache, 120);
+    return results;
+  })().finally(() => {
+    pendingChannelSearches.delete(cacheKey);
+  });
+
+  pendingChannelSearches.set(cacheKey, promise);
+  return promise;
 }
 

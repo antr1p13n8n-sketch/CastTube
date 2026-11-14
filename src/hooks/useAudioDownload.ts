@@ -1,5 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Video } from '../types';
+import {
+  buildExtractorHeaders,
+  loadExtractorConfig,
+  tryClientDirectExtractor,
+} from '../utils/extractorConfig';
 
 export type AudioDownloadStatus = 'preparing' | 'downloading' | 'completed' | 'error';
 
@@ -10,6 +15,7 @@ export interface AudioDownloadItem {
   totalBytes: number;
   filename?: string;
   error?: string;
+  requiresAuth?: boolean;
 }
 
 export interface AudioDownloadNotice {
@@ -17,6 +23,7 @@ export interface AudioDownloadNotice {
   title: string;
   type: 'success' | 'error';
   message: string;
+  requiresAuth?: boolean;
 }
 
 function getFallbackExtension(mimeType: string): string {
@@ -68,19 +75,28 @@ function extractFilenameFromHeaders(
   return `${cleaned || `casttube-${videoId}`}.${ext}`;
 }
 
-export function useAudioDownload() {
+interface UseAudioDownloadOptions {
+  onRestrictionBlocked?: (video: Video) => void;
+}
+
+export function useAudioDownload(options?: UseAudioDownloadOptions) {
   const [downloads, setDownloads] = useState<Record<string, AudioDownloadItem>>({});
   const [notice, setNotice] = useState<AudioDownloadNotice | null>(null);
   const controllersRef = useRef<Record<string, AbortController>>({});
   const resetTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onRestrictionBlockedRef = useRef(options?.onRestrictionBlocked);
+  onRestrictionBlockedRef.current = options?.onRestrictionBlocked;
 
   const showNotice = useCallback((nextNotice: AudioDownloadNotice) => {
     setNotice(nextNotice);
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-    noticeTimerRef.current = setTimeout(() => {
-      setNotice(null);
-    }, 5500);
+    noticeTimerRef.current = setTimeout(
+      () => {
+        setNotice(null);
+      },
+      nextNotice.requiresAuth ? 10000 : 5500
+    );
   }, []);
 
   const dismissNotice = useCallback(() => {
@@ -149,10 +165,31 @@ export function useAudioDownload() {
       }));
 
       const rawLabel = video.channelTitle ? `${video.channelTitle} - ${video.title}` : video.title;
+      const extractorConfig = loadExtractorConfig();
+      const extractorHeaders = buildExtractorHeaders(extractorConfig);
 
       try {
         const url = `/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&download=1&title=${encodeURIComponent(rawLabel)}`;
-        const res = await fetch(url, { signal: controller.signal });
+        let res = await fetch(url, {
+          signal: controller.signal,
+          headers: extractorHeaders,
+        });
+
+        let directMimeOverride: string | null = null;
+        if (!res.ok && extractorConfig.extractorUrl) {
+          const direct = await tryClientDirectExtractor(
+            videoId,
+            extractorConfig.extractorUrl,
+            controller.signal
+          );
+          if (direct?.url) {
+            const directRes = await fetch(direct.url, { signal: controller.signal });
+            if (directRes.ok) {
+              res = directRes;
+              directMimeOverride = direct.mimeType;
+            }
+          }
+        }
 
         if (!res.ok) {
           let errPayload: { error?: string; status?: string } = {};
@@ -162,11 +199,13 @@ export function useAudioDownload() {
             // ignore non-JSON error
           }
 
+          const isLoginRestricted = errPayload.status === 'login_required';
           let friendlyMsg = errPayload.error || 'Gagal mengunduh audio untuk video ini.';
           if (errPayload.status === 'live_stream') {
             friendlyMsg = 'Siaran Live tidak dapat diunduh sebagai file audio.';
-          } else if (errPayload.status === 'login_required') {
-            friendlyMsg = 'YouTube membatasi ekstraksi audio langsung untuk video ini.';
+          } else if (isLoginRestricted) {
+            friendlyMsg =
+              'YouTube membatasi ekstraksi dari server. Hubungkan akun YouTube atau pasang cookie/ekstraktor untuk lanjut mengunduh.';
           }
 
           setDownloads((prev) => ({
@@ -177,13 +216,23 @@ export function useAudioDownload() {
               loadedBytes: 0,
               totalBytes: 0,
               error: friendlyMsg,
+              requiresAuth: isLoginRestricted,
             },
           }));
-          showNotice({ videoId, title: video.title, type: 'error', message: friendlyMsg });
+          showNotice({
+            videoId,
+            title: video.title,
+            type: 'error',
+            message: friendlyMsg,
+            requiresAuth: isLoginRestricted,
+          });
+          if (isLoginRestricted) {
+            onRestrictionBlockedRef.current?.(video);
+          }
           return;
         }
 
-        const contentType = res.headers.get('content-type') || 'audio/mp4';
+        const contentType = directMimeOverride || res.headers.get('content-type') || 'audio/mp4';
         const totalBytes = Number(res.headers.get('content-length') || 0);
         const filename = extractFilenameFromHeaders(res, rawLabel, videoId, contentType);
 

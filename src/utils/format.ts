@@ -14,11 +14,21 @@ export function formatTime(seconds: number): string {
   return `${paddedMins}:${paddedSecs}`;
 }
 
+const relativeTimeCache = new Map<string, { label: string; bucket: number }>();
+
 export function formatRelativeTime(dateString: string): string {
   if (!dateString) return '';
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+  const nowMs = Date.now();
+  const bucket = Math.floor(nowMs / 30_000);
+  const cached = relativeTimeCache.get(dateString);
+  if (cached && cached.bucket === bucket) {
+    return cached.label;
+  }
+
+  const parsedMs = Date.parse(dateString);
+  if (Number.isNaN(parsedMs)) return '';
+
+  const diffMs = nowMs - parsedMs;
   const diffSecs = Math.floor(diffMs / 1000);
   const diffMins = Math.floor(diffSecs / 60);
   const diffHours = Math.floor(diffMins / 60);
@@ -26,19 +36,27 @@ export function formatRelativeTime(dateString: string): string {
   const diffWeeks = Math.floor(diffDays / 7);
   const diffMonths = Math.floor(diffDays / 30);
 
-  if (diffSecs < 60) return 'Baru saja';
-  if (diffMins < 60) return `${diffMins} menit lalu`;
-  if (diffHours < 24) return `${diffHours} jam lalu`;
-  if (diffDays === 1) return 'Kemarin';
-  if (diffDays < 7) return `${diffDays} hari lalu`;
-  if (diffWeeks < 4) return `${diffWeeks} minggu lalu`;
-  if (diffMonths < 12) return `${diffMonths} bulan lalu`;
+  let label: string;
+  if (diffSecs < 60) label = 'Baru saja';
+  else if (diffMins < 60) label = `${diffMins} menit lalu`;
+  else if (diffHours < 24) label = `${diffHours} jam lalu`;
+  else if (diffDays === 1) label = 'Kemarin';
+  else if (diffDays < 7) label = `${diffDays} hari lalu`;
+  else if (diffWeeks < 4) label = `${diffWeeks} minggu lalu`;
+  else if (diffMonths < 12) label = `${diffMonths} bulan lalu`;
+  else {
+    label = new Date(parsedMs).toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
 
-  return date.toLocaleDateString('id-ID', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  if (relativeTimeCache.size > 600) {
+    relativeTimeCache.clear();
+  }
+  relativeTimeCache.set(dateString, { label, bucket });
+  return label;
 }
 
 export function formatBytes(bytes: number): string {

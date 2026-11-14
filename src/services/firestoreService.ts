@@ -1,4 +1,5 @@
 import {
+  getFirestore,
   collection,
   doc,
   getDoc,
@@ -14,8 +15,10 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { app, firestoreDatabaseId, handleFirestoreError, OperationType } from '../firebase';
 import { Channel, ChannelGroup, Video, ThemeMode, Playlist } from '../types';
+
+const db = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
 
 // Helper to truncate strings to blueprint maxLength
 function clampStr(val: string | undefined | null, maxLen: number): string {
