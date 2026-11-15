@@ -24,6 +24,10 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
 
+  React.useEffect(() => {
+    if (!isOpen) setConfirmDeleteId(null);
+  }, [isOpen]);
+
   return (
     <AnimatePresence>
       {isOpen && (

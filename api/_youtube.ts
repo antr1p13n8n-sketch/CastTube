@@ -1960,8 +1960,122 @@ const channelSearchCache = new Map<
 >();
 const pendingChannelSearches = new Map<string, Promise<ChannelSearchResult[]>>();
 
+function extractYtText(val: any): string | undefined {
+  if (!val) return undefined;
+  if (typeof val === 'string') return val.trim() || undefined;
+  if (typeof val.simpleText === 'string') return val.simpleText.trim() || undefined;
+  if (Array.isArray(val.runs)) {
+    const joined = val.runs.map((r: any) => (typeof r?.text === 'string' ? r.text : '')).join('').trim();
+    return joined || undefined;
+  }
+  if (typeof val.content === 'string') return val.content.trim() || undefined;
+  return undefined;
+}
+
+function normalizeYtAvatar(rawThumb: string | undefined, channelId: string): string {
+  if (!rawThumb) return `https://avatar.vercel.sh/${channelId}?size=120`;
+  if (rawThumb.startsWith('//')) return `https:${rawThumb}`;
+  return rawThumb;
+}
+
+function collectChannelRenderers(
+  node: any,
+  results: ChannelSearchResult[],
+  seenIds: Set<string>,
+  depth = 0
+): void {
+  if (!node || typeof node !== 'object' || depth > 14 || results.length >= 20) return;
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      if (results.length >= 20) break;
+      collectChannelRenderers(item, results, seenIds, depth + 1);
+    }
+    return;
+  }
+
+  const cr =
+    node.channelRenderer ||
+    node.gridChannelRenderer ||
+    node.compactChannelRenderer;
+  if (cr && typeof cr === 'object') {
+    const channelId = String(
+      cr.channelId || cr.navigationEndpoint?.browseEndpoint?.browseId || ''
+    ).trim();
+    if (channelId && !seenIds.has(channelId)) {
+      seenIds.add(channelId);
+
+      const title = extractYtText(cr.title) || 'YouTube Channel';
+      const subText = extractYtText(cr.subscriberCountText);
+      const vidText = extractYtText(cr.videoCountText);
+      const canonicalBaseUrl: string | undefined =
+        cr.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl;
+
+      let handle: string | undefined;
+      let subscriberCount: string | undefined;
+
+      if (subText && subText.startsWith('@')) {
+        handle = subText;
+        subscriberCount = vidText;
+      } else {
+        subscriberCount = subText || vidText;
+        if (canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')) {
+          handle = canonicalBaseUrl.slice(1);
+        }
+      }
+
+      const thumbs = cr.thumbnail?.thumbnails;
+      const rawThumb = Array.isArray(thumbs) && thumbs.length > 0
+        ? String(thumbs[thumbs.length - 1]?.url || '')
+        : '';
+
+      const description = extractYtText(cr.descriptionSnippet);
+      const url = canonicalBaseUrl
+        ? `https://www.youtube.com${canonicalBaseUrl}`
+        : `https://www.youtube.com/channel/${channelId}`;
+
+      results.push({
+        id: channelId,
+        title,
+        handle,
+        avatar: normalizeYtAvatar(rawThumb, channelId),
+        subscriberCount,
+        description,
+        url,
+      });
+    }
+    return;
+  }
+
+  for (const key of Object.keys(node)) {
+    if (results.length >= 20) break;
+    const val = node[key];
+    if (val && typeof val === 'object') {
+      collectChannelRenderers(val, results, seenIds, depth + 1);
+    }
+  }
+}
+
+function extractYtInitialDataJson(html: string): any | null {
+  const markers = ['var ytInitialData = ', 'window["ytInitialData"] = ', 'ytInitialData = '];
+  for (const marker of markers) {
+    const startIdx = html.indexOf(marker);
+    if (startIdx === -1) continue;
+    const jsonStart = startIdx + marker.length;
+    const endIdx = html.indexOf(';</script>', jsonStart);
+    const semiIdx = endIdx !== -1 ? endIdx : html.indexOf(';\n', jsonStart);
+    if (semiIdx === -1) continue;
+    try {
+      return JSON.parse(html.slice(jsonStart, semiIdx));
+    } catch {
+      // try next marker
+    }
+  }
+  return null;
+}
+
 export async function searchYouTubeChannels(queryText: string): Promise<ChannelSearchResult[]> {
-  const cleaned = queryText.trim();
+  const cleaned = queryText.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   if (!cleaned) return [];
 
   const cacheKey = cleaned.toLowerCase();
@@ -1976,105 +2090,171 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
   }
 
   const promise = (async (): Promise<ChannelSearchResult[]> => {
-    const res = await fetchWithTimeout(
-      'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept-Language': 'id,en-US,en;q=0.9',
-        },
-        body: JSON.stringify({
-          context: {
-            client: {
-              clientName: 'WEB',
-              clientVersion: '2.20240501.00.00',
-              hl: 'id',
-              gl: 'ID',
-            },
-          },
-          query: cleaned,
-          params: 'EgIQAg==', // Filter strictly to Channels
-        }),
-      },
-      10000
-    );
-
-    if (!res.ok) {
-      throw new Error(`YouTube search merespons status ${res.status}`);
-    }
-
-    const data = await res.json();
-    const sections =
-      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer
-        ?.contents || [];
-
     const results: ChannelSearchResult[] = [];
     const seenIds = new Set<string>();
+    let lastError: Error | null = null;
+    let hadSuccessfulFetch = false;
 
-    for (const section of sections) {
-      const items = section?.itemSectionRenderer?.contents || [];
-      for (const item of items) {
-        const cr = item?.channelRenderer;
-        if (!cr || !cr.channelId || seenIds.has(cr.channelId)) continue;
-        seenIds.add(cr.channelId);
+    const isDirectChannelId = /^UC[a-zA-Z0-9_-]{22}$/.test(cleaned);
+    const isYouTubeUrl = /(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i.test(cleaned);
+    const isSingleHandle = /^@[a-zA-Z0-9_.-]{2,}$/.test(cleaned);
 
-        const channelId = String(cr.channelId);
-        const title =
-          cr.title?.simpleText ||
-          cr.title?.runs?.map((r: any) => r.text).join('') ||
-          'YouTube Channel';
+    // Direct resolution first for URLs, UC channel IDs, and @handles
+    if (isDirectChannelId || isYouTubeUrl || isSingleHandle) {
+      try {
+        const resolved = await resolveYouTubeChannel(cleaned);
+        const feed = await fetchChannelRss(resolved.channelId, 1);
+        hadSuccessfulFetch = true;
+        if (feed.channel?.id && !seenIds.has(feed.channel.id)) {
+          seenIds.add(feed.channel.id);
+          results.push({
+            id: feed.channel.id,
+            title: feed.channel.title || resolved.title || 'YouTube Channel',
+            handle: feed.channel.handle || resolved.handle,
+            avatar: feed.channel.avatar || `https://avatar.vercel.sh/${feed.channel.id}?size=120`,
+            description: feed.channel.description,
+            url: feed.channel.url || `https://www.youtube.com/channel/${feed.channel.id}`,
+          });
+        }
+        // For exact URLs or UC IDs, return immediately with exact resolved channel
+        if ((isDirectChannelId || isYouTubeUrl) && results.length > 0) {
+          channelSearchCache.set(cacheKey, {
+            results,
+            expiresAt: Date.now() + 5 * 60 * 1000,
+          });
+          pruneCacheMap(channelSearchCache, 120);
+          return results;
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err : lastError;
+      }
+    }
 
-        const subText: string | undefined =
-          cr.subscriberCountText?.simpleText ||
-          cr.subscriberCountText?.runs?.map((r: any) => r.text).join('');
-        const vidText: string | undefined =
-          cr.videoCountText?.simpleText ||
-          cr.videoCountText?.runs?.map((r: any) => r.text).join('');
-        const canonicalBaseUrl: string | undefined =
-          cr.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl;
+    const searchTerm = isSingleHandle ? cleaned.slice(1) : cleaned;
 
-        let handle: string | undefined;
-        let subscriberCount: string | undefined;
+    // Tier 1: Direct InnerTube search API
+    try {
+      const res = await fetchWithTimeout(
+        'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'Accept-Language': 'id,en-US,en;q=0.9',
+            Origin: 'https://www.youtube.com',
+            Referer: 'https://www.youtube.com/',
+            'X-YouTube-Client-Name': '1',
+            'X-YouTube-Client-Version': '2.20250201.00.00',
+          },
+          body: JSON.stringify({
+            context: {
+              client: {
+                clientName: 'WEB',
+                clientVersion: '2.20250201.00.00',
+                hl: 'id',
+                gl: 'ID',
+              },
+            },
+            query: searchTerm,
+            params: 'EgIQAg==', // Filter strictly to Channels
+          }),
+        },
+        8500
+      );
 
-        if (subText && subText.trim().startsWith('@')) {
-          handle = subText.trim();
-          subscriberCount = vidText?.trim();
-        } else {
-          subscriberCount = subText?.trim() || vidText?.trim();
-          if (canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')) {
-            handle = canonicalBaseUrl.slice(1);
+      if (res.ok) {
+        hadSuccessfulFetch = true;
+        const data = await res.json();
+        collectChannelRenderers(data?.contents ?? data, results, seenIds);
+      } else {
+        lastError = new Error(`YouTube search merespons status ${res.status}`);
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error('Gagal menghubungi YouTube search');
+    }
+
+    // Tier 2: youtubei.js Innertube search fallback
+    if (results.length === 0) {
+      try {
+        const yt = await getSharedInnertubeBase();
+        const search = await yt.search(searchTerm, { type: 'channel' });
+        hadSuccessfulFetch = true;
+        const ytResults = Array.isArray((search as any)?.results) ? (search as any).results : [];
+        for (const item of ytResults) {
+          if (results.length >= 20) break;
+          const channelId = String(
+            item?.id || item?.author?.id || item?.endpoint?.payload?.browseId || ''
+          ).trim();
+          if (!channelId || !channelId.startsWith('UC') || seenIds.has(channelId)) continue;
+          seenIds.add(channelId);
+
+          const canonicalBaseUrl: string | undefined =
+            item?.author?.endpoint?.payload?.canonicalBaseUrl ||
+            item?.endpoint?.payload?.canonicalBaseUrl;
+          const subText = item?.subscriber_count?.text ? String(item.subscriber_count.text).trim() : undefined;
+          const vidText = item?.video_count?.text ? String(item.video_count.text).trim() : undefined;
+
+          let handle: string | undefined;
+          let subscriberCount: string | undefined;
+          if (subText && subText.startsWith('@')) {
+            handle = subText;
+            subscriberCount = vidText;
+          } else {
+            subscriberCount = subText || vidText;
+            if (canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')) {
+              handle = canonicalBaseUrl.slice(1);
+            }
+          }
+
+          const thumbs = item?.author?.thumbnails || item?.thumbnails;
+          const rawThumb = Array.isArray(thumbs) && thumbs.length > 0 ? String(thumbs[0]?.url || '') : '';
+          const title = String(item?.author?.name || item?.title?.text || 'YouTube Channel').trim();
+          const description = item?.description_snippet?.text
+            ? String(item.description_snippet.text).trim()
+            : undefined;
+          const url = canonicalBaseUrl
+            ? `https://www.youtube.com${canonicalBaseUrl}`
+            : `https://www.youtube.com/channel/${channelId}`;
+
+          results.push({
+            id: channelId,
+            title,
+            handle,
+            avatar: normalizeYtAvatar(rawThumb, channelId),
+            subscriberCount,
+            description,
+            url,
+          });
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err : lastError;
+      }
+    }
+
+    // Tier 3: YouTube HTML search page fallback (ytInitialData)
+    if (results.length === 0) {
+      try {
+        const htmlRes = await fetchWithTimeout(
+          `https://www.youtube.com/results?search_query=${encodeURIComponent(searchTerm)}&sp=EgIQAg%3D%3D`,
+          {},
+          9000
+        );
+        if (htmlRes.ok) {
+          hadSuccessfulFetch = true;
+          const html = await htmlRes.text();
+          const data = extractYtInitialDataJson(html);
+          if (data) {
+            collectChannelRenderers(data?.contents ?? data, results, seenIds);
           }
         }
-
-        const rawThumb = cr.thumbnail?.thumbnails?.slice(-1)?.[0]?.url || '';
-        const avatar = rawThumb
-          ? rawThumb.startsWith('//')
-            ? `https:${rawThumb}`
-            : rawThumb
-          : `https://avatar.vercel.sh/${channelId}?size=120`;
-
-        const description = cr.descriptionSnippet?.runs
-          ? cr.descriptionSnippet.runs.map((r: any) => r.text).join('').trim()
-          : undefined;
-
-        const url = canonicalBaseUrl
-          ? `https://www.youtube.com${canonicalBaseUrl}`
-          : `https://www.youtube.com/channel/${channelId}`;
-
-        results.push({
-          id: channelId,
-          title,
-          handle,
-          avatar,
-          subscriberCount,
-          description,
-          url,
-        });
-
-        if (results.length >= 20) break;
+      } catch (err) {
+        lastError = err instanceof Error ? err : lastError;
       }
-      if (results.length >= 20) break;
+    }
+
+    if (results.length === 0 && !hadSuccessfulFetch && lastError) {
+      throw lastError;
     }
 
     channelSearchCache.set(cacheKey, {

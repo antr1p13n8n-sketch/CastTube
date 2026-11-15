@@ -5,6 +5,7 @@ import {
   loadExtractorConfig,
   tryClientDirectExtractor,
 } from '../utils/extractorConfig';
+import { parseJsonSafely } from '../utils/safeJson';
 
 export type AudioDownloadStatus = 'preparing' | 'downloading' | 'completed' | 'error';
 
@@ -192,12 +193,8 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
         }
 
         if (!res.ok) {
-          let errPayload: { error?: string; status?: string } = {};
-          try {
-            errPayload = await res.json();
-          } catch {
-            // ignore non-JSON error
-          }
+          const { data } = await parseJsonSafely<{ error?: string; status?: string }>(res);
+          const errPayload = data || {};
 
           const isLoginRestricted = errPayload.status === 'login_required';
           let friendlyMsg = errPayload.error || 'Gagal mengunduh audio untuk video ini.';

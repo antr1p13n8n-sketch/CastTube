@@ -17,13 +17,15 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     const rawQ = req.query.q;
     const q = (Array.isArray(rawQ) ? rawQ[0] : rawQ || '').trim();
     if (!q) {
+      res.setHeader('Cache-Control', 'no-store');
       return res.status(400).json({ error: 'Parameter pencarian q diperlukan' });
     }
 
     const channels = await searchYouTubeChannels(q);
-    res.setHeader('Cache-Control', 'public, max-age=180, stale-while-revalidate=300');
+    res.setHeader('Cache-Control', 'private, max-age=60');
     return res.status(200).json({ channels });
   } catch (err: unknown) {
+    res.setHeader('Cache-Control', 'no-store');
     const message = err instanceof Error ? err.message : 'Gagal mencari channel YouTube';
     return res.status(500).json({ error: message });
   }

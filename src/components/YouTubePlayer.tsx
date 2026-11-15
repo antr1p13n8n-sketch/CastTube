@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
+import { AlertCircle, ExternalLink, RefreshCw } from 'lucide-react';
 import { PlayerMode, Video } from '../types';
 
 declare global {
@@ -48,6 +49,8 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const hiddenResumeCountRef = useRef<number>(0);
   const initialSeekSecondsRef = useRef<number>(initialSeekSeconds);
   const isPlayingRef = useRef<boolean>(isPlaying);
+  const loadedVideoIdRef = useRef<string | null>(currentVideo?.id || null);
+  const [playerErrorCode, setPlayerErrorCode] = useState<string | number | null>(null);
 
   initialSeekSecondsRef.current = initialSeekSeconds;
   isPlayingRef.current = isPlaying;
@@ -140,6 +143,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           onStateChange: (event: any) => {
             // YT.PlayerState: -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 video cued
             if (event.data === 1) {
+              setPlayerErrorCode(null);
               hiddenResumeCountRef.current = 0;
               if (verifyPauseTimerRef.current) {
                 clearTimeout(verifyPauseTimerRef.current);
@@ -192,6 +196,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           },
           onError: (event: any) => {
             console.warn('YouTube Player error code:', event.data);
+            setPlayerErrorCode(event.data ?? 'UNKNOWN');
             if (onError) onError(event.data);
           },
         },
@@ -209,6 +214,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         tag.async = true;
         tag.onerror = () => {
           console.warn('YouTube IFrame API gagal dimuat.');
+          setPlayerErrorCode('API_BLOCKED');
           if (onError) onError('API_BLOCKED');
         };
         const firstScriptTag = document.getElementsByTagName('script')[0];
@@ -233,10 +239,12 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 
   // Handle video changes
   useEffect(() => {
+    setPlayerErrorCode(null);
     if (!playerRef.current || !isReadyRef.current || !currentVideo) return;
     try {
       const currentUrl = playerRef.current.getVideoUrl ? playerRef.current.getVideoUrl() : '';
-      if (!currentUrl.includes(currentVideo.id)) {
+      if (loadedVideoIdRef.current !== currentVideo.id || !currentUrl.includes(currentVideo.id)) {
+        loadedVideoIdRef.current = currentVideo.id;
         const startSeconds = Math.floor(initialSeekSecondsRef.current || 0);
         if (isPlayingRef.current) {
           playerRef.current.loadVideoById({
@@ -360,6 +368,30 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     }
   }, [playbackRate]);
 
+  const handleRetryEmbed = () => {
+    setPlayerErrorCode(null);
+    if (playerRef.current && isReadyRef.current && currentVideo) {
+      try {
+        playerRef.current.loadVideoById({
+          videoId: currentVideo.id,
+          startSeconds: Math.floor(initialSeekSecondsRef.current || 0),
+        });
+        startTimePolling();
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const errorMessage =
+    playerErrorCode === 101 || playerErrorCode === 150
+      ? 'Pemilik video menonaktifkan pemutaran embed di luar YouTube.'
+      : playerErrorCode === 100
+      ? 'Video tidak ditemukan atau telah dihapus/diprivasikan.'
+      : playerErrorCode === 'API_BLOCKED'
+      ? 'Pemutar YouTube diblokir oleh ekstensi browser atau koneksi jaringan.'
+      : 'Terjadi kendala saat memuat pemutar video YouTube.';
+
   return (
     <div
       className={
@@ -369,6 +401,36 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       }
     >
       <div id="yt-embedded-instance" className="w-full h-full" />
+      {playerErrorCode !== null && currentVideo && isVisible && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 bg-slate-950/92 text-center text-white space-y-3">
+          <AlertCircle className="w-8 h-8 text-red-500" />
+          <div className="space-y-1 max-w-md">
+            <p className="text-sm font-bold">Video Tidak Dapat Diputar Langsung</p>
+            <p className="text-xs text-slate-300 leading-relaxed">{errorMessage}</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            {playerErrorCode !== 101 && playerErrorCode !== 150 && (
+              <button
+                type="button"
+                onClick={handleRetryEmbed}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-800 hover:bg-slate-700 text-white transition-colors cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Coba Muat Ulang</span>
+              </button>
+            )}
+            <a
+              href={`https://www.youtube.com/watch?v=${currentVideo.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Tonton di YouTube</span>
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

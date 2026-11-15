@@ -1,5 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Video } from '../types';
+import { buildExtractorHeaders } from '../utils/extractorConfig';
+import { parseJsonSafely } from '../utils/safeJson';
 
 const SILENT_WAV_DATA_URI =
   'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
@@ -257,8 +259,18 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
       if (!activeRef.current || !videoIdRef.current) return;
       const failedVidId = videoIdRef.current;
 
-      fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(failedVidId)}&check=1`)
-        .then((r) => (r.ok ? r.json() : { available: false, status: 'unavailable' }))
+      fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(failedVidId)}&check=1`, {
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          ...buildExtractorHeaders(),
+        },
+      })
+        .then(async (r) => {
+          if (!r.ok) return { available: false, status: 'unavailable' as const };
+          const { data } = await parseJsonSafely<{ available?: boolean; status?: string }>(r);
+          return data || { available: false, status: 'unavailable' as const };
+        })
         .then((data) => {
           if (videoIdRef.current !== failedVidId || !activeRef.current) return;
           if (data?.available && typeof navigator !== 'undefined' && navigator.onLine && retryAttempt < 2) {
@@ -269,7 +281,11 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
             }, 700);
             return;
           }
-          onFallbackNeeded(data?.status || 'unavailable');
+          const nextStatus =
+            data?.status === 'login_required' || data?.status === 'live_stream'
+              ? data.status
+              : 'unavailable';
+          onFallbackNeeded(nextStatus);
         })
         .catch(() => {
           if (videoIdRef.current === failedVidId && activeRef.current) {

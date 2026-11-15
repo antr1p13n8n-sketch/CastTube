@@ -36,11 +36,15 @@
         },
         {
           "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, OPTIONS"
+          "value": "GET, HEAD, POST, OPTIONS"
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type"
+          "value": "Range, Content-Type, X-YouTube-Cookies, X-YouTube-OAuth, X-Extractor-Url"
+        },
+        {
+          "key": "Access-Control-Expose-Headers",
+          "value": "Content-Disposition, Content-Length, Content-Type, X-Suggested-Filename"
         }
       ]
     },

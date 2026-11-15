@@ -27,6 +27,13 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
   const [editName, setEditName] = useState('');
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
+  React.useEffect(() => {
+    if (!isOpen) {
+      setEditingGroupId(null);
+      setConfirmingDeleteId(null);
+    }
+  }, [isOpen]);
+
   const handleStartRename = (group: ChannelGroup) => {
     setConfirmingDeleteId(null);
     setEditingGroupId(group.id);

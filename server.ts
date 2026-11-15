@@ -76,22 +76,21 @@ async function startServer() {
       if (res.headersSent || res.getHeader('Content-Encoding')) {
         return originalJson(body);
       }
-      const raw = JSON.stringify(body);
-      if (Buffer.byteLength(raw) < 1024) {
-        return originalJson(body);
-      }
-      zlib.gzip(Buffer.from(raw, 'utf8'), (err, compressed) => {
-        if (err || res.headersSent) {
-          originalJson(body);
-          return;
+      try {
+        const raw = JSON.stringify(body);
+        if (typeof raw !== 'string' || Buffer.byteLength(raw) < 1024) {
+          return originalJson(body);
         }
+        const compressed = zlib.gzipSync(Buffer.from(raw, 'utf8'));
         res.setHeader('Content-Encoding', 'gzip');
         res.setHeader('Vary', 'Accept-Encoding');
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.setHeader('Content-Length', String(compressed.length));
-        res.send(compressed);
-      });
-      return res;
+        res.end(compressed);
+        return res;
+      } catch {
+        return originalJson(body);
+      }
     }) as typeof res.json;
     next();
   });
@@ -137,13 +136,15 @@ async function startServer() {
     try {
       const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
       if (!q) {
+        res.setHeader('Cache-Control', 'no-store');
         res.status(400).json({ error: 'Parameter pencarian q diperlukan' });
         return;
       }
       const channels = await searchYouTubeChannels(q);
-      res.setHeader('Cache-Control', 'public, max-age=180, stale-while-revalidate=300');
+      res.setHeader('Cache-Control', 'private, max-age=60');
       res.json({ channels });
     } catch (err: unknown) {
+      res.setHeader('Cache-Control', 'no-store');
       const message = err instanceof Error ? err.message : 'Gagal mencari channel YouTube';
       res.status(500).json({ error: message });
     }

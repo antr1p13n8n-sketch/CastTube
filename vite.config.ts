@@ -48,10 +48,14 @@ export default defineConfig(() => {
           skipWaiting: true,
           clientsClaim: true,
           cleanupOutdatedCaches: true,
-          navigateFallbackDenylist: [/^\/api\//],
+          navigateFallbackDenylist: [/^\/api\//, /^\/_/],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
+            {
+              urlPattern: /\/api\/youtube\/(search-channels|resolve|extractor-auth|audio-stream).*/i,
+              handler: 'NetworkOnly',
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
@@ -95,11 +99,11 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /\/api\/youtube\/(?!audio-stream).*/i,
+              urlPattern: /\/api\/youtube\/(feed|presets).*/i,
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'youtube-api-cache',
-                networkTimeoutSeconds: 5,
+                networkTimeoutSeconds: 10,
                 expiration: {
                   maxEntries: 50,
                   maxAgeSeconds: 60 * 60 * 24 * 7,
@@ -109,11 +113,14 @@ export default defineConfig(() => {
                 },
               },
             },
+            {
+              urlPattern: /\/api\/.*/i,
+              handler: 'NetworkOnly',
+            },
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],

@@ -22,6 +22,7 @@ import {
   clearExtractorConfig,
   normalizeClientCookies,
 } from '../utils/extractorConfig';
+import { parseJsonSafely, buildHttpErrorMessage } from '../utils/safeJson';
 
 interface AudioExtractorModalProps {
   isOpen: boolean;
@@ -97,12 +98,14 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
     try {
       const res = await fetch('/api/youtube/extractor-auth', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ action: 'start_device' }),
       });
-      const data = await res.json();
+      const { data, rawText } = await parseJsonSafely<any>(res);
       if (!res.ok || !data?.userCode) {
-        throw new Error(data?.error || 'Gagal membuat kode verifikasi YouTube.');
+        throw new Error(
+          buildHttpErrorMessage(res, data, rawText, 'Gagal membuat kode verifikasi YouTube.')
+        );
       }
 
       setDeviceInfo({
@@ -118,14 +121,14 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
         try {
           const pollRes = await fetch('/api/youtube/extractor-auth', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify({
               action: 'poll_device',
               deviceCode: data.deviceCode,
               client: data.client,
             }),
           });
-          const pollData = await pollRes.json();
+          const { data: pollData } = await parseJsonSafely<any>(pollRes);
           if (pollData?.status === 'authorized' && pollData.credentials) {
             stopPolling();
             const nextConfig: AudioExtractorConfig = {
@@ -193,7 +196,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
       const testVideoId = pendingVideo?.id || 'hdMszZ2ah5Q';
       const res = await fetch('/api/youtube/extractor-auth', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           action: 'save_config',
           cookies: normalized,
@@ -201,9 +204,9 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
           testVideoId,
         }),
       });
-      const data = await res.json();
+      const { data, rawText } = await parseJsonSafely<any>(res);
       if (!res.ok) {
-        throw new Error(data?.error || 'Gagal menyimpan cookie YouTube.');
+        throw new Error(buildHttpErrorMessage(res, data, rawText, 'Gagal menyimpan cookie YouTube.'));
       }
 
       const nextConfig: AudioExtractorConfig = {
@@ -259,7 +262,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
       const testVideoId = pendingVideo?.id || 'hdMszZ2ah5Q';
       const res = await fetch('/api/youtube/extractor-auth', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           action: 'save_config',
           extractorUrl: cleanUrl,
@@ -267,9 +270,9 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
           testVideoId,
         }),
       });
-      const data = await res.json();
+      const { data, rawText } = await parseJsonSafely<any>(res);
       if (!res.ok) {
-        throw new Error(data?.error || 'Gagal menyimpan URL ekstraktor.');
+        throw new Error(buildHttpErrorMessage(res, data, rawText, 'Gagal menyimpan URL ekstraktor.'));
       }
 
       const nextConfig: AudioExtractorConfig = {

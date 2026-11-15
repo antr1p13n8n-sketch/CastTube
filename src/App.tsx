@@ -63,6 +63,7 @@ import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useBackgroundAudio } from './hooks/useBackgroundAudio';
 import { useAudioDownload } from './hooks/useAudioDownload';
 import { buildExtractorHeaders, syncExtractorConfigToServer } from './utils/extractorConfig';
+import { parseJsonSafely, buildHttpErrorMessage } from './utils/safeJson';
 import {
   getPlaybackClockSnapshot,
   resetPlaybackClock,
@@ -99,6 +100,7 @@ export default function App() {
   // Firebase Auth State
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
 
   // Theme State (System, Dark, Light)
   const [themePreference, setThemePreference] = useState<ThemeMode>(loadThemePreference);
@@ -241,9 +243,17 @@ export default function App() {
 
     let cancelled = false;
     fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&check=1`, {
-      headers: buildExtractorHeaders(),
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        ...buildExtractorHeaders(),
+      },
     })
-      .then((res) => (res.ok ? res.json() : { available: false, status: 'unavailable' }))
+      .then(async (res) => {
+        if (!res.ok) return { available: false, status: 'unavailable' };
+        const { data } = await parseJsonSafely<{ available?: boolean; status?: string }>(res);
+        return data || { available: false, status: 'unavailable' };
+      })
       .then((data) => {
         if (!cancelled) {
           const resolvedStatus: NativeAudioStatus = data?.available
@@ -488,19 +498,33 @@ export default function App() {
   }, [user?.uid]);
 
   const handleSignIn = useCallback(async () => {
+    setAuthNotice(null);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error: unknown) {
       const code = (error as { code?: string })?.code;
       if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
-        try {
-          await signInWithRedirect(auth, googleProvider);
-          return;
-        } catch (redirectErr) {
-          console.warn('Gagal masuk dengan metode redirect:', redirectErr);
+        const inIframe = typeof window !== 'undefined' && window.self !== window.top;
+        if (!inIframe) {
+          try {
+            await signInWithRedirect(auth, googleProvider);
+            return;
+          } catch (redirectErr) {
+            console.warn('Gagal masuk dengan metode redirect:', redirectErr);
+          }
         }
+        setAuthNotice(
+          'Pop-up login diblokir oleh browser atau mode preview. Izinkan pop-up atau buka aplikasi di tab baru untuk sinkronisasi Google (data lokal tetap tersimpan aman).'
+        );
+        return;
+      }
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        return;
       }
       console.warn('Gagal masuk dengan Google:', error);
+      setAuthNotice(
+        'Gagal masuk dengan Google. Periksa koneksi atau buka di tab browser penuh (data lokal tetap tersimpan aman).'
+      );
     }
   }, []);
 
@@ -761,7 +785,8 @@ export default function App() {
   // 7. Add Multiple Channels (queues for background sync if offline)
   const handleAddChannels = async (
     inputs: string[],
-    targetGroupId: string
+    targetGroupId: string,
+    channelHints?: Record<string, Partial<Channel>>
   ): Promise<{ success: number; failed: number; lastError?: string }> => {
     if (!navigator.onLine) {
       const task: PendingSyncTask = {
@@ -787,21 +812,23 @@ export default function App() {
         try {
           const res = await fetch('/api/youtube/resolve', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify({ input }),
           });
+          const { data, rawText } = await parseJsonSafely<any>(res);
           if (!res.ok) {
-            let errMsg = `Gagal menghubungi server (HTTP ${res.status}).`;
-            try {
-              const errData = await res.json();
-              if (errData?.error) errMsg = errData.error;
-            } catch {
-              // ignore json error
-            }
-            return { ok: false as const, error: errMsg };
+            return {
+              ok: false as const,
+              error: buildHttpErrorMessage(res, data, rawText, 'Gagal memproses channel'),
+            };
           }
-          const data = await res.json();
-          return { ok: true as const, data };
+          if (!data || !data.channel?.id) {
+            return {
+              ok: false as const,
+              error: buildHttpErrorMessage(res, data, rawText, 'Format respons channel tidak valid'),
+            };
+          }
+          return { ok: true as const, input, data };
         } catch (err) {
           return {
             ok: false as const,
@@ -823,13 +850,18 @@ export default function App() {
       const data = item.data;
       if (data?.channel && data.channel.id) {
         const ch = data.channel;
+        const hint = channelHints?.[ch.id] || channelHints?.[item.input];
+        const isPlaceholderTitle = !ch.title || ch.title.startsWith('Channel UC') || ch.title === 'YouTube Channel';
+        const isPlaceholderAvatar = !ch.avatar || String(ch.avatar).includes('avatar.vercel.sh');
+        const resolvedTitle =
+          (!isPlaceholderTitle ? ch.title : hint?.title) || ch.title || 'YouTube Channel';
         const channelObj: Channel = {
           id: ch.id,
-          title: ch.title || 'YouTube Channel',
-          handle: ch.handle,
-          avatar: ch.avatar,
-          description: ch.description,
-          url: ch.url,
+          title: resolvedTitle,
+          handle: ch.handle || hint?.handle,
+          avatar: (!isPlaceholderAvatar ? ch.avatar : hint?.avatar) || ch.avatar || hint?.avatar,
+          description: ch.description || hint?.description,
+          url: ch.url || hint?.url || `https://www.youtube.com/channel/${ch.id}`,
           groupId: targetGroupId,
           addedAt: new Date().toISOString(),
           videoCount: data.videos?.length || 0,
@@ -922,7 +954,7 @@ export default function App() {
         chunks.map((chunk) =>
           fetch('/api/youtube/batch-feed', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify({ channelIds: chunk }),
           })
         )
@@ -931,8 +963,9 @@ export default function App() {
       let anyOk = false;
       for (const res of responses) {
         if (!res.ok) continue;
+        const { data } = await parseJsonSafely<any>(res);
+        if (!data) continue;
         anyOk = true;
-        const data = await res.json();
         if (Array.isArray(data.videos)) {
           fetchedVideos.push(...data.videos);
         }
@@ -2175,6 +2208,32 @@ export default function App() {
               <button
                 type="button"
                 onClick={dismissDownloadNotice}
+                className="p-1 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                title="Tutup"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Auth Feedback Toast */}
+      <AnimatePresence>
+        {authNotice && (
+          <motion.div
+            key="auth-notice-toast"
+            initial={{ opacity: 0, y: 16, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.96 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md pointer-events-auto"
+          >
+            <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-amber-950/95 border-amber-700/80 text-amber-50">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0 text-left leading-relaxed">{authNotice}</div>
+              <button
+                type="button"
+                onClick={() => setAuthNotice(null)}
                 className="p-1 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
                 title="Tutup"
               >

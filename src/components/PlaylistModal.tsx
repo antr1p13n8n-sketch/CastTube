@@ -55,8 +55,14 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setIsCreating(false);
+      setIsRenaming(false);
+      setConfirmingDelete(false);
+      return;
+    }
     setConfirmingDelete(false);
+    setIsRenaming(false);
     if (playlists.length > 0 && (!selectedPlaylistId || !playlists.some((p) => p.id === selectedPlaylistId))) {
       setSelectedPlaylistId(playlists[0].id);
     }
