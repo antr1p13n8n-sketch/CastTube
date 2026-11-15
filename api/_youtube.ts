@@ -340,6 +340,7 @@ function extractChannelFromHtml(html: string): { channelId: string; title?: stri
   const idMatch =
     html.match(/<meta itemprop="identifier" content="(UC[a-zA-Z0-9_-]{22})"/i) ||
     html.match(/<meta itemprop="channelId" content="(UC[a-zA-Z0-9_-]{22})"/i) ||
+    html.match(/<meta property="og:url" content="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/i) ||
     html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/i) ||
     html.match(/feeds\/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{22})/i) ||
     html.match(/"externalId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
@@ -721,17 +722,20 @@ const pendingFeedRequests = new Map<
 
 export async function fetchChannelRss(
   channelId: string,
-  maxPages = 3
+  maxPages = 3,
+  forceRefresh = false
 ): Promise<{ channel: ChannelData; videos: VideoItem[] }> {
   const cacheKey = `${channelId}:${maxPages}`;
-  const cached = channelFeedCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
-  }
+  if (!forceRefresh) {
+    const cached = channelFeedCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
 
-  const inFlight = pendingFeedRequests.get(cacheKey);
-  if (inFlight) {
-    return inFlight;
+    const inFlight = pendingFeedRequests.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
   }
 
   const promise = (async (): Promise<{ channel: ChannelData; videos: VideoItem[] }> => {
@@ -812,7 +816,8 @@ export async function fetchChannelRss(
 export async function fetchBatchChannelFeeds(
   rawChannelIds: string[],
   maxPages = 2,
-  concurrency = 6
+  concurrency = 6,
+  forceRefresh = false
 ): Promise<{ channels: Record<string, ChannelData>; videos: VideoItem[] }> {
   const uniqueIds = Array.from(
     new Set(
@@ -833,7 +838,7 @@ export async function fetchBatchChannelFeeds(
         const idx = cursor++;
         const id = uniqueIds[idx];
         try {
-          const { channel, videos } = await fetchChannelRss(id, maxPages);
+          const { channel, videos } = await fetchChannelRss(id, maxPages, forceRefresh);
           channels[channel.id] = channel;
           for (const video of videos) {
             const parsed = Date.parse(video.publishedAt);
@@ -1060,6 +1065,10 @@ export function extractAuthFromRequest(
 
 let cachedInnertubeBase: { yt: Innertube; expiresAt: number } | null = null;
 let pendingInnertubeBasePromise: Promise<Innertube> | null = null;
+
+function invalidateSharedInnertubeBase(): void {
+  cachedInnertubeBase = null;
+}
 
 async function getSharedInnertubeBase(): Promise<Innertube> {
   if (cachedInnertubeBase && cachedInnertubeBase.expiresAt > Date.now()) {
@@ -1967,6 +1976,8 @@ export interface ChannelSearchResult {
   url: string;
 }
 
+const VALID_CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
+
 const channelSearchCache = new Map<
   string,
   { results: ChannelSearchResult[]; expiresAt: number }
@@ -1978,17 +1989,26 @@ function extractYtText(val: any): string | undefined {
   if (typeof val === 'string') return val.trim() || undefined;
   if (typeof val.simpleText === 'string') return val.simpleText.trim() || undefined;
   if (Array.isArray(val.runs)) {
-    const joined = val.runs.map((r: any) => (typeof r?.text === 'string' ? r.text : '')).join('').trim();
+    const joined = val.runs
+      .map((r: any) => (typeof r?.text === 'string' ? r.text : ''))
+      .join('')
+      .trim();
     return joined || undefined;
   }
   if (typeof val.content === 'string') return val.content.trim() || undefined;
   return undefined;
 }
 
-function normalizeYtAvatar(rawThumb: string | undefined, channelId: string): string {
-  if (!rawThumb) return `https://avatar.vercel.sh/${channelId}?size=120`;
-  if (rawThumb.startsWith('//')) return `https:${rawThumb}`;
-  return rawThumb;
+function normalizeYtAvatar(rawUrl: string | undefined, channelId: string): string {
+  const clean = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+  if (!clean) return `https://avatar.vercel.sh/${channelId}?size=120`;
+  if (clean.startsWith('//')) return `https:${clean}`;
+  if (clean.startsWith('/')) return `https://www.youtube.com${clean}`;
+  return clean;
+}
+
+function isValidYouTubeChannelId(id: string | undefined): id is string {
+  return typeof id === 'string' && VALID_CHANNEL_ID_RE.test(id.trim());
 }
 
 function collectChannelRenderers(
@@ -1997,7 +2017,7 @@ function collectChannelRenderers(
   seenIds: Set<string>,
   depth = 0
 ): void {
-  if (!node || typeof node !== 'object' || depth > 14 || results.length >= 20) return;
+  if (!node || typeof node !== 'object' || depth > 16 || results.length >= 20) return;
 
   if (Array.isArray(node)) {
     for (const item of node) {
@@ -2010,12 +2030,14 @@ function collectChannelRenderers(
   const cr =
     node.channelRenderer ||
     node.gridChannelRenderer ||
-    node.compactChannelRenderer;
+    node.compactChannelRenderer ||
+    node.channelCardRenderer ||
+    node.topicChannelDetailsRenderer;
   if (cr && typeof cr === 'object') {
     const channelId = String(
       cr.channelId || cr.navigationEndpoint?.browseEndpoint?.browseId || ''
     ).trim();
-    if (channelId && !seenIds.has(channelId)) {
+    if (isValidYouTubeChannelId(channelId) && !seenIds.has(channelId)) {
       seenIds.add(channelId);
 
       const title = extractYtText(cr.title) || 'YouTube Channel';
@@ -2037,12 +2059,13 @@ function collectChannelRenderers(
         }
       }
 
-      const thumbs = cr.thumbnail?.thumbnails;
-      const rawThumb = Array.isArray(thumbs) && thumbs.length > 0
-        ? String(thumbs[thumbs.length - 1]?.url || '')
-        : '';
+      const thumbs = cr.thumbnail?.thumbnails || cr.avatar?.thumbnails;
+      const rawThumb =
+        Array.isArray(thumbs) && thumbs.length > 0
+          ? String(thumbs[thumbs.length - 1]?.url || '')
+          : '';
 
-      const description = extractYtText(cr.descriptionSnippet);
+      const description = extractYtText(cr.descriptionSnippet || cr.subtitle);
       const url = canonicalBaseUrl
         ? `https://www.youtube.com${canonicalBaseUrl}`
         : `https://www.youtube.com/channel/${channelId}`;
@@ -2069,6 +2092,73 @@ function collectChannelRenderers(
   }
 }
 
+function collectAuthorChannelsFromVideos(
+  node: any,
+  results: ChannelSearchResult[],
+  seenIds: Set<string>,
+  depth = 0
+): void {
+  if (!node || typeof node !== 'object' || depth > 14 || results.length >= 15) return;
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      if (results.length >= 15) break;
+      collectAuthorChannelsFromVideos(item, results, seenIds, depth + 1);
+    }
+    return;
+  }
+
+  const vr = node.videoRenderer || node.gridVideoRenderer || node.compactVideoRenderer;
+  if (vr && typeof vr === 'object') {
+    const ownerRun =
+      vr.ownerText?.runs?.[0] ||
+      vr.longBylineText?.runs?.[0] ||
+      vr.shortBylineText?.runs?.[0];
+    const browseEp =
+      ownerRun?.navigationEndpoint?.browseEndpoint ||
+      vr.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.navigationEndpoint
+        ?.browseEndpoint;
+    const channelId = String(browseEp?.browseId || '').trim();
+    if (isValidYouTubeChannelId(channelId) && !seenIds.has(channelId)) {
+      seenIds.add(channelId);
+      const canonicalBaseUrl: string | undefined = browseEp?.canonicalBaseUrl;
+      const handle =
+        canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')
+          ? canonicalBaseUrl.slice(1)
+          : undefined;
+      const thumbs =
+        vr.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail
+          ?.thumbnails;
+      const rawThumb =
+        Array.isArray(thumbs) && thumbs.length > 0
+          ? String(thumbs[thumbs.length - 1]?.url || '')
+          : '';
+      const title =
+        (typeof ownerRun?.text === 'string' && ownerRun.text.trim()) || 'YouTube Channel';
+      const url = canonicalBaseUrl
+        ? `https://www.youtube.com${canonicalBaseUrl}`
+        : `https://www.youtube.com/channel/${channelId}`;
+
+      results.push({
+        id: channelId,
+        title,
+        handle,
+        avatar: normalizeYtAvatar(rawThumb, channelId),
+        url,
+      });
+    }
+    return;
+  }
+
+  for (const key of Object.keys(node)) {
+    if (results.length >= 15) break;
+    const val = node[key];
+    if (val && typeof val === 'object') {
+      collectAuthorChannelsFromVideos(val, results, seenIds, depth + 1);
+    }
+  }
+}
+
 function extractYtInitialDataJson(html: string): any | null {
   const markers = ['var ytInitialData = ', 'window["ytInitialData"] = ', 'ytInitialData = '];
   for (const marker of markers) {
@@ -2087,13 +2177,312 @@ function extractYtInitialDataJson(html: string): any | null {
   return null;
 }
 
+async function searchChannelsViaInnerTubeHttp(
+  searchTerm: string,
+  onlyChannels: boolean,
+  timeoutMs = 4800
+): Promise<{ ok: boolean; results: ChannelSearchResult[]; error?: Error }> {
+  try {
+    const bodyPayload: Record<string, unknown> = {
+      context: {
+        client: {
+          clientName: 'WEB',
+          clientVersion: '2.20250201.00.00',
+          hl: 'id',
+          gl: 'ID',
+        },
+      },
+      query: searchTerm,
+    };
+    if (onlyChannels) {
+      bodyPayload.params = 'EgIQAg==';
+    }
+
+    const res = await fetchWithTimeout(
+      'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'Accept-Language': 'id,en-US,en;q=0.9',
+          Origin: 'https://www.youtube.com',
+          Referer: 'https://www.youtube.com/',
+          'X-YouTube-Client-Name': '1',
+          'X-YouTube-Client-Version': '2.20250201.00.00',
+        },
+        body: JSON.stringify(bodyPayload),
+      },
+      timeoutMs
+    );
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        results: [],
+        error: new Error(`YouTube search merespons status ${res.status}`),
+      };
+    }
+
+    const data = await safeResponseJson<any>(res);
+    if (!data || data.error) {
+      return {
+        ok: false,
+        results: [],
+        error: new Error(
+          data?.error?.message
+            ? String(data.error.message)
+            : 'Respons pencarian YouTube tidak valid'
+        ),
+      };
+    }
+
+    const found: ChannelSearchResult[] = [];
+    const seen = new Set<string>();
+    collectChannelRenderers(data?.contents ?? data, found, seen);
+    if (!onlyChannels && found.length === 0) {
+      collectAuthorChannelsFromVideos(data?.contents ?? data, found, seen);
+    }
+
+    return { ok: true, results: found };
+  } catch (err) {
+    return {
+      ok: false,
+      results: [],
+      error: err instanceof Error ? err : new Error('Gagal menghubungi YouTube search'),
+    };
+  }
+}
+
+async function searchChannelsViaInnertubeLib(
+  searchTerm: string,
+  timeoutMs = 5000
+): Promise<{ ok: boolean; results: ChannelSearchResult[]; error?: Error }> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const yt = await getSharedInnertubeBase();
+    const search = await Promise.race([
+      yt.search(searchTerm, { type: 'channel' }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Batas waktu pencarian Innertube tercapai')), timeoutMs);
+      }),
+    ]);
+
+    const ytResults = Array.isArray((search as any)?.results) ? (search as any).results : [];
+    const found: ChannelSearchResult[] = [];
+    const seen = new Set<string>();
+
+    for (const item of ytResults) {
+      if (found.length >= 20) break;
+      const channelId = String(
+        item?.id || item?.author?.id || item?.endpoint?.payload?.browseId || ''
+      ).trim();
+      if (!isValidYouTubeChannelId(channelId) || seen.has(channelId)) continue;
+      seen.add(channelId);
+
+      const canonicalBaseUrl: string | undefined =
+        item?.author?.endpoint?.payload?.canonicalBaseUrl ||
+        item?.endpoint?.payload?.canonicalBaseUrl;
+      const subText = item?.subscriber_count?.text
+        ? String(item.subscriber_count.text).trim()
+        : undefined;
+      const vidText = item?.video_count?.text ? String(item.video_count.text).trim() : undefined;
+
+      let handle: string | undefined;
+      let subscriberCount: string | undefined;
+      if (subText && subText.startsWith('@')) {
+        handle = subText;
+        subscriberCount = vidText;
+      } else {
+        subscriberCount = subText || vidText;
+        if (canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')) {
+          handle = canonicalBaseUrl.slice(1);
+        }
+      }
+
+      const thumbs = item?.author?.thumbnails || item?.thumbnails;
+      const rawThumb = Array.isArray(thumbs) && thumbs.length > 0 ? String(thumbs[0]?.url || '') : '';
+      const title = String(item?.author?.name || item?.title?.text || 'YouTube Channel').trim();
+      const description = item?.description_snippet?.text
+        ? String(item.description_snippet.text).trim()
+        : undefined;
+      const url = canonicalBaseUrl
+        ? `https://www.youtube.com${canonicalBaseUrl}`
+        : `https://www.youtube.com/channel/${channelId}`;
+
+      found.push({
+        id: channelId,
+        title,
+        handle,
+        avatar: normalizeYtAvatar(rawThumb, channelId),
+        subscriberCount,
+        description,
+        url,
+      });
+    }
+
+    return { ok: true, results: found };
+  } catch (err) {
+    invalidateSharedInnertubeBase();
+    return {
+      ok: false,
+      results: [],
+      error: err instanceof Error ? err : new Error('Gagal mencari channel via Innertube'),
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function searchChannelsViaHtmlPage(
+  searchTerm: string,
+  timeoutMs = 5500
+): Promise<{ ok: boolean; results: ChannelSearchResult[]; error?: Error }> {
+  try {
+    const htmlRes = await fetchWithTimeout(
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(searchTerm)}&sp=EgIQAg%3D%3D`,
+      {},
+      timeoutMs
+    );
+    if (!htmlRes.ok) {
+      return {
+        ok: false,
+        results: [],
+        error: new Error(`Halaman pencarian YouTube merespons ${htmlRes.status}`),
+      };
+    }
+    const html = await htmlRes.text();
+    const data = extractYtInitialDataJson(html);
+    if (!data) {
+      return { ok: false, results: [], error: new Error('Data pencarian YouTube tidak ditemukan') };
+    }
+    const found: ChannelSearchResult[] = [];
+    const seen = new Set<string>();
+    collectChannelRenderers(data?.contents ?? data, found, seen);
+    if (found.length === 0) {
+      collectAuthorChannelsFromVideos(data?.contents ?? data, found, seen);
+    }
+    return { ok: true, results: found };
+  } catch (err) {
+    return {
+      ok: false,
+      results: [],
+      error: err instanceof Error ? err : new Error('Gagal membuka halaman pencarian YouTube'),
+    };
+  }
+}
+
+async function searchChannelsViaExternalMirror(
+  searchTerm: string
+): Promise<ChannelSearchResult[]> {
+  const pipedBase = process.env.PIPED_API_URL?.trim().replace(/\/+$/, '');
+  const invidiousBase = process.env.INVIDIOUS_API_URL?.trim().replace(/\/+$/, '');
+  if (!pipedBase && !invidiousBase) return [];
+
+  const attempts: Promise<ChannelSearchResult[]>[] = [];
+  if (invidiousBase) {
+    attempts.push(
+      (async () => {
+        const res = await fetchWithTimeout(
+          `${invidiousBase}/api/v1/search?q=${encodeURIComponent(searchTerm)}&type=channel`,
+          { headers: { Accept: 'application/json' } },
+          4500
+        );
+        if (!res.ok) return [];
+        const items = await safeResponseJson<any[]>(res);
+        if (!Array.isArray(items)) return [];
+        const out: ChannelSearchResult[] = [];
+        for (const it of items.slice(0, 15)) {
+          const cid = String(it?.authorId || '').trim();
+          if (!isValidYouTubeChannelId(cid)) continue;
+          const thumbs = Array.isArray(it?.authorThumbnails) ? it.authorThumbnails : [];
+          const rawThumb = thumbs.length > 0 ? String(thumbs[thumbs.length - 1]?.url || '') : '';
+          out.push({
+            id: cid,
+            title: String(it?.author || 'YouTube Channel'),
+            avatar: normalizeYtAvatar(rawThumb, cid),
+            subscriberCount:
+              typeof it?.subCount === 'number'
+                ? `${it.subCount.toLocaleString('id-ID')} subscriber`
+                : undefined,
+            description: it?.description ? String(it.description) : undefined,
+            url: `https://www.youtube.com/channel/${cid}`,
+          });
+        }
+        return out;
+      })()
+    );
+  }
+
+  if (pipedBase) {
+    attempts.push(
+      (async () => {
+        const res = await fetchWithTimeout(
+          `${pipedBase}/search?q=${encodeURIComponent(searchTerm)}&filter=channels`,
+          { headers: { Accept: 'application/json' } },
+          4500
+        );
+        if (!res.ok) return [];
+        const data = await safeResponseJson<{ items?: any[] }>(res);
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const out: ChannelSearchResult[] = [];
+        for (const it of items.slice(0, 15)) {
+          const urlPath = String(it?.url || '');
+          const match = urlPath.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+          const cid = match?.[1] || '';
+          if (!isValidYouTubeChannelId(cid)) continue;
+          out.push({
+            id: cid,
+            title: String(it?.name || 'YouTube Channel'),
+            avatar: normalizeYtAvatar(it?.thumbnail, cid),
+            subscriberCount:
+              typeof it?.subscribers === 'number' && it.subscribers >= 0
+                ? `${it.subscribers.toLocaleString('id-ID')} subscriber`
+                : undefined,
+            description: it?.description ? String(it.description) : undefined,
+            url: `https://www.youtube.com/channel/${cid}`,
+          });
+        }
+        return out;
+      })()
+    );
+  }
+
+  const settled = await Promise.allSettled(attempts);
+  for (const s of settled) {
+    if (s.status === 'fulfilled' && s.value.length > 0) return s.value;
+  }
+  return [];
+}
+
+function searchLocalPresetChannels(queryText: string): ChannelSearchResult[] {
+  const q = queryText.toLowerCase().trim();
+  if (!q) return [];
+  const matches: ChannelSearchResult[] = [];
+  for (const entry of Object.values(PRESET_CHANNELS)) {
+    const ch = entry.channel;
+    const hay = `${ch.title} ${ch.handle || ''} ${ch.description || ''}`.toLowerCase();
+    if (hay.includes(q)) {
+      matches.push({
+        id: ch.id,
+        title: ch.title,
+        handle: ch.handle,
+        avatar: ch.avatar || `https://avatar.vercel.sh/${ch.id}?size=120`,
+        description: ch.description,
+        url: ch.url,
+      });
+    }
+  }
+  return matches;
+}
+
 export async function searchYouTubeChannels(queryText: string): Promise<ChannelSearchResult[]> {
   const cleaned = queryText.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   if (!cleaned) return [];
 
   const cacheKey = cleaned.toLowerCase();
   const cached = channelSearchCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.expiresAt > Date.now() && cached.results.length > 0) {
     return cached.results;
   }
 
@@ -2108,29 +2497,38 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
     let lastError: Error | null = null;
     let hadSuccessfulFetch = false;
 
-    const isDirectChannelId = /^UC[a-zA-Z0-9_-]{22}$/.test(cleaned);
+    const pushUnique = (items: ChannelSearchResult[]) => {
+      for (const item of items) {
+        if (!isValidYouTubeChannelId(item.id) || seenIds.has(item.id)) continue;
+        seenIds.add(item.id);
+        results.push(item);
+        if (results.length >= 20) break;
+      }
+    };
+
+    const isDirectChannelId = VALID_CHANNEL_ID_RE.test(cleaned);
     const isYouTubeUrl = /(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i.test(cleaned);
     const isSingleHandle = /^@[a-zA-Z0-9_.-]{2,}$/.test(cleaned);
 
-    // Direct resolution first for URLs, UC channel IDs, and @handles
-    if (isDirectChannelId || isYouTubeUrl || isSingleHandle) {
+    // Exact Channel ID or YouTube URL: resolve directly
+    if (isDirectChannelId || isYouTubeUrl) {
       try {
         const resolved = await resolveYouTubeChannel(cleaned);
         const feed = await fetchChannelRss(resolved.channelId, 1);
         hadSuccessfulFetch = true;
-        if (feed.channel?.id && !seenIds.has(feed.channel.id)) {
-          seenIds.add(feed.channel.id);
-          results.push({
-            id: feed.channel.id,
-            title: feed.channel.title || resolved.title || 'YouTube Channel',
-            handle: feed.channel.handle || resolved.handle,
-            avatar: feed.channel.avatar || `https://avatar.vercel.sh/${feed.channel.id}?size=120`,
-            description: feed.channel.description,
-            url: feed.channel.url || `https://www.youtube.com/channel/${feed.channel.id}`,
-          });
+        if (feed.channel?.id) {
+          pushUnique([
+            {
+              id: feed.channel.id,
+              title: feed.channel.title || resolved.title || 'YouTube Channel',
+              handle: feed.channel.handle || resolved.handle,
+              avatar: feed.channel.avatar || `https://avatar.vercel.sh/${feed.channel.id}?size=120`,
+              description: feed.channel.description,
+              url: feed.channel.url || `https://www.youtube.com/channel/${feed.channel.id}`,
+            },
+          ]);
         }
-        // For exact URLs or UC IDs, return immediately with exact resolved channel
-        if ((isDirectChannelId || isYouTubeUrl) && results.length > 0) {
+        if (results.length > 0) {
           channelSearchCache.set(cacheKey, {
             results,
             expiresAt: Date.now() + 5 * 60 * 1000,
@@ -2145,128 +2543,111 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
 
     const searchTerm = isSingleHandle ? cleaned.slice(1) : cleaned;
 
-    // Tier 1: Direct InnerTube search API
-    try {
-      const res = await fetchWithTimeout(
-        'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            'Accept-Language': 'id,en-US,en;q=0.9',
-            Origin: 'https://www.youtube.com',
-            Referer: 'https://www.youtube.com/',
-            'X-YouTube-Client-Name': '1',
-            'X-YouTube-Client-Version': '2.20250201.00.00',
-          },
-          body: JSON.stringify({
-            context: {
-              client: {
-                clientName: 'WEB',
-                clientVersion: '2.20250201.00.00',
-                hl: 'id',
-                gl: 'ID',
-              },
-            },
-            query: searchTerm,
-            params: 'EgIQAg==', // Filter strictly to Channels
-          }),
-        },
-        8500
-      );
+    const directHandlePromise: Promise<ChannelSearchResult | null> = isSingleHandle
+      ? (async () => {
+          try {
+            const resolved = await resolveYouTubeChannel(cleaned);
+            const preset = PRESET_CHANNELS[resolved.channelId]?.channel;
+            return {
+              id: resolved.channelId,
+              title: resolved.title || preset?.title || cleaned,
+              handle: resolved.handle || cleaned,
+              avatar:
+                preset?.avatar || `https://avatar.vercel.sh/${resolved.channelId}?size=120`,
+              description: preset?.description,
+              url: `https://www.youtube.com/channel/${resolved.channelId}`,
+            };
+          } catch {
+            return null;
+          }
+        })()
+      : Promise.resolve(null);
 
-      if (res.ok) {
-        const data = await safeResponseJson<any>(res);
-        if (data) {
-          hadSuccessfulFetch = true;
-          collectChannelRenderers(data?.contents ?? data, results, seenIds);
-        } else {
-          lastError = new Error('Respons pencarian YouTube bukan JSON yang valid');
-        }
-      } else {
-        lastError = new Error(`YouTube search merespons status ${res.status}`);
-      }
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error('Gagal menghubungi YouTube search');
+    // Tier 1: Direct InnerTube channel-filtered HTTP search (fast, parallel with @handle resolution if needed)
+    const [tier1, directHandleResult] = await Promise.all([
+      searchChannelsViaInnerTubeHttp(searchTerm, true, 4800),
+      directHandlePromise,
+    ]);
+
+    if (directHandleResult) {
+      hadSuccessfulFetch = true;
+      pushUnique([directHandleResult]);
+    }
+    if (tier1.ok) {
+      hadSuccessfulFetch = true;
+      pushUnique(tier1.results);
+    } else if (tier1.error) {
+      lastError = tier1.error;
     }
 
-    // Tier 2: youtubei.js Innertube search fallback
+    // Tier 2 + Tier 3 in parallel when Tier 1 returned no channels
     if (results.length === 0) {
-      try {
-        const yt = await getSharedInnertubeBase();
-        const search = await yt.search(searchTerm, { type: 'channel' });
+      const [tier2, tier3] = await Promise.all([
+        searchChannelsViaInnertubeLib(searchTerm, 5000),
+        searchChannelsViaHtmlPage(searchTerm, 5500),
+      ]);
+
+      if (tier2.ok) {
         hadSuccessfulFetch = true;
-        const ytResults = Array.isArray((search as any)?.results) ? (search as any).results : [];
-        for (const item of ytResults) {
-          if (results.length >= 20) break;
-          const channelId = String(
-            item?.id || item?.author?.id || item?.endpoint?.payload?.browseId || ''
-          ).trim();
-          if (!channelId || !channelId.startsWith('UC') || seenIds.has(channelId)) continue;
-          seenIds.add(channelId);
+        pushUnique(tier2.results);
+      } else if (tier2.error) {
+        lastError = tier2.error;
+      }
 
-          const canonicalBaseUrl: string | undefined =
-            item?.author?.endpoint?.payload?.canonicalBaseUrl ||
-            item?.endpoint?.payload?.canonicalBaseUrl;
-          const subText = item?.subscriber_count?.text ? String(item.subscriber_count.text).trim() : undefined;
-          const vidText = item?.video_count?.text ? String(item.video_count.text).trim() : undefined;
-
-          let handle: string | undefined;
-          let subscriberCount: string | undefined;
-          if (subText && subText.startsWith('@')) {
-            handle = subText;
-            subscriberCount = vidText;
-          } else {
-            subscriberCount = subText || vidText;
-            if (canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')) {
-              handle = canonicalBaseUrl.slice(1);
-            }
-          }
-
-          const thumbs = item?.author?.thumbnails || item?.thumbnails;
-          const rawThumb = Array.isArray(thumbs) && thumbs.length > 0 ? String(thumbs[0]?.url || '') : '';
-          const title = String(item?.author?.name || item?.title?.text || 'YouTube Channel').trim();
-          const description = item?.description_snippet?.text
-            ? String(item.description_snippet.text).trim()
-            : undefined;
-          const url = canonicalBaseUrl
-            ? `https://www.youtube.com${canonicalBaseUrl}`
-            : `https://www.youtube.com/channel/${channelId}`;
-
-          results.push({
-            id: channelId,
-            title,
-            handle,
-            avatar: normalizeYtAvatar(rawThumb, channelId),
-            subscriberCount,
-            description,
-            url,
-          });
-        }
-      } catch (err) {
-        lastError = err instanceof Error ? err : lastError;
+      if (tier3.ok) {
+        hadSuccessfulFetch = true;
+        pushUnique(tier3.results);
+      } else if (tier3.error) {
+        lastError = tier3.error;
       }
     }
 
-    // Tier 3: YouTube HTML search page fallback (ytInitialData)
+    // Tier 4: Unfiltered YouTube search (extracts channel cards + video author channels) & external mirror
     if (results.length === 0) {
+      const [unfiltered, external] = await Promise.all([
+        searchChannelsViaInnerTubeHttp(searchTerm, false, 4500),
+        searchChannelsViaExternalMirror(searchTerm),
+      ]);
+      if (unfiltered.ok) {
+        hadSuccessfulFetch = true;
+        pushUnique(unfiltered.results);
+      } else if (unfiltered.error) {
+        lastError = unfiltered.error;
+      }
+      if (external.length > 0) {
+        hadSuccessfulFetch = true;
+        pushUnique(external);
+      }
+    }
+
+    // Tier 5: Single-word handle probe (e.g. "gadgetin" -> @gadgetin) + local presets fallback
+    if (results.length === 0 && !isSingleHandle && !searchTerm.includes(' ') && searchTerm.length >= 3) {
       try {
-        const htmlRes = await fetchWithTimeout(
-          `https://www.youtube.com/results?search_query=${encodeURIComponent(searchTerm)}&sp=EgIQAg%3D%3D`,
-          {},
-          9000
-        );
-        if (htmlRes.ok) {
-          hadSuccessfulFetch = true;
-          const html = await htmlRes.text();
-          const data = extractYtInitialDataJson(html);
-          if (data) {
-            collectChannelRenderers(data?.contents ?? data, results, seenIds);
-          }
+        const resolved = await resolveYouTubeChannel(`@${searchTerm}`);
+        const feed = await fetchChannelRss(resolved.channelId, 1);
+        hadSuccessfulFetch = true;
+        if (feed.channel?.id) {
+          pushUnique([
+            {
+              id: feed.channel.id,
+              title: feed.channel.title || resolved.title || searchTerm,
+              handle: feed.channel.handle || resolved.handle || `@${searchTerm}`,
+              avatar: feed.channel.avatar || `https://avatar.vercel.sh/${feed.channel.id}?size=120`,
+              description: feed.channel.description,
+              url: feed.channel.url || `https://www.youtube.com/channel/${feed.channel.id}`,
+            },
+          ]);
         }
-      } catch (err) {
-        lastError = err instanceof Error ? err : lastError;
+      } catch {
+        // ignore handle probe miss
+      }
+    }
+
+    if (results.length === 0) {
+      const localMatches = searchLocalPresetChannels(searchTerm);
+      if (localMatches.length > 0) {
+        hadSuccessfulFetch = true;
+        pushUnique(localMatches);
       }
     }
 
@@ -2274,11 +2655,14 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
       throw lastError;
     }
 
-    channelSearchCache.set(cacheKey, {
-      results,
-      expiresAt: Date.now() + 5 * 60 * 1000,
-    });
-    pruneCacheMap(channelSearchCache, 120);
+    if (results.length > 0) {
+      channelSearchCache.set(cacheKey, {
+        results,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      });
+      pruneCacheMap(channelSearchCache, 120);
+    }
+
     return results;
   })().finally(() => {
     pendingChannelSearches.delete(cacheKey);

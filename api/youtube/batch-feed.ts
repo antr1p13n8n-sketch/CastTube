@@ -14,12 +14,13 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   try {
     const parsedBody =
       typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-    const { channelIds } = parsedBody;
+    const { channelIds, force } = parsedBody;
     if (!Array.isArray(channelIds)) {
       return res.status(400).json({ error: 'channelIds harus berupa array string' });
     }
 
-    const payload = await fetchBatchChannelFeeds(channelIds, 2, 6);
+    const payload = await fetchBatchChannelFeeds(channelIds, 2, 6, Boolean(force));
+    res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json(payload);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Gagal memproses batch feeds';

@@ -176,6 +176,16 @@ export default function App() {
   const isOnline = useOnlineStatus();
   const [pendingSyncQueue, setPendingSyncQueue] = useState<PendingSyncTask[]>(loadPendingSyncQueue);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState<boolean>(false);
+  const [isAutoCheckingGroup, setIsAutoCheckingGroup] = useState<boolean>(false);
+  const [feedUpdateNotice, setFeedUpdateNotice] = useState<{
+    count: number;
+    groupName: string;
+    channelNames: string[];
+  } | null>(null);
+  const feedUpdateNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastGroupSyncAtRef = useRef<Map<string, number>>(new Map());
+  const syncInFlightRef = useRef<boolean>(false);
+  const activeSyncPromiseRef = useRef<Promise<void> | null>(null);
 
   // Audio Extractor Restriction Recovery States
   const [isExtractorModalOpen, setIsExtractorModalOpen] = useState<boolean>(false);
@@ -782,6 +792,7 @@ export default function App() {
   };
 
   const handleChangeChannelGroup = (channelId: string, newGroupId: string) => {
+    lastGroupSyncAtRef.current.delete(newGroupId);
     setChannels((prev) =>
       prev.map((c) => (c.id === channelId ? { ...c, groupId: newGroupId } : c))
     );
@@ -789,6 +800,15 @@ export default function App() {
       loadFirestoreService()
         .then((fs) => fs.changeChannelGroupInFirestore(user.uid, channelId, newGroupId))
         .catch(console.error);
+    }
+    if (activeGroupId === newGroupId && navigator.onLine) {
+      setTimeout(() => {
+        void syncHandlersRef.current.syncChannelFeeds({
+          groupId: newGroupId,
+          silent: true,
+          force: true,
+        });
+      }, 200);
     }
   };
 
@@ -808,6 +828,27 @@ export default function App() {
       if (!videoId || time < 0) return;
       const updated = saveVideoPlaybackProgress(videoId, time, dur);
       setPlaybackProgressMap(updated);
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (feedUpdateNoticeTimerRef.current) {
+        clearTimeout(feedUpdateNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showFeedUpdateNotice = useCallback(
+    (count: number, groupName: string, channelNames: string[]) => {
+      setFeedUpdateNotice({ count, groupName, channelNames });
+      if (feedUpdateNoticeTimerRef.current) {
+        clearTimeout(feedUpdateNoticeTimerRef.current);
+      }
+      feedUpdateNoticeTimerRef.current = setTimeout(() => {
+        setFeedUpdateNotice(null);
+      }, 7000);
     },
     []
   );
@@ -839,6 +880,7 @@ export default function App() {
 
     const resolveResults = await Promise.all(
       inputs.map(async (input) => {
+        const hint = channelHints?.[input];
         try {
           const res = await fetch('/api/youtube/resolve', {
             method: 'POST',
@@ -846,20 +888,63 @@ export default function App() {
             body: JSON.stringify({ input }),
           });
           const { data, rawText } = await parseJsonSafely<any>(res);
-          if (!res.ok) {
+          if (res.ok && data && data.channel?.id) {
+            return { ok: true as const, input, data };
+          }
+          // If resolve fails for a valid UC channel ID obtained from search, fall back to feed endpoint or search hint
+          if (hint?.id && /^UC[a-zA-Z0-9_-]{22}$/.test(hint.id)) {
+            try {
+              const feedRes = await fetch(
+                `/api/youtube/feed?channelId=${encodeURIComponent(hint.id)}`,
+                { headers: { Accept: 'application/json' } }
+              );
+              const { data: feedData } = await parseJsonSafely<any>(feedRes);
+              if (feedRes.ok && feedData?.channel?.id) {
+                return { ok: true as const, input, data: feedData };
+              }
+            } catch {
+              // continue to local hint fallback
+            }
             return {
-              ok: false as const,
-              error: buildHttpErrorMessage(res, data, rawText, 'Gagal memproses channel'),
+              ok: true as const,
+              input,
+              data: {
+                channel: {
+                  id: hint.id,
+                  title: hint.title || 'YouTube Channel',
+                  handle: hint.handle,
+                  avatar: hint.avatar,
+                  description: hint.description,
+                  url: hint.url || `https://www.youtube.com/channel/${hint.id}`,
+                },
+                videos: [],
+              },
+              needsFeedRefresh: true,
             };
           }
-          if (!data || !data.channel?.id) {
-            return {
-              ok: false as const,
-              error: buildHttpErrorMessage(res, data, rawText, 'Format respons channel tidak valid'),
-            };
-          }
-          return { ok: true as const, input, data };
+          return {
+            ok: false as const,
+            error: buildHttpErrorMessage(res, data, rawText, 'Gagal memproses channel'),
+          };
         } catch (err) {
+          if (hint?.id && /^UC[a-zA-Z0-9_-]{22}$/.test(hint.id)) {
+            return {
+              ok: true as const,
+              input,
+              data: {
+                channel: {
+                  id: hint.id,
+                  title: hint.title || 'YouTube Channel',
+                  handle: hint.handle,
+                  avatar: hint.avatar,
+                  description: hint.description,
+                  url: hint.url || `https://www.youtube.com/channel/${hint.id}`,
+                },
+                videos: [],
+              },
+              needsFeedRefresh: true,
+            };
+          }
           return {
             ok: false as const,
             error: err instanceof Error ? err.message : 'Gagal menghubungi server.',
@@ -870,12 +955,16 @@ export default function App() {
 
     const existingChannelIds = new Set(channels.map((c) => c.id));
     const existingVideoIds = new Set(videos.map((v) => v.id));
+    let anyNeedsFeedRefresh = false;
 
     for (const item of resolveResults) {
       if (!item.ok) {
         if (item.error) lastError = item.error;
         failed++;
         continue;
+      }
+      if ('needsFeedRefresh' in item && item.needsFeedRefresh) {
+        anyNeedsFeedRefresh = true;
       }
       const data = item.data;
       if (data?.channel && data.channel.id) {
@@ -917,6 +1006,8 @@ export default function App() {
     }
 
     if (newChannels.length > 0) {
+      // Mark target group so switching to it or auto-sync keeps fresh data
+      lastGroupSyncAtRef.current.set(targetGroupId, Date.now());
       setChannels((prev) => {
         const existingIds = new Set(prev.map((c) => c.id));
         const unique = newChannels.filter((c) => !existingIds.has(c.id));
@@ -951,14 +1042,7 @@ export default function App() {
       }
     }
 
-    return { success, failed, lastError };
-  };
-
-  // 8. Refresh Feeds from Server (queues for background sync if offline)
-  const handleRefreshFeeds = async () => {
-    if (channels.length === 0) return;
-
-    if (!navigator.onLine) {
+    if (anyNeedsFeedRefresh) {
       setPendingSyncQueue((prev) => {
         if (prev.some((t) => t.type === 'REFRESH_FEEDS')) return prev;
         return [
@@ -966,12 +1050,66 @@ export default function App() {
           { id: `sync_${Date.now()}`, type: 'REFRESH_FEEDS', createdAt: new Date().toISOString() },
         ];
       });
+    }
+
+    return { success, failed, lastError };
+  };
+
+  // 8. Refresh Feeds from Server (supports all channels or a specific group, plus silent background auto-updates)
+  const syncChannelFeeds = async (options?: {
+    groupId?: string;
+    silent?: boolean;
+    force?: boolean;
+  }) => {
+    const targetGroupId = options?.groupId || 'all';
+    const silent = Boolean(options?.silent);
+    const force = Boolean(options?.force);
+
+    const currentChannels = latestStateRef.current.channels;
+    const targetChannels =
+      targetGroupId !== 'all'
+        ? currentChannels.filter((c) => c.groupId === targetGroupId)
+        : currentChannels;
+
+    if (targetChannels.length === 0) return;
+
+    if (!navigator.onLine) {
+      if (!silent) {
+        setPendingSyncQueue((prev) => {
+          if (prev.some((t) => t.type === 'REFRESH_FEEDS')) return prev;
+          return [
+            ...prev,
+            { id: `sync_${Date.now()}`, type: 'REFRESH_FEEDS', createdAt: new Date().toISOString() },
+          ];
+        });
+      }
       return;
     }
 
-    setIsRefreshing(true);
-    try {
-      const channelIds = channels.map((c) => c.id);
+    if (syncInFlightRef.current) {
+      if (!silent && activeSyncPromiseRef.current) {
+        try {
+          await activeSyncPromiseRef.current;
+        } catch {
+          // ignore prior sync failure and proceed with manual refresh
+        }
+        if (syncInFlightRef.current) return;
+      } else {
+        return;
+      }
+    }
+
+    syncInFlightRef.current = true;
+
+    if (silent) {
+      setIsAutoCheckingGroup(true);
+    } else {
+      setIsRefreshing(true);
+    }
+
+    const runSync = async () => {
+      try {
+      const channelIds = targetChannels.map((c) => c.id);
       const chunks: string[][] = [];
       for (let i = 0; i < channelIds.length; i += 20) {
         chunks.push(channelIds.slice(i, i + 20));
@@ -985,7 +1123,7 @@ export default function App() {
           fetch('/api/youtube/batch-feed', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ channelIds: chunk }),
+            body: JSON.stringify({ channelIds: chunk, force }),
           })
         )
       );
@@ -1008,26 +1146,58 @@ export default function App() {
         throw new Error('Semua permintaan batch feed gagal');
       }
 
-      saveLastFeedSyncAt(Date.now());
+      const now = Date.now();
+      if (targetGroupId === 'all') {
+        saveLastFeedSyncAt(now);
+        lastGroupSyncAtRef.current.set('all', now);
+        for (const ch of targetChannels) {
+          lastGroupSyncAtRef.current.set(ch.groupId, now);
+        }
+      } else {
+        lastGroupSyncAtRef.current.set(targetGroupId, now);
+      }
 
-      if (Object.keys(fetchedChannelsMap).length > 0) {
+      // Compute brand-new videos vs existing state before merging
+      const existingVideosMap = new Map(latestStateRef.current.videos.map((v) => [v.id, v]));
+      const dedupedFetchedMap = new Map<string, Video>();
+      for (const v of fetchedVideos) {
+        if (v && v.id) dedupedFetchedMap.set(v.id, v);
+      }
+      const uniqueFetched = Array.from(dedupedFetchedMap.values());
+      const brandNewVideos = uniqueFetched
+        .filter((v) => !existingVideosMap.has(v.id))
+        .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+      // Compute updated video counts per channel after merge
+      const mergedVideosList = Array.from(
+        new Map([...existingVideosMap.entries(), ...dedupedFetchedMap.entries()]).values()
+      ).sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+      const countByChannel = new Map<string, number>();
+      for (const v of mergedVideosList) {
+        countByChannel.set(v.channelId, (countByChannel.get(v.channelId) || 0) + 1);
+      }
+
+      if (Object.keys(fetchedChannelsMap).length > 0 || countByChannel.size > 0) {
         setChannels((prev) => {
           const updatedList: Channel[] = [];
           const nextChannels = prev.map((ch) => {
             const fresh = fetchedChannelsMap[ch.id];
-            if (!fresh) return ch;
+            const nextCount = countByChannel.get(ch.id) ?? ch.videoCount;
+            if (!fresh && nextCount === ch.videoCount) return ch;
             const mergedCh: Channel = {
               ...ch,
-              title: fresh.title || ch.title,
-              handle: fresh.handle || ch.handle,
-              avatar: fresh.avatar || ch.avatar,
-              url: fresh.url || ch.url,
-              videoCount: fresh.videoCount ?? ch.videoCount,
+              title: fresh?.title || ch.title,
+              handle: fresh?.handle || ch.handle,
+              avatar: fresh?.avatar || ch.avatar,
+              url: fresh?.url || ch.url,
+              videoCount: nextCount,
             };
             if (
               mergedCh.title !== ch.title ||
               mergedCh.avatar !== ch.avatar ||
-              mergedCh.handle !== ch.handle
+              mergedCh.handle !== ch.handle ||
+              mergedCh.videoCount !== ch.videoCount
             ) {
               updatedList.push(mergedCh);
             }
@@ -1042,50 +1212,128 @@ export default function App() {
         });
       }
 
-      if (fetchedVideos.length > 0) {
-        setVideos((prev) => {
-          const existingMap = new Map(prev.map((v) => [v.id, v]));
-          fetchedVideos.forEach((v) => existingMap.set(v.id, v));
-          const merged = Array.from(existingMap.values());
-          merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-          return merged;
-        });
+      if (uniqueFetched.length > 0) {
+        setVideos(mergedVideosList);
         if (user) {
+          // Prioritize brand-new videos first so Firestore never cuts off newly uploaded items
+          const sortedFetched = [
+            ...brandNewVideos,
+            ...uniqueFetched
+              .filter((v) => existingVideosMap.has(v.id))
+              .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()),
+          ];
           loadFirestoreService()
-            .then((fs) => fs.saveVideosInFirestore(user.uid, fetchedVideos))
+            .then((fs) => fs.saveVideosInFirestore(user.uid, sortedFetched))
             .catch(console.error);
         }
       }
+
+      if (brandNewVideos.length > 0) {
+        const groupLabel =
+          latestStateRef.current.groups.find((g) => g.id === targetGroupId)?.name || 'Semua Channel';
+        const channelNames = Array.from(new Set(brandNewVideos.map((v) => v.channelTitle))).slice(0, 3);
+        showFeedUpdateNotice(brandNewVideos.length, groupLabel, channelNames);
+      }
     } catch (e) {
-      console.warn('Gagal memuat ulang feed, menjadwalkan sinkronisasi latar belakang:', e);
-      setPendingSyncQueue((prev) => {
-        if (prev.some((t) => t.type === 'REFRESH_FEEDS')) return prev;
-        return [
-          ...prev,
-          { id: `sync_${Date.now()}`, type: 'REFRESH_FEEDS', createdAt: new Date().toISOString() },
-        ];
-      });
-    } finally {
-      setIsRefreshing(false);
-    }
+      if (!silent) {
+        console.warn('Gagal memuat ulang feed, menjadwalkan sinkronisasi latar belakang:', e);
+        setPendingSyncQueue((prev) => {
+          if (prev.some((t) => t.type === 'REFRESH_FEEDS')) return prev;
+          return [
+            ...prev,
+            { id: `sync_${Date.now()}`, type: 'REFRESH_FEEDS', createdAt: new Date().toISOString() },
+          ];
+        });
+      }
+      } finally {
+        syncInFlightRef.current = false;
+        activeSyncPromiseRef.current = null;
+        if (silent) {
+          setIsAutoCheckingGroup(false);
+        } else {
+          setIsRefreshing(false);
+        }
+      }
+    };
+
+    const syncPromise = runSync();
+    activeSyncPromiseRef.current = syncPromise;
+    await syncPromise;
   };
 
-  const syncHandlersRef = useRef({ handleRefreshFeeds, handleAddChannels });
-  syncHandlersRef.current = { handleRefreshFeeds, handleAddChannels };
+  const handleRefreshFeeds = () => syncChannelFeeds({ groupId: 'all', silent: false, force: true });
 
-  // Silent non-blocking startup auto-refresh when feed cache is older than 20 minutes
+  const syncHandlersRef = useRef({ handleRefreshFeeds, syncChannelFeeds, handleAddChannels });
+  syncHandlersRef.current = { handleRefreshFeeds, syncChannelFeeds, handleAddChannels };
+
+  // Silent non-blocking startup auto-refresh when feed cache is older than 3 minutes
   const didAutoSyncOnBootRef = useRef(false);
   useEffect(() => {
     if (didAutoSyncOnBootRef.current || !isOnline || channels.length === 0) return;
     didAutoSyncOnBootRef.current = true;
     const lastSyncAt = loadLastFeedSyncAt();
-    const isStale = Date.now() - lastSyncAt > 20 * 60 * 1000;
+    const isStale = Date.now() - lastSyncAt > 3 * 60 * 1000;
     if (!isStale) return;
 
     const timer = setTimeout(() => {
-      void syncHandlersRef.current.handleRefreshFeeds();
+      void syncHandlersRef.current.syncChannelFeeds({ groupId: 'all', silent: true, force: true });
     }, 800);
     return () => clearTimeout(timer);
+  }, [isOnline, channels.length]);
+
+  // Automatic update when switching to a group that hasn't been checked in the last 60 seconds
+  useEffect(() => {
+    if (!isOnline || activeGroupId === 'all') return;
+    const channelsInGroup = latestStateRef.current.channels.filter(
+      (c) => c.groupId === activeGroupId
+    );
+    if (channelsInGroup.length === 0) return;
+
+    const lastGroupCheck = lastGroupSyncAtRef.current.get(activeGroupId) || 0;
+    if (Date.now() - lastGroupCheck < 60 * 1000) return;
+
+    const timer = setTimeout(() => {
+      void syncHandlersRef.current.syncChannelFeeds({
+        groupId: activeGroupId,
+        silent: true,
+        force: true,
+      });
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [activeGroupId, isOnline, channels.length]);
+
+  // Periodic background auto-update (every 3 minutes) & on tab visibility return (>= 2 minutes away)
+  useEffect(() => {
+    if (!isOnline || channels.length === 0) return;
+
+    const checkAndSyncIfDue = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const lastAll = lastGroupSyncAtRef.current.get('all') || loadLastFeedSyncAt();
+      if (Date.now() - lastAll >= 2 * 60 * 1000) {
+        void syncHandlersRef.current.syncChannelFeeds({
+          groupId: 'all',
+          silent: true,
+          force: true,
+        });
+      }
+    };
+
+    const intervalId = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void syncHandlersRef.current.syncChannelFeeds({
+        groupId: 'all',
+        silent: true,
+        force: true,
+      });
+    }, 3 * 60 * 1000);
+
+    document.addEventListener('visibilitychange', checkAndSyncIfDue);
+    window.addEventListener('focus', checkAndSyncIfDue);
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', checkAndSyncIfDue);
+      window.removeEventListener('focus', checkAndSyncIfDue);
+    };
   }, [isOnline, channels.length]);
 
   // Background Sync Processor: automatically runs when connection returns
@@ -1819,21 +2067,33 @@ export default function App() {
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                 className="p-3 rounded-2xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 space-y-2"
               >
-                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-1">
-                  <span className="flex items-center gap-1.5">
-                    <Folder className="w-3.5 h-3.5 text-red-500" />
-                    <span>
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-1 gap-2">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <Folder className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                    <span className="truncate">
                       Channel dalam Grup "{groups.find((g) => g.id === activeGroupId)?.name || 'Semua'}" ({activeGroupChannels.length})
                     </span>
                   </span>
-                  {selectedChannelId && (
-                    <button
-                      onClick={() => setSelectedChannelId(null)}
-                      className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
-                    >
-                      Tampilkan Semua
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3 shrink-0">
+                    {isAutoCheckingGroup ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        <span>Memeriksa video baru...</span>
+                      </span>
+                    ) : (
+                      <span className="hidden sm:inline text-[11px] text-slate-400 font-medium">
+                        Auto-update aktif
+                      </span>
+                    )}
+                    {selectedChannelId && (
+                      <button
+                        onClick={() => setSelectedChannelId(null)}
+                        className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
+                      >
+                        Tampilkan Semua
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -1919,6 +2179,12 @@ export default function App() {
                   placeholder="Cari judul video atau nama channel... (tekan /)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && searchQuery.trim() && filteredVideos.length === 0) {
+                      e.preventDefault();
+                      openSearchChannelModal(searchQuery.trim());
+                    }
+                  }}
                   className="w-full pl-9 pr-7 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
                 />
                 {searchQuery && (
@@ -2389,6 +2655,42 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* New Videos Auto-Update Toast */}
+      <AnimatePresence>
+        {feedUpdateNotice && (
+          <motion.div
+            key="feed-update-toast"
+            initial={{ opacity: 0, y: 16, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.96 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed bottom-24 right-4 z-40 w-[calc(100%-2rem)] sm:w-auto max-w-sm pointer-events-auto"
+          >
+            <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-emerald-950/95 border-emerald-700/80 text-emerald-50">
+              <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0 text-left">
+                <div className="font-bold">
+                  {feedUpdateNotice.count} video baru di {feedUpdateNotice.groupName}
+                </div>
+                {feedUpdateNotice.channelNames.length > 0 && (
+                  <div className="opacity-85 truncate">
+                    Dari {feedUpdateNotice.channelNames.join(', ')}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setFeedUpdateNotice(null)}
+                className="p-1 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                title="Tutup"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Auth Feedback Toast */}
       <AnimatePresence>
         {authNotice && (

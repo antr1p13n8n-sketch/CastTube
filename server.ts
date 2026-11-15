@@ -158,8 +158,12 @@ async function startServer() {
         res.status(400).json({ error: 'Parameter channelId diperlukan' });
         return;
       }
-      const data = await fetchChannelRss(channelId);
-      res.setHeader('Cache-Control', 'public, max-age=180, stale-while-revalidate=300');
+      const forceRefresh = req.query.force === '1' || req.query.force === 'true';
+      const data = await fetchChannelRss(channelId, 3, forceRefresh);
+      res.setHeader(
+        'Cache-Control',
+        forceRefresh ? 'no-store' : 'public, max-age=180, stale-while-revalidate=300'
+      );
       res.json(data);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Gagal mengambil feed channel';
@@ -170,13 +174,14 @@ async function startServer() {
   // API: Batch fetch multiple channels feeds
   app.post('/api/youtube/batch-feed', async (req: Request, res: Response) => {
     try {
-      const { channelIds } = req.body;
+      const { channelIds, force } = req.body || {};
       if (!Array.isArray(channelIds)) {
         res.status(400).json({ error: 'channelIds harus berupa array string' });
         return;
       }
 
-      const payload = await fetchBatchChannelFeeds(channelIds, 2, 6);
+      const payload = await fetchBatchChannelFeeds(channelIds, 2, 6, Boolean(force));
+      res.setHeader('Cache-Control', 'no-store');
       res.json(payload);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Gagal memproses batch feeds';

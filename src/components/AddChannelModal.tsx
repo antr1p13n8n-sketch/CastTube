@@ -98,11 +98,17 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   const [addedInSession, setAddedInSession] = useState<Record<string, boolean>>({});
 
   const searchAbortRef = React.useRef<AbortController | null>(null);
+  const searchDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastExecutedQueryRef = React.useRef<string>('');
   const pastedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearModalTimers = useCallback(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
     if (pastedTimerRef.current) {
       clearTimeout(pastedTimerRef.current);
       pastedTimerRef.current = null;
@@ -132,9 +138,29 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     const trimmed = queryText.trim();
     if (!trimmed) return;
 
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setSearchResults([]);
+      setHasSearched(true);
+      setIsSearching(false);
+      setSearchError('Anda sedang offline. Hubungkan internet untuk mencari channel YouTube.');
+      return;
+    }
+
     searchAbortRef.current?.abort();
     const controller = new AbortController();
     searchAbortRef.current = controller;
+    lastExecutedQueryRef.current = trimmed;
+
+    let didTimeout = false;
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, 15000);
 
     setIsSearching(true);
     setSearchError(null);
@@ -168,12 +194,19 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       }
       setSearchResults(data.channels);
     } catch (err: unknown) {
-      if ((err as { name?: string })?.name === 'AbortError') return;
+      if ((err as { name?: string })?.name === 'AbortError') {
+        if (didTimeout) {
+          setSearchResults([]);
+          setSearchError('Pencarian channel melebihi batas waktu. Silakan klik Coba Lagi.');
+        }
+        return;
+      }
       setSearchResults([]);
       setSearchError(
         err instanceof Error ? err.message : 'Terjadi kesalahan saat mencari channel YouTube.'
       );
     } finally {
+      clearTimeout(timeoutId);
       if (searchAbortRef.current === controller) {
         setIsSearching(false);
       }
@@ -183,6 +216,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   useEffect(() => {
     if (!isOpen) {
       searchAbortRef.current?.abort();
+      lastExecutedQueryRef.current = '';
       clearModalTimers();
       return;
     }
@@ -190,6 +224,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     setFeedback(null);
     setSearchError(null);
     setAddedInSession({});
+    lastExecutedQueryRef.current = '';
     if (initialPastedText) {
       setActiveTab('paste');
       const formatted = parseAndFormatLinks(initialPastedText);
@@ -208,6 +243,35 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       }
     }
   }, [isOpen, initialPastedText, initialTab, initialSearchQuery, executeYouTubeSearch, clearModalTimers]);
+
+  // Debounced auto-search when typing >= 2 characters on the Search tab
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'search') return;
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
+      return;
+    }
+    if (trimmed.length < 2 || trimmed === lastExecutedQueryRef.current) return;
+
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      searchDebounceRef.current = null;
+      void executeYouTubeSearch(trimmed);
+    }, 600);
+
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
+    };
+  }, [isOpen, activeTab, searchQuery, executeYouTubeSearch]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -510,7 +574,18 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   <input
                     type="text"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSearchQuery(val);
+                      if (searchError) setSearchError(null);
+                      if (!val.trim()) {
+                        searchAbortRef.current?.abort();
+                        lastExecutedQueryRef.current = '';
+                        setHasSearched(false);
+                        setSearchResults([]);
+                        setIsSearching(false);
+                      }
+                    }}
                     placeholder="Ketik nama channel YouTube (misal: Raditya Dika, GadgetIn, Deddy Corbuzier)..."
                     autoFocus
                     className="w-full pl-10 pr-8 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
@@ -518,8 +593,17 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   {searchQuery && (
                     <button
                       type="button"
-                      onClick={() => setSearchQuery('')}
+                      onClick={() => {
+                        searchAbortRef.current?.abort();
+                        lastExecutedQueryRef.current = '';
+                        setSearchQuery('');
+                        setSearchError(null);
+                        setSearchResults([]);
+                        setHasSearched(false);
+                        setIsSearching(false);
+                      }}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                      aria-label="Kosongkan pencarian channel"
                     >
                       ×
                     </button>

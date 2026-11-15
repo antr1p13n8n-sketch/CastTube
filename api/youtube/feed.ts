@@ -18,8 +18,15 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       return res.status(400).json({ error: 'Parameter channelId diperlukan' });
     }
 
-    const data = await fetchChannelRss(channelId);
-    res.setHeader('Cache-Control', 'public, max-age=180, stale-while-revalidate=300');
+    const rawForce = req.query.force;
+    const forceVal = Array.isArray(rawForce) ? rawForce[0] : rawForce;
+    const forceRefresh = forceVal === '1' || forceVal === 'true';
+
+    const data = await fetchChannelRss(channelId, 3, forceRefresh);
+    res.setHeader(
+      'Cache-Control',
+      forceRefresh ? 'no-store' : 'public, max-age=180, stale-while-revalidate=300'
+    );
     return res.status(200).json(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Gagal mengambil feed channel';
