@@ -58,6 +58,8 @@ import {
   savePlaylists,
   loadPlayedVideoIds,
   savePlayedVideoIds,
+  loadLastFeedSyncAt,
+  saveLastFeedSyncAt,
 } from './utils/storage';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useBackgroundAudio } from './hooks/useBackgroundAudio';
@@ -163,9 +165,11 @@ export default function App() {
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [channelToDelete, setChannelToDelete] = useState<Channel | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [playStatusFilter, setPlayStatusFilter] = useState<'all' | 'unplayed' | 'played'>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title'>('newest');
   const [visibleCount, setVisibleCount] = useState<number>(FEED_PAGE_SIZE);
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [activeTab, setActiveTab] = useState<'feed' | 'player'>(boot.session.activeTab);
 
   // Connectivity & Background Sync States
@@ -439,22 +443,32 @@ export default function App() {
     [user]
   );
 
-  // 1b. Firebase Auth & Lazy Real-Time Firestore Sync
+  // 1b. Firebase Auth & Lazy Real-Time Firestore Sync (wait until initial seeding finishes before subscribing)
+  const [cloudReadyUid, setCloudReadyUid] = useState<string | null>(null);
+
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       setAuthLoading(false);
 
-      if (firebaseUser) {
-        try {
-          const fs = await loadFirestoreService();
-          const { groups: curGroups, channels: curChannels, videos: curVideos, themePreference: curTheme } =
-            latestStateRef.current;
-          await fs.ensureUserProfile(firebaseUser, curTheme);
-          await fs.seedInitialDataIfEmpty(firebaseUser.uid, curGroups, curChannels, curVideos);
-        } catch (err) {
-          console.error('Gagal sinkronisasi awal Firebase:', err);
-        }
+      if (!firebaseUser) {
+        setCloudReadyUid(null);
+        return;
+      }
+
+      try {
+        const fs = await loadFirestoreService();
+        const {
+          groups: curGroups,
+          channels: curChannels,
+          videos: curVideos,
+          themePreference: curTheme,
+        } = latestStateRef.current;
+        await fs.ensureUserProfile(firebaseUser, curTheme);
+        await fs.seedInitialDataIfEmpty(firebaseUser.uid, curGroups, curChannels, curVideos);
+        setCloudReadyUid(firebaseUser.uid);
+      } catch (err) {
+        console.error('Gagal sinkronisasi awal Firebase:', err);
       }
     });
 
@@ -462,7 +476,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || cloudReadyUid !== user.uid) return;
     let cancelled = false;
     const unsubs: Array<() => void> = [];
 
@@ -495,7 +509,7 @@ export default function App() {
       cancelled = true;
       unsubs.forEach((fn) => fn());
     };
-  }, [user?.uid]);
+  }, [user?.uid, cloudReadyUid]);
 
   const handleSignIn = useCallback(async () => {
     setAuthNotice(null);
@@ -683,6 +697,10 @@ export default function App() {
     setQueue((prev) => prev.filter((v) => v.id !== videoId));
   }, []);
 
+  const handleClearQueue = useCallback(() => {
+    setQueue([]);
+  }, []);
+
   const handleAddToPlaylistCard = useCallback((video: Video) => {
     setVideoToAddToPlaylist(video);
     setIsPlaylistModalOpen(true);
@@ -733,9 +751,21 @@ export default function App() {
   // 6. Channel Management
   const handleDeleteChannel = (channelId: string) => {
     const videoIdsToDelete = videos.filter((v) => v.channelId === channelId).map((v) => v.id);
+    const deleteSet = new Set(videoIdsToDelete);
     setChannels((prev) => prev.filter((c) => c.id !== channelId));
     setVideos((prev) => prev.filter((v) => v.channelId !== channelId));
     setQueue((prev) => prev.filter((v) => v.channelId !== channelId));
+    if (deleteSet.size > 0) {
+      setPlayedVideoIds((prev) => {
+        const filtered = prev.filter((id) => !deleteSet.has(id));
+        if (filtered.length !== prev.length && user) {
+          loadFirestoreService()
+            .then((fs) => fs.updatePlayedVideosInFirestore(user.uid, filtered))
+            .catch(console.error);
+        }
+        return filtered;
+      });
+    }
     if (selectedChannelId === channelId) {
       setSelectedChannelId(null);
     }
@@ -978,6 +1008,8 @@ export default function App() {
         throw new Error('Semua permintaan batch feed gagal');
       }
 
+      saveLastFeedSyncAt(Date.now());
+
       if (Object.keys(fetchedChannelsMap).length > 0) {
         setChannels((prev) => {
           const updatedList: Channel[] = [];
@@ -1040,6 +1072,21 @@ export default function App() {
 
   const syncHandlersRef = useRef({ handleRefreshFeeds, handleAddChannels });
   syncHandlersRef.current = { handleRefreshFeeds, handleAddChannels };
+
+  // Silent non-blocking startup auto-refresh when feed cache is older than 20 minutes
+  const didAutoSyncOnBootRef = useRef(false);
+  useEffect(() => {
+    if (didAutoSyncOnBootRef.current || !isOnline || channels.length === 0) return;
+    didAutoSyncOnBootRef.current = true;
+    const lastSyncAt = loadLastFeedSyncAt();
+    const isStale = Date.now() - lastSyncAt > 20 * 60 * 1000;
+    if (!isStale) return;
+
+    const timer = setTimeout(() => {
+      void syncHandlersRef.current.handleRefreshFeeds();
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [isOnline, channels.length]);
 
   // Background Sync Processor: automatically runs when connection returns
   useEffect(() => {
@@ -1321,6 +1368,9 @@ export default function App() {
     return map;
   }, [videos]);
 
+  const queueIdSet = useMemo(() => new Set(queue.map((q) => q.id)), [queue]);
+  const playedIdSet = useMemo(() => new Set(playedVideoIds), [playedVideoIds]);
+
   // 9. Filter and Sort Videos
   const filteredVideos = useMemo(() => {
     let channelIdsInGroup: Set<string> | null = null;
@@ -1334,6 +1384,8 @@ export default function App() {
     const result = videos.filter((v) => {
       if (channelIdsInGroup && !channelIdsInGroup.has(v.channelId)) return false;
       if (selectedChannelId && v.channelId !== selectedChannelId) return false;
+      if (playStatusFilter === 'unplayed' && playedIdSet.has(v.id)) return false;
+      if (playStatusFilter === 'played' && !playedIdSet.has(v.id)) return false;
       if (
         q &&
         !v.title.toLowerCase().includes(q) &&
@@ -1361,12 +1413,21 @@ export default function App() {
     }
 
     return result;
-  }, [videos, channels, activeGroupId, selectedChannelId, deferredSearchQuery, sortBy]);
+  }, [
+    videos,
+    channels,
+    activeGroupId,
+    selectedChannelId,
+    playStatusFilter,
+    playedIdSet,
+    deferredSearchQuery,
+    sortBy,
+  ]);
 
   // Reset pagination when filters change
   useEffect(() => {
     setVisibleCount(FEED_PAGE_SIZE);
-  }, [activeGroupId, selectedChannelId, deferredSearchQuery, sortBy]);
+  }, [activeGroupId, selectedChannelId, playStatusFilter, deferredSearchQuery, sortBy]);
 
   const visibleVideos = useMemo(
     () => filteredVideos.slice(0, visibleCount),
@@ -1391,8 +1452,6 @@ export default function App() {
     return () => observer.disconnect();
   }, [hasMoreVideos, filteredVideos.length, activeTab]);
 
-  const queueIdSet = useMemo(() => new Set(queue.map((q) => q.id)), [queue]);
-  const playedIdSet = useMemo(() => new Set(playedVideoIds), [playedVideoIds]);
   const existingChannelIds = useMemo(() => channels.map((c) => c.id), [channels]);
 
   const activeGroupChannels = useMemo(() => {
@@ -1447,6 +1506,88 @@ export default function App() {
   }, [currentVideo]);
   const handleSeekHandled = useCallback(() => setSeekCommand(null), []);
   const handleExpandPlayerTab = useCallback(() => setActiveTab('player'), []);
+
+  // Lock resume seek timestamp per active track so 10s progress saves don't churn player props
+  const initialSeekForCurrentVideo = useMemo(
+    () => (currentVideo ? playbackProgressMapRef.current[currentVideo.id]?.currentTime || 0 : 0),
+    [currentVideo?.id]
+  );
+
+  // Global keyboard shortcuts (Escape to close modals, Space to play/pause, / to search)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (channelToDelete) {
+          setChannelToDelete(null);
+          return;
+        }
+        if (isExtractorModalOpen) {
+          setIsExtractorModalOpen(false);
+          return;
+        }
+        if (isPlaylistModalOpen) {
+          setIsPlaylistModalOpen(false);
+          setVideoToAddToPlaylist(null);
+          return;
+        }
+        if (isChannelDrawerOpen) {
+          setIsChannelDrawerOpen(false);
+          return;
+        }
+        if (isGroupModalOpen) {
+          setIsGroupModalOpen(false);
+          return;
+        }
+        if (isAddModalOpen) {
+          setIsAddModalOpen(false);
+          setPastedLinkForModal('');
+          setAddModalSearchQuery('');
+          return;
+        }
+      }
+
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isEditable =
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        tag === 'BUTTON' ||
+        tag === 'A' ||
+        Boolean(target?.isContentEditable);
+      if (isEditable || e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const anyModalOpen =
+        Boolean(channelToDelete) ||
+        isExtractorModalOpen ||
+        isPlaylistModalOpen ||
+        isChannelDrawerOpen ||
+        isGroupModalOpen ||
+        isAddModalOpen;
+      if (anyModalOpen) return;
+
+      if (e.code === 'Space' && currentVideo) {
+        e.preventDefault();
+        handlePlayPause();
+      } else if (e.key === '/' && activeTab === 'feed') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    channelToDelete,
+    isExtractorModalOpen,
+    isPlaylistModalOpen,
+    isChannelDrawerOpen,
+    isGroupModalOpen,
+    isAddModalOpen,
+    currentVideo,
+    activeTab,
+    handlePlayPause,
+  ]);
 
   return (
     <MotionConfig reducedMotion="user">
@@ -1523,6 +1664,7 @@ export default function App() {
                 onSetSleepTimer={handleSetSleepTimer}
                 onPlayQueueItem={handlePlayAudioQueueItem}
                 onRemoveFromQueue={handleRemoveFromQueue}
+                onClearQueue={handleClearQueue}
               />
             </motion.div>
 
@@ -1544,6 +1686,7 @@ export default function App() {
                 onSwitchToAudio={handleSwitchToAudioMode}
                 onPlayVideo={handlePlayVideoQueueItem}
                 onRemoveFromQueue={handleRemoveFromQueue}
+                onClearQueue={handleClearQueue}
                 downloadState={audioDownloads[currentVideo.id]}
                 onDownloadAudio={handleDownloadAudio}
                 playerSlot={
@@ -1556,7 +1699,7 @@ export default function App() {
                       playbackRate={playbackRate}
                       volume={volume}
                       isMuted={isMuted}
-                      initialSeekSeconds={playbackProgressMap[currentVideo.id]?.currentTime || 0}
+                      initialSeekSeconds={initialSeekForCurrentVideo}
                       onTimeUpdate={handleYouTubeTimeUpdate}
                       onStateChange={handleYouTubeStateChange}
                       onEnded={handleYouTubeEnded}
@@ -1664,9 +1807,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* Channel List Inside Group (shown when group has > 1 channel) */}
+          {/* Channel List Inside Group (shown when group has multiple channels or specific group selected) */}
           <AnimatePresence initial={false}>
-            {activeGroupChannels.length > 1 && (
+            {(activeGroupChannels.length > 1 ||
+              (activeGroupId !== 'all' && activeGroupChannels.length > 0)) && (
               <motion.div
                 key={`group-strip-${activeGroupId}`}
                 initial={{ opacity: 0, y: -6 }}
@@ -1764,14 +1908,15 @@ export default function App() {
           </AnimatePresence>
 
           {/* Search, Filter & Channel Focus Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
             {/* Search Input */}
             <div className="flex items-center gap-2 flex-1 max-w-xl">
               <div className="relative flex-1">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
+                  ref={searchInputRef}
                   type="text"
-                  placeholder="Cari judul video atau nama channel..."
+                  placeholder="Cari judul video atau nama channel... (tekan /)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-7 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
@@ -1780,6 +1925,7 @@ export default function App() {
                   <button
                     onClick={() => setSearchQuery('')}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                    aria-label="Hapus pencarian"
                   >
                     ×
                   </button>
@@ -1827,19 +1973,45 @@ export default function App() {
               )}
             </AnimatePresence>
 
-            {/* Sort Dropdown */}
-            <div className="flex items-center gap-2 shrink-0">
-              <Filter className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-xs text-slate-400">Urutkan:</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="px-2.5 py-1 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-hidden cursor-pointer"
-              >
-                <option value="newest">Terbaru</option>
-                <option value="oldest">Terlama</option>
-                <option value="title">Judul (A-Z)</option>
-              </select>
+            {/* Unplayed Filter & Sort Controls */}
+            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2.5 shrink-0">
+              <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-100 dark:bg-slate-800">
+                {(
+                  [
+                    { id: 'all', label: 'Semua' },
+                    { id: 'unplayed', label: 'Belum Diputar' },
+                    { id: 'played', label: 'Sudah Diputar' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setPlayStatusFilter(opt.id)}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer ${
+                      playStatusFilter === opt.id
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-xs text-slate-400 hidden sm:inline">Urutkan:</span>
+                <select
+                  aria-label="Urutkan video"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="px-2.5 py-1 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-hidden cursor-pointer"
+                >
+                  <option value="newest">Terbaru</option>
+                  <option value="oldest">Terlama</option>
+                  <option value="title">Judul (A-Z)</option>
+                </select>
+              </div>
             </div>
           </div>
         </section>
@@ -1994,9 +2166,7 @@ export default function App() {
         playbackRate={playbackRate}
         volume={volume}
         isMuted={isMuted}
-        initialSeekSeconds={
-          currentVideo ? playbackProgressMap[currentVideo.id]?.currentTime || 0 : 0
-        }
+        initialSeekSeconds={initialSeekForCurrentVideo}
         seekCommand={useNativeAudio ? seekCommand : null}
         onSeekHandled={handleSeekHandled}
         onTimeUpdate={handleNativeTimeUpdate}
@@ -2011,9 +2181,11 @@ export default function App() {
         isPlaying={isPlaying}
         mode={playerMode}
         usingNativeAudio={useNativeAudio}
+        hasNext={queue.length > 0}
         onPlayPause={handlePlayPause}
         onSkipBack={handleSkipBack}
         onSkipForward={handleSkipForward}
+        onNext={handleNextTrack}
         onExpand={handleExpandPlayerTab}
         onToggleMode={handleTogglePlayerModeFromHeader}
       />

@@ -62,12 +62,22 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
     null
   );
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
+      }
+      if (actionTimerRef.current) {
+        clearTimeout(actionTimerRef.current);
+        actionTimerRef.current = null;
+      }
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
       }
       return;
     }
@@ -81,6 +91,8 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
   useEffect(() => {
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     };
   }, []);
 
@@ -142,7 +154,8 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
               type: 'success',
               message: 'Akun YouTube berhasil terhubung! Melanjutkan unduhan...',
             });
-            setTimeout(() => {
+            if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+            actionTimerRef.current = setTimeout(() => {
               onResolved(nextConfig, pendingVideo);
               onClose();
             }, 650);
@@ -173,7 +186,8 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
     try {
       await navigator.clipboard.writeText(deviceInfo.userCode);
       setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedCode(false), 2000);
     } catch {
       // ignore clipboard errors
     }
@@ -231,7 +245,8 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
         type: 'success',
         message: 'Cookie YouTube aktif dan terverifikasi! Melanjutkan...',
       });
-      setTimeout(() => {
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => {
         onResolved(nextConfig, pendingVideo);
         onClose();
       }, 650);
@@ -288,7 +303,8 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
           ? 'Server ekstraktor aktif dan berhasil mengurai audio!'
           : 'URL server ekstraktor tersimpan. Mencoba mengunduh ulang...',
       });
-      setTimeout(() => {
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => {
         onResolved(nextConfig, pendingVideo);
         onClose();
       }, 650);

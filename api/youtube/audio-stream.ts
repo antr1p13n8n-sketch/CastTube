@@ -20,7 +20,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   );
   res.setHeader(
     'Access-Control-Expose-Headers',
-    'Content-Disposition, Content-Length, Content-Type, X-Suggested-Filename'
+    'Content-Disposition, Content-Length, Content-Range, Accept-Ranges, Content-Type, X-Suggested-Filename'
   );
 
   if (req.method === 'OPTIONS') {
@@ -85,6 +85,9 @@ export default async function handler(req: VercelReq, res: VercelRes) {
         : rangeHeader
       : undefined;
 
+    const controller = new AbortController();
+    reqAny.on?.('close', () => controller.abort());
+
     const fetchUpstream = async (info: NonNullable<typeof streamInfo>) => {
       const headers: Record<string, string> = {
         'User-Agent': info.userAgent,
@@ -93,7 +96,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       if (rangeStr) {
         headers['Range'] = rangeStr;
       }
-      return fetch(info.url, { headers, redirect: 'follow' });
+      return fetch(info.url, { headers, redirect: 'follow', signal: controller.signal });
     };
 
     let upstream = await fetchUpstream(streamInfo);
@@ -147,6 +150,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     });
     nodeStream.pipe(res as unknown as NodeJS.WritableStream);
   } catch (err: unknown) {
+    if ((err as { name?: string })?.name === 'AbortError') return;
     const message = err instanceof Error ? err.message : 'Gagal memutar stream audio';
     const resAny = res as unknown as { headersSent?: boolean };
     if (!resAny.headersSent) {

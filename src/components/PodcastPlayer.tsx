@@ -50,6 +50,7 @@ interface PodcastPlayerProps {
   onSetSleepTimer: (minutes: number | null) => void;
   onPlayQueueItem: (video: Video) => void;
   onRemoveFromQueue: (videoId: string) => void;
+  onClearQueue?: () => void;
   usingNativeAudio?: boolean;
   nativeAudioStatus?: NativeAudioStatus;
   isVisible?: boolean;
@@ -73,6 +74,7 @@ const PodcastScrubber: React.FC<{
       <div className="relative w-full flex items-center group">
         <input
           type="range"
+          aria-label="Posisi pemutaran audio"
           min={0}
           max={duration || 100}
           value={currentTime}
@@ -131,6 +133,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
   onSetSleepTimer,
   onPlayQueueItem,
   onRemoveFromQueue,
+  onClearQueue,
   usingNativeAudio = false,
   nativeAudioStatus = 'checking',
   isVisible = true,
@@ -608,6 +611,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                 </button>
                 <input
                   type="range"
+                  aria-label="Volume audio"
                   min={0}
                   max={100}
                   value={isMuted ? 0 : volume}
@@ -634,12 +638,23 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Antrean Berikutnya ({queue.length})
               </h3>
-              <button
-                onClick={() => setShowQueue(false)}
-                className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-              >
-                Tutup Antrean
-              </button>
+              <div className="flex items-center gap-3">
+                {queue.length > 0 && onClearQueue && (
+                  <button
+                    type="button"
+                    onClick={onClearQueue}
+                    className="text-xs font-semibold text-red-500 hover:text-red-600 cursor-pointer"
+                  >
+                    Bersihkan
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowQueue(false)}
+                  className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                >
+                  Tutup Antrean
+                </button>
+              </div>
             </div>
 
             {queue.length === 0 ? (

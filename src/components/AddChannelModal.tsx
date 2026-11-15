@@ -98,6 +98,28 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   const [addedInSession, setAddedInSession] = useState<Record<string, boolean>>({});
 
   const searchAbortRef = React.useRef<AbortController | null>(null);
+  const pastedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearModalTimers = useCallback(() => {
+    if (pastedTimerRef.current) {
+      clearTimeout(pastedTimerRef.current);
+      pastedTimerRef.current = null;
+    }
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => clearModalTimers();
+  }, [clearModalTimers]);
 
   useEffect(() => {
     const validGroups = groups.filter((g) => g.id !== 'all');
@@ -161,8 +183,10 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   useEffect(() => {
     if (!isOpen) {
       searchAbortRef.current?.abort();
+      clearModalTimers();
       return;
     }
+    clearModalTimers();
     setFeedback(null);
     setSearchError(null);
     setAddedInSession({});
@@ -171,7 +195,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       const formatted = parseAndFormatLinks(initialPastedText);
       setInputText(formatted.length > 0 ? formatted.join('\n') : initialPastedText);
       setHasPasted(true);
-      setTimeout(() => setHasPasted(false), 2500);
+      pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
     } else {
       setActiveTab(initialTab);
       if (initialSearchQuery.trim()) {
@@ -183,7 +207,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
         setHasSearched(false);
       }
     }
-  }, [isOpen, initialPastedText, initialTab, initialSearchQuery, executeYouTubeSearch]);
+  }, [isOpen, initialPastedText, initialTab, initialSearchQuery, executeYouTubeSearch, clearModalTimers]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -253,13 +277,15 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       });
 
       setHasPasted(true);
-      setTimeout(() => setHasPasted(false), 2500);
+      if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
+      pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
 
       setFeedback({
         type: 'success',
         message: `${formattedLinks.length || 1} link berhasil ditempel dari clipboard!`,
       });
-      setTimeout(() => setFeedback(null), 3000);
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = setTimeout(() => setFeedback(null), 3000);
     } catch {
       setFeedback({
         type: 'error',
@@ -282,7 +308,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
           return trimmed ? `${trimmed}\n${textToAdd}` : textToAdd;
         });
         setHasPasted(true);
-        setTimeout(() => setHasPasted(false), 2500);
+        if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
+        pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
       }
     }
   };
@@ -311,7 +338,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
           }`,
         });
         setInputText('');
-        setTimeout(() => {
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => {
           onClose();
           setFeedback(null);
         }, 1200);

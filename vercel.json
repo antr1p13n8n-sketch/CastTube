@@ -44,7 +44,7 @@
         },
         {
           "key": "Access-Control-Expose-Headers",
-          "value": "Content-Disposition, Content-Length, Content-Type, X-Suggested-Filename"
+          "value": "Content-Disposition, Content-Length, Content-Range, Accept-Ranges, Content-Type, X-Suggested-Filename"
         }
       ]
     },

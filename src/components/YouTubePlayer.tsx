@@ -49,11 +49,19 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const hiddenResumeCountRef = useRef<number>(0);
   const initialSeekSecondsRef = useRef<number>(initialSeekSeconds);
   const isPlayingRef = useRef<boolean>(isPlaying);
+  const currentVideoRef = useRef<Video | null>(currentVideo);
+  const volumeRef = useRef<number>(volume);
+  const isMutedRef = useRef<boolean>(isMuted);
+  const playbackRateRef = useRef<number>(playbackRate);
   const loadedVideoIdRef = useRef<string | null>(currentVideo?.id || null);
   const [playerErrorCode, setPlayerErrorCode] = useState<string | number | null>(null);
 
   initialSeekSecondsRef.current = initialSeekSeconds;
   isPlayingRef.current = isPlaying;
+  currentVideoRef.current = currentVideo;
+  volumeRef.current = volume;
+  isMutedRef.current = isMuted;
+  playbackRateRef.current = playbackRate;
 
   useEffect(() => {
     intendedPlayingRef.current = isPlaying;
@@ -89,11 +97,14 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     const initPlayer = () => {
       if (!window.YT || !window.YT.Player || playerRef.current) return;
 
+      const initialVid = currentVideoRef.current;
+      loadedVideoIdRef.current = initialVid ? initialVid.id : null;
+
       playerRef.current = new window.YT.Player('yt-embedded-instance', {
         height: '100%',
         width: '100%',
         host: 'https://www.youtube-nocookie.com',
-        videoId: currentVideo ? currentVideo.id : '',
+        videoId: initialVid ? initialVid.id : '',
         playerVars: {
           autoplay: 0,
           controls: 1,
@@ -121,21 +132,35 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             } catch {
               // ignore
             }
-            if (isMuted) {
+            if (isMutedRef.current) {
               event.target.mute?.();
             } else {
               event.target.unMute?.();
-              event.target.setVolume?.(volume);
+              event.target.setVolume?.(volumeRef.current);
             }
-            event.target.setPlaybackRate?.(playbackRate);
-            if (initialSeekSecondsRef.current > 0) {
+            event.target.setPlaybackRate?.(playbackRateRef.current);
+
+            const latestVid = currentVideoRef.current;
+            const startSeconds = Math.floor(initialSeekSecondsRef.current || 0);
+            if (latestVid && loadedVideoIdRef.current !== latestVid.id) {
+              loadedVideoIdRef.current = latestVid.id;
+              if (isPlayingRef.current) {
+                event.target.loadVideoById?.({ videoId: latestVid.id, startSeconds });
+                startTimePolling();
+              } else {
+                event.target.cueVideoById?.({ videoId: latestVid.id, startSeconds });
+              }
+              return;
+            }
+
+            if (startSeconds > 0) {
               try {
-                event.target.seekTo?.(Math.floor(initialSeekSecondsRef.current), true);
+                event.target.seekTo?.(startSeconds, true);
               } catch {
                 // ignore
               }
             }
-            if (isPlayingRef.current && currentVideo) {
+            if (isPlayingRef.current && latestVid) {
               event.target.playVideo();
               startTimePolling();
             }
@@ -234,6 +259,13 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         clearTimeout(verifyPauseTimerRef.current);
         verifyPauseTimerRef.current = null;
       }
+      isReadyRef.current = false;
+      try {
+        playerRef.current?.destroy?.();
+      } catch {
+        // ignore
+      }
+      playerRef.current = null;
     };
   }, []);
 

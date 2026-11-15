@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import {
   Headphones,
@@ -22,6 +22,7 @@ interface VideoPlayerViewProps {
   onSwitchToAudio: () => void;
   onPlayVideo: (video: Video) => void;
   onRemoveFromQueue: (videoId: string) => void;
+  onClearQueue?: () => void;
   playerSlot?: React.ReactNode;
   isMiniPiP?: boolean;
   onExpandPiP?: () => void;
@@ -35,6 +36,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
   onSwitchToAudio,
   onPlayVideo,
   onRemoveFromQueue,
+  onClearQueue,
   playerSlot,
   isMiniPiP = false,
   onExpandPiP,
@@ -43,6 +45,13 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
 }) => {
   const [descExpanded, setDescExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   const handleShare = async () => {
     const shareUrl = `https://www.youtube.com/watch?v=${currentVideo.id}`;
@@ -67,7 +76,8 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
       }
     }
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
   };
 
   if (isMiniPiP) {
@@ -231,11 +241,22 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
 
         {/* Right column: Next Up Playlist Queue */}
         <div className="lg:col-span-4 flex flex-col text-left">
-          <div className="flex items-center gap-2 mb-3">
-            <ListMusic className="w-4 h-4 text-red-600 dark:text-red-400" />
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-              Video Berikutnya ({queue.length})
-            </h3>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <ListMusic className="w-4 h-4 text-red-600 dark:text-red-400" />
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                Video Berikutnya ({queue.length})
+              </h3>
+            </div>
+            {queue.length > 0 && onClearQueue && (
+              <button
+                type="button"
+                onClick={onClearQueue}
+                className="text-xs font-semibold text-red-500 hover:text-red-600 cursor-pointer"
+              >
+                Bersihkan
+              </button>
+            )}
           </div>
 
           <div className="flex-1 max-h-[500px] overflow-y-auto space-y-2 pr-1">

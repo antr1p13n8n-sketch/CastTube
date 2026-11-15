@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Video } from '../types';
 import { buildExtractorHeaders } from '../utils/extractorConfig';
 import { parseJsonSafely } from '../utils/safeJson';
@@ -66,6 +66,16 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
     isPlayingRef.current = isPlaying;
     const videoIdRef = useRef<string | null>(currentVideo?.id || null);
     videoIdRef.current = currentVideo?.id || null;
+    const retryAttemptRef = useRef(retryAttempt);
+    retryAttemptRef.current = retryAttempt;
+    const volumeRef = useRef(volume);
+    volumeRef.current = volume;
+    const isMutedRef = useRef(isMuted);
+    isMutedRef.current = isMuted;
+    const playbackRateRef = useRef(playbackRate);
+    playbackRateRef.current = playbackRate;
+    const initialSeekSecondsRef = useRef(initialSeekSeconds);
+    initialSeekSecondsRef.current = initialSeekSeconds;
 
     const streamUrl =
       active && currentVideo
@@ -106,6 +116,78 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
         }
       },
     }));
+
+    const applyInitialSetup = useCallback((audio: HTMLAudioElement) => {
+      const vidId = videoIdRef.current;
+      const targetResume =
+        latestPosRef.current > 0 ? latestPosRef.current : initialSeekSecondsRef.current;
+      if (
+        vidId &&
+        appliedInitialSeekForIdRef.current !== vidId &&
+        targetResume > 0 &&
+        Number.isFinite(targetResume)
+      ) {
+        try {
+          if (audio.readyState >= 1) {
+            appliedInitialSeekForIdRef.current = vidId;
+            audio.currentTime = targetResume;
+          }
+        } catch {
+          // ignore
+        }
+      }
+      audio.muted = isMutedRef.current;
+      audio.volume = Math.max(0, Math.min(1, volumeRef.current / 100));
+      try {
+        audio.playbackRate = playbackRateRef.current;
+      } catch {
+        // ignore
+      }
+    }, []);
+
+    const handleStreamFailure = useCallback(() => {
+      if (!activeRef.current || !videoIdRef.current) return;
+      const failedVidId = videoIdRef.current;
+
+      fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(failedVidId)}&check=1`, {
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          ...buildExtractorHeaders(),
+        },
+      })
+        .then(async (r) => {
+          if (!r.ok) return { available: false, status: 'unavailable' as const };
+          const { data } = await parseJsonSafely<{ available?: boolean; status?: string }>(r);
+          return data || { available: false, status: 'unavailable' as const };
+        })
+        .then((data) => {
+          if (videoIdRef.current !== failedVidId || !activeRef.current) return;
+          if (
+            data?.available &&
+            typeof navigator !== 'undefined' &&
+            navigator.onLine &&
+            retryAttemptRef.current < 2
+          ) {
+            if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+            appliedInitialSeekForIdRef.current = null;
+            retryTimerRef.current = setTimeout(() => {
+              setRetryAttempt((prev) => prev + 1);
+            }, 700);
+            return;
+          }
+          const nextStatus =
+            data?.status === 'login_required' || data?.status === 'live_stream'
+              ? data.status
+              : 'unavailable';
+          onFallbackNeeded(nextStatus);
+        })
+        .catch(() => {
+          if (videoIdRef.current === failedVidId && activeRef.current) {
+            onFallbackNeeded('unavailable');
+          }
+        });
+    }, [onFallbackNeeded]);
 
     // Reset track-specific state when video changes
     useEffect(() => {
@@ -174,7 +256,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
           audio.pause();
         }
       }
-    }, [active, isPlaying, currentVideo?.id, retryAttempt, onStateChange]);
+    }, [active, isPlaying, currentVideo?.id, retryAttempt, onStateChange, handleStreamFailure]);
 
     // Sync volume & mute
     useEffect(() => {
@@ -228,71 +310,13 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
       return () => window.removeEventListener('online', handleOnline);
     }, []);
 
-    const applyInitialSetup = (audio: HTMLAudioElement) => {
-      const vidId = videoIdRef.current;
-      const targetResume = latestPosRef.current > 0 ? latestPosRef.current : initialSeekSeconds;
-      if (
-        vidId &&
-        appliedInitialSeekForIdRef.current !== vidId &&
-        targetResume > 0 &&
-        Number.isFinite(targetResume)
-      ) {
-        try {
-          if (audio.readyState >= 1) {
-            appliedInitialSeekForIdRef.current = vidId;
-            audio.currentTime = targetResume;
-          }
-        } catch {
-          // ignore
-        }
-      }
-      audio.muted = isMuted;
-      audio.volume = Math.max(0, Math.min(1, volume / 100));
-      try {
-        audio.playbackRate = playbackRate;
-      } catch {
-        // ignore
-      }
-    };
-
-    const handleStreamFailure = () => {
-      if (!activeRef.current || !videoIdRef.current) return;
-      const failedVidId = videoIdRef.current;
-
-      fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(failedVidId)}&check=1`, {
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/json',
-          ...buildExtractorHeaders(),
-        },
-      })
-        .then(async (r) => {
-          if (!r.ok) return { available: false, status: 'unavailable' as const };
-          const { data } = await parseJsonSafely<{ available?: boolean; status?: string }>(r);
-          return data || { available: false, status: 'unavailable' as const };
-        })
-        .then((data) => {
-          if (videoIdRef.current !== failedVidId || !activeRef.current) return;
-          if (data?.available && typeof navigator !== 'undefined' && navigator.onLine && retryAttempt < 2) {
-            if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-            appliedInitialSeekForIdRef.current = null;
-            retryTimerRef.current = setTimeout(() => {
-              setRetryAttempt((prev) => prev + 1);
-            }, 700);
-            return;
-          }
-          const nextStatus =
-            data?.status === 'login_required' || data?.status === 'live_stream'
-              ? data.status
-              : 'unavailable';
-          onFallbackNeeded(nextStatus);
-        })
-        .catch(() => {
-          if (videoIdRef.current === failedVidId && activeRef.current) {
-            onFallbackNeeded('unavailable');
-          }
-        });
-    };
+    // Cleanup timers on unmount
+    useEffect(() => {
+      return () => {
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        if (switchGuardTimerRef.current) clearTimeout(switchGuardTimerRef.current);
+      };
+    }, []);
 
     return (
       <audio

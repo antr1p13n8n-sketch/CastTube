@@ -54,20 +54,27 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
   const [pickerSearch, setPickerSearch] = useState('');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
+  const wasOpenRef = React.useRef(false);
+
   useEffect(() => {
+    const justOpened = isOpen && !wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+
     if (!isOpen) {
       setIsCreating(false);
       setIsRenaming(false);
       setConfirmingDelete(false);
       return;
     }
-    setConfirmingDelete(false);
-    setIsRenaming(false);
+    if (justOpened) {
+      setConfirmingDelete(false);
+      setIsRenaming(false);
+      if (playlists.length === 0) {
+        setIsCreating(true);
+      }
+    }
     if (playlists.length > 0 && (!selectedPlaylistId || !playlists.some((p) => p.id === selectedPlaylistId))) {
       setSelectedPlaylistId(playlists[0].id);
-    }
-    if (playlists.length === 0) {
-      setIsCreating(true);
     }
   }, [isOpen, playlists, selectedPlaylistId]);
 

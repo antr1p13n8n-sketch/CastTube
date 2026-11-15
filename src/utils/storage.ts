@@ -190,6 +190,7 @@ const STORAGE_KEYS = {
   PLAYER_SESSION: 'casttube_player_session_v1',
   PLAYLISTS: 'casttube_playlists_v1',
   PLAYED_VIDEOS: 'casttube_played_videos_v1',
+  LAST_FEED_SYNC: 'casttube_last_feed_sync_v1',
 };
 
 export function loadGroups(): ChannelGroup[] {
@@ -472,6 +473,27 @@ export function loadPlayedVideoIds(): string[] {
 export function savePlayedVideoIds(ids: string[]) {
   try {
     localStorage.setItem(STORAGE_KEYS.PLAYED_VIDEOS, JSON.stringify(ids));
+  } catch {
+    // ignore
+  }
+}
+
+export function loadLastFeedSyncAt(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.LAST_FEED_SYNC);
+    if (raw) {
+      const num = Number(raw);
+      if (Number.isFinite(num) && num > 0) return num;
+    }
+  } catch {
+    // ignore
+  }
+  return 0;
+}
+
+export function saveLastFeedSyncAt(timestampMs: number = Date.now()) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.LAST_FEED_SYNC, String(timestampMs));
   } catch {
     // ignore
   }

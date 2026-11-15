@@ -1082,12 +1082,16 @@ async function getSharedInnertubeBase(): Promise<Innertube> {
 const cachedInnertubePlayers = new Map<string, { yt: Innertube; expiresAt: number }>();
 
 async function getCachedInnertubePlayer(options: {
+  oauthTokens?: YouTubeOAuthTokens;
   cookies?: string;
   poToken?: string;
   visitorData?: string;
   generateSessionLocally: boolean;
 }): Promise<Innertube> {
-  const key = `${options.cookies ? `ck:${options.cookies.length}:${options.cookies.slice(0, 12)}` : 'nock'}|${options.poToken ? options.poToken.slice(0, 16) : 'nopo'}|${options.visitorData ? options.visitorData.slice(0, 16) : 'novd'}|${options.generateSessionLocally ? '1' : '0'}`;
+  const oauthKey = options.oauthTokens?.access_token
+    ? `oa:${options.oauthTokens.access_token.slice(-14)}`
+    : 'nooa';
+  const key = `${oauthKey}|${options.cookies ? `ck:${options.cookies.length}:${options.cookies.slice(0, 12)}` : 'nock'}|${options.poToken ? options.poToken.slice(0, 16) : 'nopo'}|${options.visitorData ? options.visitorData.slice(0, 16) : 'novd'}|${options.generateSessionLocally ? '1' : '0'}`;
   const cached = cachedInnertubePlayers.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.yt;
@@ -1098,12 +1102,27 @@ async function getCachedInnertubePlayer(options: {
     visitor_data: options.visitorData || undefined,
     generate_session_locally: options.generateSessionLocally,
   });
+  if (options.oauthTokens) {
+    await yt.session.signIn(options.oauthTokens as unknown as OAuth2Tokens);
+  }
   cachedInnertubePlayers.set(key, {
     yt,
     expiresAt: Date.now() + 20 * 60 * 1000,
   });
-  pruneCacheMap(cachedInnertubePlayers, 8);
+  pruneCacheMap(cachedInnertubePlayers, 12);
   return yt;
+}
+
+async function safeResponseJson<T = Record<string, any>>(res: globalThis.Response): Promise<T | null> {
+  try {
+    const text = await res.text();
+    if (!text) return null;
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return null;
+  }
 }
 
 let cachedTvClientIdentity: { identity: OAuth2ClientID; expiresAt: number } | null = null;
@@ -1179,7 +1198,10 @@ export async function pollYouTubeDeviceAuth(params: {
     10000
   );
 
-  const data = (await res.json()) as Record<string, any>;
+  const data = await safeResponseJson<Record<string, any>>(res);
+  if (!data) {
+    return { status: 'pending' };
+  }
   if (data.error) {
     if (data.error === 'authorization_pending' || data.error === 'slow_down') {
       return { status: 'pending' };
@@ -1235,9 +1257,9 @@ export async function refreshYouTubeOAuthTokens(
   if (!res.ok) {
     throw new Error(`Gagal memperbarui token YouTube (${res.status})`);
   }
-  const data = (await res.json()) as Record<string, any>;
-  if (!data.access_token) {
-    throw new Error(String(data.error_description || data.error || 'Token refresh gagal'));
+  const data = await safeResponseJson<Record<string, any>>(res);
+  if (!data?.access_token) {
+    throw new Error(String(data?.error_description || data?.error || 'Token refresh gagal'));
   }
   const expiresIn = Number(data.expires_in || 3600);
   return {
@@ -1445,7 +1467,7 @@ async function resolveFromExternalEndpoint(
       5500
     );
     if (!res.ok) throw new Error('piped_not_ok');
-    const data = await res.json();
+    const data = await safeResponseJson<any>(res);
     const streams: any[] = Array.isArray(data?.audioStreams) ? data.audioStreams : [];
     const selected =
       streams.find((s) => typeof s?.url === 'string' && String(s.mimeType || '').includes('audio/mp4')) ||
@@ -1466,7 +1488,7 @@ async function resolveFromExternalEndpoint(
       5500
     );
     if (!res.ok) throw new Error('invidious_not_ok');
-    const data = await res.json();
+    const data = await safeResponseJson<any>(res);
     const adaptive: any[] = Array.isArray(data?.adaptiveFormats) ? data.adaptiveFormats : [];
     const selected =
       adaptive.find((f) => typeof f?.url === 'string' && String(f.type || '').includes('audio/mp4')) ||
@@ -1498,8 +1520,8 @@ async function resolveFromExternalEndpoint(
       6500
     );
     if (!res.ok) throw new Error('cobalt_not_ok');
-    const data = (await res.json()) as Record<string, any>;
-    if ((data.status !== 'tunnel' && data.status !== 'redirect') || typeof data.url !== 'string') {
+    const data = await safeResponseJson<Record<string, any>>(res);
+    if (!data || (data.status !== 'tunnel' && data.status !== 'redirect') || typeof data.url !== 'string') {
       throw new Error('cobalt_empty');
     }
     return {
@@ -1576,23 +1598,13 @@ async function resolveViaYouTubeJs(
   }
 
   try {
-    let yt: Innertube;
-    if (activeOAuth) {
-      yt = await Innertube.create({
-        cookie: options.cookies || undefined,
-        po_token: options.poToken || undefined,
-        visitor_data: options.visitorData || undefined,
-        generate_session_locally: false,
-      });
-      await yt.session.signIn(activeOAuth as unknown as OAuth2Tokens);
-    } else {
-      yt = await getCachedInnertubePlayer({
-        cookies: options.cookies,
-        poToken: options.poToken,
-        visitorData: options.visitorData,
-        generateSessionLocally: !options.cookies,
-      });
-    }
+    const yt = await getCachedInnertubePlayer({
+      oauthTokens: activeOAuth,
+      cookies: options.cookies,
+      poToken: options.poToken,
+      visitorData: options.visitorData,
+      generateSessionLocally: !activeOAuth && !options.cookies,
+    });
 
     const clientsToTry: Array<'TV' | 'ANDROID_VR' | 'IOS' | 'MWEB' | 'WEB'> = activeOAuth
       ? ['TV', 'ANDROID_VR', 'IOS', 'WEB']
@@ -1778,7 +1790,8 @@ export async function resolveAudioStreamInfo(
         );
 
         if (!res.ok) return { stream: null, status: 'unavailable' };
-        const data = await res.json();
+        const data = await safeResponseJson<any>(res);
+        if (!data) return { stream: null, status: 'unavailable' };
         const playStatus = data?.playabilityStatus?.status;
         const playReason =
           typeof data?.playabilityStatus?.reason === 'string'
@@ -1894,7 +1907,7 @@ export async function resolveAudioStreamInfo(
         }
       }
       const ytRes = await resolveViaYouTubeJs(videoId, {
-        cookies: effectiveAuth.cookies,
+        cookies: detectedStatus === 'login_required' ? undefined : effectiveAuth.cookies,
         poToken: contentPoToken,
         visitorData: bgSession?.visitorData,
       });
@@ -2164,9 +2177,13 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
       );
 
       if (res.ok) {
-        hadSuccessfulFetch = true;
-        const data = await res.json();
-        collectChannelRenderers(data?.contents ?? data, results, seenIds);
+        const data = await safeResponseJson<any>(res);
+        if (data) {
+          hadSuccessfulFetch = true;
+          collectChannelRenderers(data?.contents ?? data, results, seenIds);
+        } else {
+          lastError = new Error('Respons pencarian YouTube bukan JSON yang valid');
+        }
       } else {
         lastError = new Error(`YouTube search merespons status ${res.status}`);
       }

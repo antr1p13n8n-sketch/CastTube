@@ -50,7 +50,7 @@ async function startServer() {
       );
       res.setHeader(
         'Access-Control-Expose-Headers',
-        'Content-Disposition, Content-Length, Content-Type, X-Suggested-Filename'
+        'Content-Disposition, Content-Length, Content-Range, Accept-Ranges, Content-Type, X-Suggested-Filename'
       );
       if (req.method === 'OPTIONS') {
         res.status(204).end();
@@ -450,6 +450,11 @@ async function startServer() {
 
   app.get('/api/youtube/audio-stream', handleAudioStream);
   app.head('/api/youtube/audio-stream', handleAudioStream);
+
+  app.use('/api', (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(404).json({ error: 'Endpoint API tidak ditemukan' });
+  });
 
   // Setup Vite middlewares for dev or static files for prod
   if (process.env.NODE_ENV === 'production') {
