@@ -87,7 +87,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
         <button
           type="button"
           onClick={onExpandPiP}
-          className="hidden sm:flex absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 items-center justify-center gap-1.5 text-white text-xs font-semibold transition-opacity cursor-pointer z-10"
+          className="hidden sm:[@media(hover:hover)]:flex absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 items-center justify-center gap-1.5 text-white text-xs font-semibold transition-opacity cursor-pointer z-10"
           title="Perbesar Pemutar Video"
         >
           <Maximize2 className="w-4 h-4" />
@@ -96,7 +96,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
         <button
           type="button"
           onClick={onExpandPiP}
-          className="sm:hidden absolute top-1.5 right-1.5 p-1.5 rounded-lg bg-black/75 text-white shadow-md backdrop-blur-xs z-20 active:scale-90 transition-transform cursor-pointer"
+          className="flex sm:[@media(hover:hover)]:hidden absolute top-1.5 right-1.5 p-2 rounded-lg bg-black/75 text-white shadow-md backdrop-blur-xs z-20 active:scale-90 transition-transform cursor-pointer"
           title="Perbesar Pemutar Video"
           aria-label="Perbesar Pemutar Video"
         >
@@ -304,8 +304,9 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
 
                   <button
                     onClick={() => onRemoveFromQueue(item.id)}
-                    className="text-xs text-slate-400 hover:text-red-500 p-1 cursor-pointer shrink-0"
+                    className="text-sm text-slate-400 hover:text-red-500 p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg cursor-pointer shrink-0"
                     title="Hapus dari antrean"
+                    aria-label="Hapus dari antrean"
                   >
                     ×
                   </button>

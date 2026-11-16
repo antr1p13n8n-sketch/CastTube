@@ -19,7 +19,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       return res.status(400).json({ error: 'channelIds harus berupa array string' });
     }
 
-    const payload = await fetchBatchChannelFeeds(channelIds, 2, 6, Boolean(force));
+    const payload = await fetchBatchChannelFeeds(channelIds, 1, 8, Boolean(force));
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json(payload);
   } catch (err: unknown) {

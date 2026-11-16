@@ -459,7 +459,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                     orderedPlaylistVideos.map((vid, idx) => (
                       <div
                         key={vid.id}
-                        draggable
+                        draggable={typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches}
                         onDragStart={() => setDragIndex(idx)}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={() => handleDropReorder(idx)}

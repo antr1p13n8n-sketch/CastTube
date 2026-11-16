@@ -169,8 +169,9 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                 </span>
                 <button
                   onClick={onSignOut}
-                  className="p-1 rounded-lg text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-white dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-white dark:hover:bg-slate-700 transition-colors cursor-pointer"
                   title="Keluar dari Akun Google"
+                  aria-label="Keluar dari Akun Google"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                 </button>

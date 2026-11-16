@@ -113,9 +113,14 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       return res.status(502).json({ error: `Upstream audio status ${upstream.status}` });
     }
 
-    const resolvedMime = upstream.headers.get('content-type') || streamInfo.mimeType;
+    const upstreamType = (upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const resolvedMime =
+      upstreamType.startsWith('audio/') || upstreamType.startsWith('video/')
+        ? upstreamType
+        : streamInfo.mimeType;
     res.status(upstream.status);
     res.setHeader('Content-Type', resolvedMime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'no-store');
 
@@ -134,6 +139,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     if (contentRange) res.setHeader('Content-Range', contentRange);
 
     if (req.method === 'HEAD') {
+      void upstream.body?.cancel().catch(() => {});
       return res.end();
     }
 

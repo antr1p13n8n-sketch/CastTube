@@ -28,6 +28,7 @@ interface AudioExtractorModalProps {
   isOpen: boolean;
   onClose: () => void;
   pendingVideo: Video | null;
+  intent?: 'download' | 'playback';
   onResolved: (config: AudioExtractorConfig, retryVideo: Video | null) => void;
 }
 
@@ -37,6 +38,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
   isOpen,
   onClose,
   pendingVideo,
+  intent = 'download',
   onResolved,
 }) => {
   const [activeTab, setActiveTab] = useState<ModalTab>('oauth');
@@ -394,7 +396,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                   <Download className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      Menunggu Unduhan
+                      {intent === 'playback' ? 'Audio Latar Belakang' : 'Menunggu Unduhan'}
                     </div>
                     <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
                       {pendingVideo.title}

@@ -529,6 +529,28 @@ export async function resolveYouTubeChannel(
     }
   }
 
+  // Fallback: if input looks like a plain channel name without slashes/dots, try fast InnerTube channel search
+  if (
+    depth === 0 &&
+    !cleaned.includes('/') &&
+    !cleaned.includes('.') &&
+    !cleaned.startsWith('@')
+  ) {
+    try {
+      const searched = await searchChannelsViaInnerTubeHttp(cleaned, true, 3500);
+      if (searched.ok && searched.results.length > 0) {
+        const top = searched.results[0];
+        return {
+          channelId: top.id,
+          handle: top.handle,
+          title: top.title,
+        };
+      }
+    } catch {
+      // fall through to clear error message
+    }
+  }
+
   throw new Error(
     `Tidak dapat menemukan Channel ID untuk input: "${rawInput}". Pastikan link channel valid (contoh: https://www.youtube.com/@username atau https://www.youtube.com/channel/UC...).`
   );
@@ -2557,7 +2579,19 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
       }
     }
 
-    const searchTerm = isSingleHandle ? cleaned.slice(1) : cleaned;
+    const deadlineAt = Date.now() + 8500;
+    const budgetMs = (preferredMs: number) =>
+      Math.max(1000, Math.min(preferredMs, deadlineAt - Date.now()));
+
+    let searchTerm = isSingleHandle ? cleaned.slice(1) : cleaned;
+    if (isYouTubeUrl) {
+      const handleMatch = cleaned.match(/youtube\.com\/(@[^/\s?#&]+)/i);
+      const customMatch = cleaned.match(/youtube\.com\/(?:c|user)\/([^/\s?#&]+)/i);
+      const slug = handleMatch?.[1] || customMatch?.[1];
+      if (slug) {
+        searchTerm = decodeURIComponent(slug.replace(/^@/, ''));
+      }
+    }
 
     const directHandlePromise: Promise<ChannelSearchResult | null> = isSingleHandle
       ? (async () => {
@@ -2581,7 +2615,7 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
 
     // Tier 1: Direct InnerTube channel-filtered HTTP search (fast, parallel with @handle resolution if needed)
     const [tier1, directHandleResult] = await Promise.all([
-      searchChannelsViaInnerTubeHttp(searchTerm, true, 4800),
+      searchChannelsViaInnerTubeHttp(searchTerm, true, budgetMs(4200)),
       directHandlePromise,
     ]);
 
@@ -2596,11 +2630,11 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
       lastError = tier1.error;
     }
 
-    // Tier 2 + Tier 3 in parallel when Tier 1 returned no channels
-    if (results.length === 0) {
+    // Tier 2 + Tier 3 in parallel when Tier 1 returned no channels and budget remains
+    if (results.length === 0 && deadlineAt - Date.now() > 900) {
       const [tier2, tier3] = await Promise.all([
-        searchChannelsViaInnertubeLib(searchTerm, 5000),
-        searchChannelsViaHtmlPage(searchTerm, 5500),
+        searchChannelsViaInnertubeLib(searchTerm, budgetMs(4000)),
+        searchChannelsViaHtmlPage(searchTerm, budgetMs(4200)),
       ]);
 
       if (tier2.ok) {
@@ -2619,9 +2653,9 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
     }
 
     // Tier 4: Unfiltered YouTube search (extracts channel cards + video author channels) & external mirror
-    if (results.length === 0) {
+    if (results.length === 0 && deadlineAt - Date.now() > 900) {
       const [unfiltered, external] = await Promise.all([
-        searchChannelsViaInnerTubeHttp(searchTerm, false, 4500),
+        searchChannelsViaInnerTubeHttp(searchTerm, false, budgetMs(3200)),
         searchChannelsViaExternalMirror(searchTerm),
       ]);
       if (unfiltered.ok) {
@@ -2637,7 +2671,13 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
     }
 
     // Tier 5: Single-word handle probe (e.g. "gadgetin" -> @gadgetin) + local presets fallback
-    if (results.length === 0 && !isSingleHandle && !searchTerm.includes(' ') && searchTerm.length >= 3) {
+    if (
+      results.length === 0 &&
+      !isSingleHandle &&
+      !searchTerm.includes(' ') &&
+      searchTerm.length >= 3 &&
+      deadlineAt - Date.now() > 1000
+    ) {
       try {
         const resolved = await resolveYouTubeChannel(`@${searchTerm}`);
         const feed = await fetchChannelRss(resolved.channelId, 1);

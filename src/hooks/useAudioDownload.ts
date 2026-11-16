@@ -129,7 +129,7 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
       const durationMs = nextNotice.requiresAuth
         ? 10000
         : nextNotice.hasLocalFile
-        ? 15000
+        ? 45000
         : 5500;
       noticeTimerRef.current = setTimeout(() => {
         setNotice((cur) => {
@@ -262,17 +262,24 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
 
         let directMimeOverride: string | null = null;
         if (!res.ok && extractorConfig.extractorUrl) {
-          const direct = await tryClientDirectExtractor(
-            videoId,
-            extractorConfig.extractorUrl,
-            controller.signal
-          );
-          if (direct?.url) {
-            const directRes = await fetch(direct.url, { signal: controller.signal });
-            if (directRes.ok) {
-              res = directRes;
-              directMimeOverride = direct.mimeType;
+          try {
+            const direct = await tryClientDirectExtractor(
+              videoId,
+              extractorConfig.extractorUrl,
+              controller.signal
+            );
+            if (direct?.url) {
+              const directRes = await fetch(direct.url, { signal: controller.signal });
+              if (directRes.ok) {
+                res = directRes;
+                directMimeOverride = direct.mimeType;
+              }
             }
+          } catch (directErr) {
+            if ((directErr as { name?: string })?.name === 'AbortError') {
+              throw directErr;
+            }
+            // Fall through to parse the original server error response
           }
         }
 
@@ -385,11 +392,16 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
           },
         }));
 
+        const isTouchDevice =
+          typeof window !== 'undefined' &&
+          (window.matchMedia?.('(pointer: coarse)').matches || (navigator.maxTouchPoints || 0) > 0);
         showNotice({
           videoId,
           title: video.title,
           type: 'success',
-          message: `Audio siap: ${filename}`,
+          message: isTouchDevice
+            ? `Audio siap (${filename}). Ketuk tombol di bawah jika belum tersimpan otomatis.`
+            : `Audio siap: ${filename}`,
           filename,
           hasLocalFile: true,
         });

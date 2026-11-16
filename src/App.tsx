@@ -195,17 +195,21 @@ export default function App() {
   const feedUpdateNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastGroupSyncAtRef = useRef<Map<string, number>>(new Map());
   const syncInFlightRef = useRef<boolean>(false);
+  const activeSyncGroupIdRef = useRef<string | null>(null);
+  const queuedSilentGroupIdRef = useRef<string | null>(null);
   const activeSyncPromiseRef = useRef<Promise<void> | null>(null);
 
   // Audio Extractor Restriction Recovery States
   const [isExtractorModalOpen, setIsExtractorModalOpen] = useState<boolean>(false);
   const [hasOpenedExtractorModal, setHasOpenedExtractorModal] = useState<boolean>(false);
   const [pendingExtractorVideo, setPendingExtractorVideo] = useState<Video | null>(null);
+  const [extractorIntent, setExtractorIntent] = useState<'download' | 'playback'>('download');
   const [extractorVersion, setExtractorVersion] = useState<number>(0);
 
   // Audio Download Manager
   const handleDownloadRestrictionBlocked = useCallback((blockedVideo: Video) => {
     setPendingExtractorVideo(blockedVideo);
+    setExtractorIntent('download');
     setHasOpenedExtractorModal(true);
     setIsExtractorModalOpen(true);
   }, []);
@@ -395,11 +399,12 @@ export default function App() {
       setAudioStatusMap({});
       setExtractorVersion((v) => v + 1);
       setPendingExtractorVideo(null);
-      if (retryVideo) {
+      void syncExtractorConfigToServer();
+      if (retryVideo && extractorIntent === 'download') {
         void handleDownloadAudio(retryVideo);
       }
     },
-    [handleDownloadAudio]
+    [handleDownloadAudio, extractorIntent]
   );
 
   const openSearchChannelModal = (initialQuery = '') => {
@@ -623,6 +628,12 @@ export default function App() {
       if (code === 'auth/unauthorized-domain') {
         setAuthNotice(
           'Domain belum diotorisasi untuk login Google. Data lokal tetap tersimpan aman di perangkat Anda.'
+        );
+        return;
+      }
+      if (code === 'auth/network-request-failed') {
+        setAuthNotice(
+          'Koneksi internet terputus saat login Google. Periksa jaringan lalu coba lagi.'
         );
         return;
       }
@@ -1177,11 +1188,18 @@ export default function App() {
         }
         if (syncInFlightRef.current) return;
       } else {
+        if (
+          activeSyncGroupIdRef.current !== 'all' &&
+          activeSyncGroupIdRef.current !== targetGroupId
+        ) {
+          queuedSilentGroupIdRef.current = targetGroupId;
+        }
         return;
       }
     }
 
     syncInFlightRef.current = true;
+    activeSyncGroupIdRef.current = targetGroupId;
 
     if (silent) {
       setIsAutoCheckingGroup(true);
@@ -1322,8 +1340,19 @@ export default function App() {
       }
 
       if (brandNewVideos.length > 0) {
+        let resolvedGroupId = targetGroupId;
+        if (targetGroupId === 'all') {
+          const updatedGroupIds = new Set(
+            brandNewVideos
+              .map((v) => currentChannels.find((c) => c.id === v.channelId)?.groupId)
+              .filter((gid): gid is string => Boolean(gid))
+          );
+          if (updatedGroupIds.size === 1) {
+            resolvedGroupId = Array.from(updatedGroupIds)[0];
+          }
+        }
         const groupLabel =
-          latestStateRef.current.groups.find((g) => g.id === targetGroupId)?.name || 'Semua Channel';
+          latestStateRef.current.groups.find((g) => g.id === resolvedGroupId)?.name || 'Semua Channel';
         const channelNames = Array.from(new Set(brandNewVideos.map((v) => v.channelTitle))).slice(0, 3);
         showFeedUpdateNotice(brandNewVideos.length, groupLabel, channelNames);
       }
@@ -1340,11 +1369,23 @@ export default function App() {
       }
       } finally {
         syncInFlightRef.current = false;
+        activeSyncGroupIdRef.current = null;
         activeSyncPromiseRef.current = null;
         if (silent) {
           setIsAutoCheckingGroup(false);
         } else {
           setIsRefreshing(false);
+        }
+        const queuedGroupId = queuedSilentGroupIdRef.current;
+        if (queuedGroupId && navigator.onLine) {
+          queuedSilentGroupIdRef.current = null;
+          setTimeout(() => {
+            void syncHandlersRef.current.syncChannelFeeds({
+              groupId: queuedGroupId,
+              silent: true,
+              force: true,
+            });
+          }, 120);
         }
       }
     };
@@ -1359,22 +1400,22 @@ export default function App() {
   const syncHandlersRef = useRef({ handleRefreshFeeds, syncChannelFeeds, handleAddChannels });
   syncHandlersRef.current = { handleRefreshFeeds, syncChannelFeeds, handleAddChannels };
 
-  // Silent non-blocking startup auto-refresh when feed cache is older than 3 minutes
+  // Silent non-blocking startup auto-refresh when feed cache is older than 90 seconds
   const didAutoSyncOnBootRef = useRef(false);
   useEffect(() => {
     if (didAutoSyncOnBootRef.current || !isOnline || channels.length === 0) return;
     didAutoSyncOnBootRef.current = true;
     const lastSyncAt = loadLastFeedSyncAt();
-    const isStale = Date.now() - lastSyncAt > 3 * 60 * 1000;
+    const isStale = Date.now() - lastSyncAt > 90 * 1000;
     if (!isStale) return;
 
     const timer = setTimeout(() => {
       void syncHandlersRef.current.syncChannelFeeds({ groupId: 'all', silent: true, force: true });
-    }, 800);
+    }, 600);
     return () => clearTimeout(timer);
   }, [isOnline, channels.length]);
 
-  // Automatic update when switching to a group that hasn't been checked in the last 60 seconds
+  // Automatic update when switching to a group that hasn't been checked in the last 45 seconds
   useEffect(() => {
     if (!isOnline || activeGroupId === 'all') return;
     const channelsInGroup = latestStateRef.current.channels.filter(
@@ -1383,7 +1424,7 @@ export default function App() {
     if (channelsInGroup.length === 0) return;
 
     const lastGroupCheck = lastGroupSyncAtRef.current.get(activeGroupId) || 0;
-    if (Date.now() - lastGroupCheck < 60 * 1000) return;
+    if (Date.now() - lastGroupCheck < 45 * 1000) return;
 
     const timer = setTimeout(() => {
       void syncHandlersRef.current.syncChannelFeeds({
@@ -1391,20 +1432,27 @@ export default function App() {
         silent: true,
         force: true,
       });
-    }, 350);
+    }, 250);
     return () => clearTimeout(timer);
   }, [activeGroupId, isOnline, channels.length]);
 
-  // Periodic background auto-update (every 3 minutes) & on tab visibility return (>= 2 minutes away)
+  // Periodic background auto-update (every 2 minutes) & on tab visibility return (>= 1 minute away)
   useEffect(() => {
     if (!isOnline || channels.length === 0) return;
 
     const checkAndSyncIfDue = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       const lastAll = lastGroupSyncAtRef.current.get('all') || loadLastFeedSyncAt();
-      if (Date.now() - lastAll >= 2 * 60 * 1000) {
+      const targetGroup =
+        activeGroupId !== 'all' &&
+        Date.now() - (lastGroupSyncAtRef.current.get(activeGroupId) || 0) >= 60 * 1000
+          ? activeGroupId
+          : Date.now() - lastAll >= 2 * 60 * 1000
+          ? 'all'
+          : null;
+      if (targetGroup) {
         void syncHandlersRef.current.syncChannelFeeds({
-          groupId: 'all',
+          groupId: targetGroup,
           silent: true,
           force: true,
         });
@@ -1418,7 +1466,7 @@ export default function App() {
         silent: true,
         force: true,
       });
-    }, 3 * 60 * 1000);
+    }, 2 * 60 * 1000);
 
     document.addEventListener('visibilitychange', checkAndSyncIfDue);
     window.addEventListener('focus', checkAndSyncIfDue);
@@ -1427,7 +1475,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', checkAndSyncIfDue);
       window.removeEventListener('focus', checkAndSyncIfDue);
     };
-  }, [isOnline, channels.length]);
+  }, [isOnline, channels.length, activeGroupId]);
 
   // Background Sync Processor: automatically runs when connection returns
   useEffect(() => {
@@ -1841,6 +1889,7 @@ export default function App() {
   );
   const handleOpenAudioExtractorSettings = useCallback(() => {
     setPendingExtractorVideo(currentVideo);
+    setExtractorIntent('playback');
     setHasOpenedExtractorModal(true);
     setIsExtractorModalOpen(true);
   }, [currentVideo]);
@@ -2277,12 +2326,12 @@ export default function App() {
                       openSearchChannelModal(searchQuery.trim());
                     }
                   }}
-                  className="w-full pl-9 pr-7 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
+                  className="w-full pl-9 pr-10 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-sm text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
                     aria-label="Hapus pencarian"
                   >
                     ×
@@ -2310,20 +2359,22 @@ export default function App() {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.92 }}
                   transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                  className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 text-xs text-red-700 dark:text-red-300"
+                  className="flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 text-xs text-red-700 dark:text-red-300"
                 >
-                  <span className="font-semibold">Fokus Channel: {selectedChannel.title}</span>
+                  <span className="font-semibold truncate">Fokus Channel: {selectedChannel.title}</span>
                   <button
                     onClick={() => setChannelToDelete(selectedChannel)}
-                    className="p-0.5 rounded hover:bg-red-200/60 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 cursor-pointer"
+                    className="p-1.5 min-w-[30px] min-h-[30px] flex items-center justify-center rounded-lg hover:bg-red-200/60 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 cursor-pointer shrink-0"
                     title="Hapus channel ini"
+                    aria-label="Hapus channel ini"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => setSelectedChannelId(null)}
-                    className="font-bold hover:text-red-900 dark:hover:text-white cursor-pointer"
+                    className="p-1.5 min-w-[30px] min-h-[30px] flex items-center justify-center rounded-lg font-bold hover:text-red-900 dark:hover:text-white hover:bg-red-200/60 dark:hover:bg-red-900/50 cursor-pointer shrink-0"
                     title="Hapus filter channel"
+                    aria-label="Hapus filter channel"
                   >
                     ×
                   </button>
@@ -2616,6 +2667,7 @@ export default function App() {
             isOpen={isExtractorModalOpen}
             onClose={() => setIsExtractorModalOpen(false)}
             pendingVideo={pendingExtractorVideo}
+            intent={extractorIntent}
             onResolved={handleExtractorResolved}
           />
         )}
@@ -2691,134 +2743,135 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Audio Download Status Toast */}
-      <AnimatePresence>
-        {downloadNotice && (
-          <motion.div
-            key={`dl-notice-${downloadNotice.videoId}-${downloadNotice.type}`}
-            initial={{ opacity: 0, y: 16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.96 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md pointer-events-auto"
-          >
-            <div
-              className={`flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs ${
-                downloadNotice.type === 'success'
-                  ? 'bg-emerald-950/90 border-emerald-700/80 text-emerald-50'
-                  : 'bg-red-950/90 border-red-700/80 text-red-50'
-              }`}
+      {/* Unified Stacked Bottom Notifications (never overlap each other on mobile HP) */}
+      <div className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-1.5rem)] max-w-md flex flex-col-reverse gap-2 pointer-events-none">
+        <AnimatePresence>
+          {downloadNotice && (
+            <motion.div
+              key={`dl-notice-${downloadNotice.videoId}-${downloadNotice.type}`}
+              initial={{ opacity: 0, y: 16, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="pointer-events-auto"
             >
-              {downloadNotice.type === 'success' ? (
-                <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              ) : (
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-              )}
-              <div className="flex-1 min-w-0 text-left">
-                <div className="font-bold truncate">{downloadNotice.title}</div>
-                <div className="opacity-90 break-words">{downloadNotice.message}</div>
-                {downloadNotice.type === 'success' && downloadNotice.hasLocalFile && (
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveOrShareDownload(downloadNotice.videoId)}
-                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-emerald-800 font-bold text-[11px] hover:bg-emerald-50 transition-colors cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Simpan / Bagikan File</span>
-                  </button>
-                )}
-                {downloadNotice.requiresAuth && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const targetVideo =
-                        videos.find((v) => v.id === downloadNotice.videoId) ||
-                        (currentVideo?.id === downloadNotice.videoId ? currentVideo : null);
-                      setPendingExtractorVideo(targetVideo);
-                      setHasOpenedExtractorModal(true);
-                      setIsExtractorModalOpen(true);
-                      dismissDownloadNotice();
-                    }}
-                    className="mt-2 px-3 py-1.5 rounded-lg bg-white text-red-700 font-bold text-[11px] hover:bg-red-50 transition-colors cursor-pointer"
-                  >
-                    Atasi Pembatasan YouTube
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={dismissDownloadNotice}
-                className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
-                title="Tutup"
+              <div
+                className={`flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs ${
+                  downloadNotice.type === 'success'
+                    ? 'bg-emerald-950/90 border-emerald-700/80 text-emerald-50'
+                    : 'bg-red-950/90 border-red-700/80 text-red-50'
+                }`}
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {/* New Videos Auto-Update Toast */}
-      <AnimatePresence>
-        {feedUpdateNotice && (
-          <motion.div
-            key="feed-update-toast"
-            initial={{ opacity: 0, y: 16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.96 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] left-4 z-40 w-[calc(100%-2rem)] sm:w-auto max-w-sm pointer-events-auto"
-          >
-            <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-emerald-950/95 border-emerald-700/80 text-emerald-50">
-              <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0 text-left">
-                <div className="font-bold">
-                  {feedUpdateNotice.count} video baru di {feedUpdateNotice.groupName}
+                {downloadNotice.type === 'success' ? (
+                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                )}
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="font-bold truncate">{downloadNotice.title}</div>
+                  <div className="opacity-90 break-words">{downloadNotice.message}</div>
+                  {downloadNotice.type === 'success' && downloadNotice.hasLocalFile && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveOrShareDownload(downloadNotice.videoId)}
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-emerald-800 font-bold text-[11px] hover:bg-emerald-50 transition-colors cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Simpan / Bagikan File</span>
+                    </button>
+                  )}
+                  {downloadNotice.requiresAuth && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetVideo =
+                          videos.find((v) => v.id === downloadNotice.videoId) ||
+                          (currentVideo?.id === downloadNotice.videoId ? currentVideo : null);
+                        setPendingExtractorVideo(targetVideo);
+                        setExtractorIntent('download');
+                        setHasOpenedExtractorModal(true);
+                        setIsExtractorModalOpen(true);
+                        dismissDownloadNotice();
+                      }}
+                      className="mt-2 px-3 py-1.5 rounded-lg bg-white text-red-700 font-bold text-[11px] hover:bg-red-50 transition-colors cursor-pointer"
+                    >
+                      Atasi Pembatasan YouTube
+                    </button>
+                  )}
                 </div>
-                {feedUpdateNotice.channelNames.length > 0 && (
-                  <div className="opacity-85 truncate">
-                    Dari {feedUpdateNotice.channelNames.join(', ')}
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={dismissDownloadNotice}
+                  className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                  title="Tutup"
+                  aria-label="Tutup pemberitahuan unduhan"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setFeedUpdateNotice(null)}
-                className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
-                title="Tutup"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
 
-      {/* Auth Feedback Toast */}
-      <AnimatePresence>
-        {authNotice && (
-          <motion.div
-            key="auth-notice-toast"
-            initial={{ opacity: 0, y: 16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.96 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md pointer-events-auto"
-          >
-            <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-amber-950/95 border-amber-700/80 text-amber-50">
-              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0 text-left leading-relaxed">{authNotice}</div>
-              <button
-                type="button"
-                onClick={() => setAuthNotice(null)}
-                className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
-                title="Tutup"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          {feedUpdateNotice && (
+            <motion.div
+              key="feed-update-toast"
+              initial={{ opacity: 0, y: 16, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="pointer-events-auto"
+            >
+              <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-emerald-950/95 border-emerald-700/80 text-emerald-50">
+                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="font-bold">
+                    {feedUpdateNotice.count} video baru di {feedUpdateNotice.groupName}
+                  </div>
+                  {feedUpdateNotice.channelNames.length > 0 && (
+                    <div className="opacity-85 truncate">
+                      Dari {feedUpdateNotice.channelNames.join(', ')}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFeedUpdateNotice(null)}
+                  className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                  title="Tutup"
+                  aria-label="Tutup pemberitahuan pembaruan"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {authNotice && (
+            <motion.div
+              key="auth-notice-toast"
+              initial={{ opacity: 0, y: 16, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="pointer-events-auto"
+            >
+              <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-amber-950/95 border-amber-700/80 text-amber-50">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0 text-left leading-relaxed">{authNotice}</div>
+                <button
+                  type="button"
+                  onClick={() => setAuthNotice(null)}
+                  className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                  title="Tutup"
+                  aria-label="Tutup pemberitahuan akun"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
     </MotionConfig>
   );

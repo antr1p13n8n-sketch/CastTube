@@ -338,8 +338,10 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             animate={{ scale: isPlaying ? 1.02 : 1 }}
             transition={{ type: 'spring', stiffness: 280, damping: 24 }}
             className="relative group w-56 h-56 sm:w-64 sm:h-64 rounded-2xl overflow-hidden shadow-2xl bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center cursor-pointer"
-            onMouseEnter={() => setIsHoveringArt(true)}
-            onMouseLeave={() => setIsHoveringArt(false)}
+            onPointerEnter={(e) => {
+              if (e.pointerType === 'mouse') setIsHoveringArt(true);
+            }}
+            onPointerLeave={() => setIsHoveringArt(false)}
             onClick={onPlayPause}
           >
             <img
@@ -353,7 +355,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             {/* Dark vinyl overlay */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
-            {/* Play/Pause overlay icon on hover */}
+            {/* Play/Pause overlay icon on desktop hover */}
             <div
               className={`absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-opacity duration-200 ${
                 isHoveringArt ? 'opacity-100' : 'opacity-0'
@@ -365,17 +367,21 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             </div>
 
             {/* Live Visualizer badge bottom */}
-            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-white/90 font-medium">
-              <span className="px-2 py-0.5 rounded bg-black/60 backdrop-blur-md text-[11px]">
-                {isPlaying ? 'Sedang Memutar' : 'Jeda'}
+            <div className="absolute bottom-2.5 left-3 right-2.5 flex items-center justify-between text-xs text-white/90 font-medium">
+              <span className="px-2 py-0.5 rounded bg-black/60 backdrop-blur-md text-[11px] flex items-center gap-1.5">
+                <span className="[@media(hover:hover)]:hidden">
+                  {isPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                </span>
+                <span>{isPlaying ? 'Sedang Memutar' : 'Jeda'}</span>
               </span>
               <a
                 href={`https://www.youtube.com/watch?v=${currentVideo.id}`}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="p-1 rounded bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-colors"
+                className="p-2 rounded-lg bg-black/60 hover:bg-black/90 text-white/85 hover:text-white transition-colors"
                 title="Buka di YouTube"
+                aria-label="Buka di YouTube"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
@@ -599,11 +605,12 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
               </div>
 
               {/* Volume Slider */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={onToggleMute}
-                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white cursor-pointer"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                   title={isMuted ? 'Bunyikan' : 'Bisukan'}
+                  aria-label={isMuted ? 'Bunyikan' : 'Bisukan'}
                 >
                   {isMuted || volume === 0 ? (
                     <VolumeX className="w-4 h-4 text-red-500" />
@@ -618,7 +625,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                   max={100}
                   value={isMuted ? 0 : volume}
                   onChange={(e) => onVolumeChange(Number(e.target.value))}
-                  className="w-16 sm:w-20 h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-hidden"
+                  className="w-20 sm:w-24 h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-hidden"
                 />
               </div>
             </div>
@@ -694,8 +701,9 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                     </div>
                     <button
                       onClick={() => onRemoveFromQueue(item.id)}
-                      className="text-xs text-slate-400 hover:text-red-500 p-1 cursor-pointer shrink-0"
+                      className="text-sm text-slate-400 hover:text-red-500 p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg cursor-pointer shrink-0"
                       title="Hapus dari antrean"
+                      aria-label="Hapus dari antrean"
                     >
                       ×
                     </button>

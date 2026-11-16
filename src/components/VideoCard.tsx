@@ -114,8 +114,8 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
           </div>
         )}
 
-        {/* Hover quick play buttons in center (desktop hover only so touch taps open immediately) */}
-        <div className="hidden sm:flex absolute inset-0 items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150 bg-black/45">
+        {/* Hover quick play buttons in center (hover-capable screens only so touch taps open immediately) */}
+        <div className="hidden sm:[@media(hover:hover)]:flex absolute inset-0 items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150 bg-black/45">
           <button
             type="button"
             onClick={(e) => {
@@ -142,8 +142,8 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
           </button>
         </div>
 
-        {/* Subtle mobile tap-to-play indicator */}
-        <div className="sm:hidden absolute bottom-2 left-2 w-7 h-7 rounded-full bg-black/70 text-white flex items-center justify-center backdrop-blur-xs pointer-events-none">
+        {/* Subtle mobile/tablet touch tap-to-play indicator */}
+        <div className="flex sm:[@media(hover:hover)]:hidden absolute bottom-2 left-2 w-7 h-7 rounded-full bg-black/70 text-white items-center justify-center backdrop-blur-xs pointer-events-none">
           <Play className="w-3.5 h-3.5 fill-white ml-0.5" />
         </div>
 
