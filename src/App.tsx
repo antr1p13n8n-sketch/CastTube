@@ -15,6 +15,7 @@ import {
   AlertCircle,
   X,
   Download,
+  Loader2,
 } from 'lucide-react';
 import {
   User,
@@ -104,7 +105,7 @@ const AudioExtractorModal = lazy(() =>
   import('./components/AudioExtractorModal').then((m) => ({ default: m.AudioExtractorModal }))
 );
 
-const FEED_PAGE_SIZE = 24;
+const FEED_PAGE_SIZE = 36;
 
 export default function App() {
   // Firebase Auth State
@@ -199,6 +200,25 @@ export default function App() {
   const activeSyncGroupIdRef = useRef<string | null>(null);
   const queuedSilentGroupIdRef = useRef<string | null>(null);
   const activeSyncPromiseRef = useRef<Promise<void> | null>(null);
+
+  // Full channel catalog progressive loading states
+  const [channelCatalogMap, setChannelCatalogMap] = useState<
+    Record<
+      string,
+      {
+        loading: boolean;
+        loadedCount: number;
+        hasMore: boolean;
+        nextCursor: string | null;
+        fullyLoaded: boolean;
+        error?: string;
+      }
+    >
+  >({});
+  const channelCatalogMapRef = useRef(channelCatalogMap);
+  channelCatalogMapRef.current = channelCatalogMap;
+  const channelLoadAbortRef = useRef<AbortController | null>(null);
+  const activeChannelLoadIdRef = useRef<string | null>(null);
 
   // Audio Extractor Restriction Recovery States
   const [isExtractorModalOpen, setIsExtractorModalOpen] = useState<boolean>(false);
@@ -573,7 +593,27 @@ export default function App() {
           fs.subscribeToUserVideos(
             user.uid,
             (cloudVideos) => {
-              setVideos(cloudVideos);
+              setVideos((prev) => {
+                if (prev.length === 0) return cloudVideos;
+                const map = new Map(prev.map((v) => [v.id, v]));
+                for (const cv of cloudVideos) {
+                  const existing = map.get(cv.id);
+                  map.set(
+                    cv.id,
+                    existing
+                      ? {
+                          ...existing,
+                          ...cv,
+                          duration: existing.duration || cv.duration,
+                          views: existing.views || cv.views,
+                        }
+                      : cv
+                  );
+                }
+                return Array.from(map.values()).sort(
+                  (a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0)
+                );
+              });
             },
             handleCloudError
           ),
@@ -878,6 +918,17 @@ export default function App() {
         }
       }
     }
+    if (activeChannelLoadIdRef.current === channelId) {
+      channelLoadAbortRef.current?.abort();
+      channelLoadAbortRef.current = null;
+      activeChannelLoadIdRef.current = null;
+    }
+    setChannelCatalogMap((prev) => {
+      if (!(channelId in prev)) return prev;
+      const next = { ...prev };
+      delete next[channelId];
+      return next;
+    });
     if (selectedChannelId === channelId) {
       setSelectedChannelId(null);
     }
@@ -1425,6 +1476,291 @@ export default function App() {
 
   const syncHandlersRef = useRef({ handleRefreshFeeds, syncChannelFeeds, handleAddChannels });
   syncHandlersRef.current = { handleRefreshFeeds, syncChannelFeeds, handleAddChannels };
+
+  const mergeChannelVideosIntoState = useCallback(
+    (channelId: string, incomingVideos: Video[], channelMeta?: Partial<Channel>) => {
+      let totalForChannel = 0;
+      if (incomingVideos.length > 0) {
+        setVideos((prev) => {
+          const map = new Map(prev.map((v) => [v.id, v]));
+          for (const fresh of incomingVideos) {
+            if (!fresh || !fresh.id) continue;
+            const existing = map.get(fresh.id);
+            if (!existing) {
+              map.set(fresh.id, fresh);
+            } else {
+              map.set(fresh.id, {
+                ...existing,
+                ...fresh,
+                description: fresh.description || existing.description,
+                views: fresh.views || existing.views,
+                duration: fresh.duration || existing.duration,
+                publishedAt:
+                  existing.description && !fresh.description
+                    ? existing.publishedAt
+                    : fresh.publishedAt,
+              });
+            }
+          }
+          const combined = Array.from(map.values()).sort(
+            (a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0)
+          );
+          for (const v of combined) {
+            if (v.channelId === channelId) totalForChannel++;
+          }
+          return combined;
+        });
+      }
+
+      if (channelMeta || totalForChannel > 0) {
+        setChannels((prev) =>
+          prev.map((ch) => {
+            if (ch.id !== channelId) return ch;
+            return {
+              ...ch,
+              title: channelMeta?.title || ch.title,
+              handle: channelMeta?.handle || ch.handle,
+              avatar: channelMeta?.avatar || ch.avatar,
+              url: channelMeta?.url || ch.url,
+              videoCount: Math.max(ch.videoCount || 0, totalForChannel),
+            };
+          })
+        );
+      }
+    },
+    []
+  );
+
+  const stopChannelAllVideos = useCallback(() => {
+    const activeId = activeChannelLoadIdRef.current;
+    channelLoadAbortRef.current?.abort();
+    channelLoadAbortRef.current = null;
+    activeChannelLoadIdRef.current = null;
+    if (activeId) {
+      setChannelCatalogMap((prev) => {
+        const cur = prev[activeId];
+        if (!cur) return prev;
+        return {
+          ...prev,
+          [activeId]: { ...cur, loading: false },
+        };
+      });
+    }
+  }, []);
+
+  const loadChannelAllVideos = useCallback(
+    async (channelId: string, opts?: { force?: boolean; resume?: boolean }) => {
+      if (!channelId || !navigator.onLine) return;
+
+      channelLoadAbortRef.current?.abort();
+      const controller = new AbortController();
+      channelLoadAbortRef.current = controller;
+      activeChannelLoadIdRef.current = channelId;
+
+      const existingState = channelCatalogMapRef.current[channelId];
+      const existingVideosForChannel = latestStateRef.current.videos.filter(
+        (v) => v.channelId === channelId
+      );
+      const loadedIds = new Set<string>(existingVideosForChannel.map((v) => v.id));
+      const targetChannel = latestStateRef.current.channels.find((c) => c.id === channelId);
+      let channelTitle = targetChannel?.title || `Channel ${channelId.slice(0, 8)}`;
+
+      let cursor: string | null =
+        opts?.resume && !opts?.force && existingState?.nextCursor ? existingState.nextCursor : null;
+
+      setChannelCatalogMap((prev) => ({
+        ...prev,
+        [channelId]: {
+          loading: true,
+          loadedCount: loadedIds.size,
+          hasMore: existingState?.hasMore ?? true,
+          nextCursor: cursor,
+          fullyLoaded: false,
+          error: undefined,
+        },
+      }));
+
+      try {
+        // Step 1: Initial multi-page fetch across Videos + Streams + Shorts tabs
+        if (!cursor) {
+          const res = await fetch(
+            `/api/youtube/feed?channelId=${encodeURIComponent(channelId)}&pages=5&includeAllTabs=1&force=1`,
+            { signal: controller.signal, headers: { Accept: 'application/json' } }
+          );
+          const { data, rawText } = await parseJsonSafely<{
+            channel?: Partial<Channel>;
+            videos?: Video[];
+            nextCursor?: string | null;
+            hasMore?: boolean;
+            error?: string;
+          }>(res);
+
+          if (!res.ok || !data) {
+            throw new Error(
+              buildHttpErrorMessage(res, data, rawText, 'Gagal memuat daftar video channel')
+            );
+          }
+
+          if (controller.signal.aborted) return;
+
+          if (data.channel?.title) {
+            channelTitle = data.channel.title;
+          }
+          const initialVideos = Array.isArray(data.videos) ? data.videos : [];
+          for (const v of initialVideos) {
+            if (v?.id) loadedIds.add(v.id);
+          }
+          mergeChannelVideosIntoState(channelId, initialVideos, data.channel);
+          cursor = data.nextCursor || null;
+
+          setChannelCatalogMap((prev) => ({
+            ...prev,
+            [channelId]: {
+              loading: Boolean(cursor),
+              loadedCount: loadedIds.size,
+              hasMore: Boolean(cursor),
+              nextCursor: cursor,
+              fullyLoaded: !cursor,
+              error: undefined,
+            },
+          }));
+        }
+
+        // Step 2: Sequentially stream remaining continuation pages until entire channel archive is loaded
+        let batchCount = 0;
+        const MAX_CURSOR_BATCHES = 50; // up to ~9,000 videos safely
+        while (cursor && batchCount < MAX_CURSOR_BATCHES && !controller.signal.aborted) {
+          const pageRes = await fetch(
+            `/api/youtube/feed?channelId=${encodeURIComponent(channelId)}&cursor=${encodeURIComponent(
+              cursor
+            )}&pages=6&startIndex=${loadedIds.size}&channelTitle=${encodeURIComponent(channelTitle)}`,
+            { signal: controller.signal, headers: { Accept: 'application/json' } }
+          );
+          const { data: pageData, rawText } = await parseJsonSafely<{
+            videos?: Video[];
+            nextCursor?: string | null;
+            hasMore?: boolean;
+            error?: string;
+          }>(pageRes);
+
+          if (!pageRes.ok || !pageData) {
+            throw new Error(
+              buildHttpErrorMessage(pageRes, pageData, rawText, 'Gagal melanjutkan pemuatan video')
+            );
+          }
+
+          if (controller.signal.aborted) return;
+
+          const chunkVideos = Array.isArray(pageData.videos) ? pageData.videos : [];
+          let newlyAddedInBatch = 0;
+          for (const v of chunkVideos) {
+            if (v?.id && !loadedIds.has(v.id)) {
+              loadedIds.add(v.id);
+              newlyAddedInBatch++;
+            }
+          }
+          if (chunkVideos.length > 0) {
+            mergeChannelVideosIntoState(channelId, chunkVideos);
+          }
+
+          const nextToken = pageData.nextCursor || null;
+          // Stop cleanly if YouTube stops returning any videos or repeats the exact same cursor
+          if (!nextToken || nextToken === cursor || (chunkVideos.length === 0 && newlyAddedInBatch === 0)) {
+            cursor = null;
+          } else {
+            cursor = nextToken;
+          }
+          batchCount++;
+
+          setChannelCatalogMap((prev) => ({
+            ...prev,
+            [channelId]: {
+              loading: Boolean(cursor) && batchCount < MAX_CURSOR_BATCHES,
+              loadedCount: loadedIds.size,
+              hasMore: Boolean(cursor),
+              nextCursor: cursor,
+              fullyLoaded: !cursor,
+              error: undefined,
+            },
+          }));
+        }
+
+        if (!controller.signal.aborted) {
+          setChannelCatalogMap((prev) => ({
+            ...prev,
+            [channelId]: {
+              loading: false,
+              loadedCount: loadedIds.size,
+              hasMore: Boolean(cursor),
+              nextCursor: cursor,
+              fullyLoaded: !cursor,
+              error: undefined,
+            },
+          }));
+        }
+      } catch (err) {
+        if (controller.signal.aborted) {
+          setChannelCatalogMap((prev) => {
+            const cur = prev[channelId];
+            if (!cur) return prev;
+            return {
+              ...prev,
+              [channelId]: { ...cur, loading: false },
+            };
+          });
+          return;
+        }
+        const message =
+          err instanceof Error ? err.message : 'Gagal memuat semua video channel dari YouTube';
+        setChannelCatalogMap((prev) => ({
+          ...prev,
+          [channelId]: {
+            loading: false,
+            loadedCount: loadedIds.size,
+            hasMore: Boolean(cursor),
+            nextCursor: cursor,
+            fullyLoaded: false,
+            error: message,
+          },
+        }));
+      } finally {
+        if (activeChannelLoadIdRef.current === channelId) {
+          activeChannelLoadIdRef.current = null;
+          channelLoadAbortRef.current = null;
+        }
+      }
+    },
+    [mergeChannelVideosIntoState]
+  );
+
+  // Automatically fetch full channel video catalog whenever a specific channel is focused
+  useEffect(() => {
+    if (!selectedChannelId) {
+      if (channelLoadAbortRef.current) {
+        stopChannelAllVideos();
+      }
+      return;
+    }
+    if (!isOnline) return;
+
+    const currentState = channelCatalogMapRef.current[selectedChannelId];
+    if (currentState?.fullyLoaded || currentState?.loading) return;
+
+    const timer = setTimeout(() => {
+      void loadChannelAllVideos(
+        selectedChannelId,
+        currentState?.nextCursor ? { resume: true } : undefined
+      );
+    }, 120);
+
+    return () => clearTimeout(timer);
+  }, [selectedChannelId, isOnline, loadChannelAllVideos, stopChannelAllVideos]);
+
+  useEffect(() => {
+    return () => {
+      channelLoadAbortRef.current?.abort();
+    };
+  }, []);
 
   // Silent non-blocking startup & cloud-hydration auto-refresh when feed cache is older than 30 seconds
   const didAutoSyncOnBootRef = useRef(false);
@@ -2488,12 +2824,12 @@ export default function App() {
 
         {/* Video Grid Section */}
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate">
                 {selectedChannel ? `Video dari ${selectedChannel.title}` : `Video: ${activeGroup.name}`}
               </h2>
-              <span className="text-xs text-slate-500 font-medium">
+              <span className="text-xs text-slate-500 font-medium whitespace-nowrap">
                 ({filteredVideos.length} video tersedia)
               </span>
             </div>
@@ -2508,6 +2844,95 @@ export default function App() {
               </button>
             )}
           </div>
+
+          {/* Focused Channel Full Catalog Status Bar */}
+          {selectedChannel && (() => {
+            const catalogState = channelCatalogMap[selectedChannel.id];
+            const totalForSelected = channelVideoCounts.get(selectedChannel.id) || 0;
+            const loadedLabelCount = Math.max(totalForSelected, catalogState?.loadedCount || 0);
+
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  {catalogState?.loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 text-red-600 animate-spin shrink-0" />
+                      <span className="text-slate-700 dark:text-slate-200 font-medium">
+                        Memuat semua video dari {selectedChannel.title}...{' '}
+                        <strong className="tabular-nums text-slate-900 dark:text-white">
+                          ({loadedLabelCount} video dimuat)
+                        </strong>
+                      </span>
+                    </>
+                  ) : catalogState?.error ? (
+                    <>
+                      <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                      <span className="text-amber-700 dark:text-amber-300 font-medium">
+                        {catalogState.error} ({loadedLabelCount} video dimuat)
+                      </span>
+                    </>
+                  ) : catalogState?.fullyLoaded ? (
+                    <>
+                      <Check className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span className="text-slate-600 dark:text-slate-300 font-medium">
+                        Semua <strong className="tabular-nums text-slate-900 dark:text-white">{totalForSelected}</strong> video dari channel ini ditampilkan
+                      </span>
+                    </>
+                  ) : catalogState?.hasMore ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="text-slate-600 dark:text-slate-300 font-medium">
+                        {loadedLabelCount} video dimuat (masih tersedia lebih banyak di YouTube)
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Tv className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="text-slate-600 dark:text-slate-300 font-medium">
+                        Menampilkan {totalForSelected} video dari {selectedChannel.title}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {catalogState?.loading ? (
+                    <button
+                      type="button"
+                      onClick={stopChannelAllVideos}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                    >
+                      Hentikan
+                    </button>
+                  ) : (
+                    <>
+                      {catalogState?.hasMore && (
+                        <button
+                          type="button"
+                          onClick={() => void loadChannelAllVideos(selectedChannel.id, { resume: true })}
+                          disabled={!isOnline}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white transition-colors cursor-pointer"
+                        >
+                          Lanjutkan Muat
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void loadChannelAllVideos(selectedChannel.id, { force: true })}
+                        disabled={!isOnline}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>
+                          {catalogState?.fullyLoaded ? 'Muat Ulang Semua' : 'Muat Semua Video'}
+                        </span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {filteredVideos.length === 0 ? (
             <div className="p-12 text-center rounded-3xl bg-white dark:bg-slate-900 border border-dashed border-slate-200 dark:border-slate-800">
@@ -2563,7 +2988,7 @@ export default function App() {
               </div>
 
               {hasMoreVideos && (
-                <div ref={loadMoreSentinelRef} className="pt-4 flex flex-col items-center gap-2">
+                <div ref={loadMoreSentinelRef} className="pt-4 flex flex-wrap items-center justify-center gap-2.5">
                   <button
                     type="button"
                     onClick={() =>
@@ -2572,6 +2997,13 @@ export default function App() {
                     className="px-5 py-2.5 text-xs font-bold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
                   >
                     Muat Lebih Banyak ({filteredVideos.length - visibleCount} video tersisa)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount(filteredVideos.length)}
+                    className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200/80 dark:border-red-800/60 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-700 dark:text-red-300 transition-colors cursor-pointer"
+                  >
+                    Tampilkan Semua ({filteredVideos.length})
                   </button>
                 </div>
               )}

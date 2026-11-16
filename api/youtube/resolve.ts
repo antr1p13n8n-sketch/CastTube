@@ -28,7 +28,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     }
 
     const { channelId, handle, title: resolvedTitle } = await resolveYouTubeChannel(input);
-    const data = await fetchChannelRss(channelId, 1);
+    const data = await fetchChannelRss(channelId, 2);
 
     if (handle && !data.channel.handle) {
       data.channel.handle = handle;

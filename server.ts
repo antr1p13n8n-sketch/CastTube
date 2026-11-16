@@ -8,6 +8,7 @@ import {
   PRESET_CHANNELS,
   resolveYouTubeChannel,
   fetchChannelRss,
+  fetchChannelVideosByCursor,
   fetchBatchChannelFeeds,
   resolveAudioStreamInfo,
   resolveAudioStreamUrl,
@@ -140,7 +141,7 @@ async function startServer() {
       }
 
       const { channelId, handle, title: resolvedTitle } = await resolveYouTubeChannel(input);
-      const data = await fetchChannelRss(channelId, 1);
+      const data = await fetchChannelRss(channelId, 2);
 
       if (handle && !data.channel.handle) {
         data.channel.handle = handle;
@@ -175,7 +176,7 @@ async function startServer() {
     }
   });
 
-  // API: Fetch single channel feed
+  // API: Fetch single channel feed (supports cursor pagination for full channel catalogs)
   app.get('/api/youtube/feed', async (req: Request, res: Response) => {
     try {
       const channelId = typeof req.query.channelId === 'string' ? req.query.channelId.trim() : '';
@@ -183,8 +184,37 @@ async function startServer() {
         res.status(400).json({ error: 'Parameter channelId YouTube tidak valid' });
         return;
       }
+
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor.trim() : '';
+      const rawPages =
+        typeof req.query.pages === 'string' ? parseInt(req.query.pages, 10) : NaN;
+      const pages = Number.isFinite(rawPages) ? Math.min(10, Math.max(1, rawPages)) : undefined;
+
+      if (cursor) {
+        const rawStart =
+          typeof req.query.startIndex === 'string' ? parseInt(req.query.startIndex, 10) : NaN;
+        const startIndex = Number.isFinite(rawStart) && rawStart >= 0 ? rawStart : 0;
+        const channelTitle =
+          typeof req.query.channelTitle === 'string' && req.query.channelTitle.trim()
+            ? req.query.channelTitle.trim()
+            : `Channel ${channelId.slice(0, 8)}`;
+        const pageData = await fetchChannelVideosByCursor(
+          channelId,
+          channelTitle,
+          cursor,
+          pages ?? 6,
+          startIndex
+        );
+        res.setHeader('Cache-Control', 'no-store');
+        res.json(pageData);
+        return;
+      }
+
       const forceRefresh = req.query.force === '1' || req.query.force === 'true';
-      const data = await fetchChannelRss(channelId, 3, forceRefresh);
+      const includeAllTabs =
+        req.query.includeAllTabs === '1' || req.query.includeAllTabs === 'true';
+
+      const data = await fetchChannelRss(channelId, pages ?? 5, forceRefresh, includeAllTabs);
       res.setHeader(
         'Cache-Control',
         forceRefresh ? 'no-store' : 'public, max-age=180, stale-while-revalidate=300'

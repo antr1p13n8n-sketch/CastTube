@@ -272,8 +272,41 @@ export function loadVideos(): Video[] {
 
 export function saveVideos(videos: Video[]) {
   try {
-    // Keep up to 200 most recent videos in localStorage to keep startup JSON parsing instant
-    localStorage.setItem(STORAGE_KEYS.VIDEOS, JSON.stringify(videos.slice(0, 200)));
+    // Sort newest first, guarantee up to 35 newest videos per channel so loading one channel's
+    // full archive doesn't evict other channels' latest feeds, then fill up to 400 total items.
+    const sorted = [...videos].sort(
+      (a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0)
+    );
+    const perChannelCount = new Map<string, number>();
+    const retained: Video[] = [];
+    const retainedIds = new Set<string>();
+    const PER_CHANNEL_MIN_CAP = 35;
+    const TOTAL_CAP = 400;
+
+    for (const v of sorted) {
+      const count = perChannelCount.get(v.channelId) || 0;
+      if (count < PER_CHANNEL_MIN_CAP) {
+        perChannelCount.set(v.channelId, count + 1);
+        retained.push(v);
+        retainedIds.add(v.id);
+      }
+      if (retained.length >= TOTAL_CAP) break;
+    }
+
+    if (retained.length < TOTAL_CAP) {
+      for (const v of sorted) {
+        if (!retainedIds.has(v.id)) {
+          retained.push(v);
+          retainedIds.add(v.id);
+          if (retained.length >= TOTAL_CAP) break;
+        }
+      }
+      retained.sort(
+        (a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0)
+      );
+    }
+
+    localStorage.setItem(STORAGE_KEYS.VIDEOS, JSON.stringify(retained));
   } catch (e) {
     console.error('Failed to save videos', e);
   }

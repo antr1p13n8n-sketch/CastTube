@@ -1,4 +1,13 @@
-import { fetchChannelRss, VercelReq, VercelRes } from '../_youtube.js';
+import {
+  fetchChannelRss,
+  fetchChannelVideosByCursor,
+  VercelReq,
+  VercelRes,
+} from '../_youtube.js';
+
+function getSingleQueryParam(val: string | string[] | undefined): string {
+  return (Array.isArray(val) ? val[0] : val || '').trim();
+}
 
 export default async function handler(req: VercelReq, res: VercelRes) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -12,17 +21,36 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   }
 
   try {
-    const rawId = req.query.channelId;
-    const channelId = (Array.isArray(rawId) ? rawId[0] : rawId || '').trim();
+    const channelId = getSingleQueryParam(req.query.channelId);
     if (!channelId || !/^UC[a-zA-Z0-9_-]{22}$/.test(channelId)) {
       return res.status(400).json({ error: 'Parameter channelId YouTube tidak valid' });
     }
 
-    const rawForce = req.query.force;
-    const forceVal = Array.isArray(rawForce) ? rawForce[0] : rawForce;
-    const forceRefresh = forceVal === '1' || forceVal === 'true';
+    const cursor = getSingleQueryParam(req.query.cursor);
+    const rawPages = parseInt(getSingleQueryParam(req.query.pages), 10);
+    const pages = Number.isFinite(rawPages) ? Math.min(10, Math.max(1, rawPages)) : undefined;
 
-    const data = await fetchChannelRss(channelId, 3, forceRefresh);
+    if (cursor) {
+      const rawStart = parseInt(getSingleQueryParam(req.query.startIndex), 10);
+      const startIndex = Number.isFinite(rawStart) && rawStart >= 0 ? rawStart : 0;
+      const channelTitle = getSingleQueryParam(req.query.channelTitle) || `Channel ${channelId.slice(0, 8)}`;
+      const pageData = await fetchChannelVideosByCursor(
+        channelId,
+        channelTitle,
+        cursor,
+        pages ?? 6,
+        startIndex
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json(pageData);
+    }
+
+    const forceVal = getSingleQueryParam(req.query.force);
+    const forceRefresh = forceVal === '1' || forceVal === 'true';
+    const includeTabsVal = getSingleQueryParam(req.query.includeAllTabs);
+    const includeAllTabs = includeTabsVal === '1' || includeTabsVal === 'true';
+
+    const data = await fetchChannelRss(channelId, pages ?? 5, forceRefresh, includeAllTabs);
     res.setHeader(
       'Cache-Control',
       forceRefresh ? 'no-store' : 'public, max-age=180, stale-while-revalidate=300'
