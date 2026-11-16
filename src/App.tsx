@@ -187,6 +187,7 @@ export default function App() {
   const [pendingSyncQueue, setPendingSyncQueue] = useState<PendingSyncTask[]>(loadPendingSyncQueue);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState<boolean>(false);
   const [isAutoCheckingGroup, setIsAutoCheckingGroup] = useState<boolean>(false);
+  const [lastSyncedTimeLabel, setLastSyncedTimeLabel] = useState<string | null>(null);
   const [feedUpdateNotice, setFeedUpdateNotice] = useState<{
     count: number;
     groupName: string;
@@ -408,9 +409,17 @@ export default function App() {
   );
 
   const openSearchChannelModal = (initialQuery = '') => {
+    const trimmed = initialQuery.trim();
+    if (/(?:https?:\/\/)?(?:[a-z0-9-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(trimmed)) {
+      setAddModalTab('paste');
+      setAddModalSearchQuery('');
+      setPastedLinkForModal(trimmed);
+      setIsAddModalOpen(true);
+      return;
+    }
     setPastedLinkForModal('');
     setAddModalTab('search');
-    setAddModalSearchQuery(initialQuery);
+    setAddModalSearchQuery(trimmed);
     setIsAddModalOpen(true);
   };
 
@@ -428,7 +437,7 @@ export default function App() {
         }
       }
     } catch {
-      // ignore clipboard permission error and open modal
+      // ignore clipboard permission error and open modal with focused textarea
     }
     setPastedLinkForModal('');
     setIsAddModalOpen(true);
@@ -1247,6 +1256,9 @@ export default function App() {
       }
 
       const now = Date.now();
+      setLastSyncedTimeLabel(
+        new Date(now).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+      );
       if (targetGroupId === 'all') {
         saveLastFeedSyncAt(now);
         lastGroupSyncAtRef.current.set('all', now);
@@ -1257,7 +1269,7 @@ export default function App() {
         lastGroupSyncAtRef.current.set(targetGroupId, now);
       }
 
-      // Compute brand-new videos vs existing state before merging
+      // Compute brand-new videos vs existing state before merging (preserving exact RSS timestamps/descriptions)
       const existingVideosMap = new Map(latestStateRef.current.videos.map((v) => [v.id, v]));
       const dedupedFetchedMap = new Map<string, Video>();
       for (const v of fetchedVideos) {
@@ -1268,10 +1280,24 @@ export default function App() {
         .filter((v) => !existingVideosMap.has(v.id))
         .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
 
-      // Compute updated video counts per channel after merge
-      const mergedVideosList = Array.from(
-        new Map([...existingVideosMap.entries(), ...dedupedFetchedMap.entries()]).values()
-      ).sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+      const mergedMap = new Map(existingVideosMap);
+      for (const fresh of uniqueFetched) {
+        const prev = mergedMap.get(fresh.id);
+        if (!prev) {
+          mergedMap.set(fresh.id, fresh);
+        } else {
+          mergedMap.set(fresh.id, {
+            ...prev,
+            ...fresh,
+            description: fresh.description || prev.description,
+            views: fresh.views || prev.views,
+            publishedAt: prev.description && !fresh.description ? prev.publishedAt : fresh.publishedAt,
+          });
+        }
+      }
+      const mergedVideosList = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+      );
 
       const countByChannel = new Map<string, number>();
       for (const v of mergedVideosList) {
@@ -1400,22 +1426,32 @@ export default function App() {
   const syncHandlersRef = useRef({ handleRefreshFeeds, syncChannelFeeds, handleAddChannels });
   syncHandlersRef.current = { handleRefreshFeeds, syncChannelFeeds, handleAddChannels };
 
-  // Silent non-blocking startup auto-refresh when feed cache is older than 90 seconds
+  // Silent non-blocking startup & cloud-hydration auto-refresh when feed cache is older than 30 seconds
   const didAutoSyncOnBootRef = useRef(false);
+  const lastCloudSyncUidRef = useRef<string | null>(null);
   useEffect(() => {
-    if (didAutoSyncOnBootRef.current || !isOnline || channels.length === 0) return;
+    if (!isOnline || channels.length === 0) return;
+
+    const isCloudHydratedNewUser =
+      Boolean(cloudReadyUid) && lastCloudSyncUidRef.current !== cloudReadyUid;
+    if (didAutoSyncOnBootRef.current && !isCloudHydratedNewUser) return;
+
     didAutoSyncOnBootRef.current = true;
+    if (cloudReadyUid) {
+      lastCloudSyncUidRef.current = cloudReadyUid;
+    }
+
     const lastSyncAt = loadLastFeedSyncAt();
-    const isStale = Date.now() - lastSyncAt > 90 * 1000;
+    const isStale = isCloudHydratedNewUser || Date.now() - lastSyncAt > 30 * 1000;
     if (!isStale) return;
 
     const timer = setTimeout(() => {
       void syncHandlersRef.current.syncChannelFeeds({ groupId: 'all', silent: true, force: true });
-    }, 600);
+    }, isCloudHydratedNewUser ? 900 : 450);
     return () => clearTimeout(timer);
-  }, [isOnline, channels.length]);
+  }, [isOnline, channels.length, cloudReadyUid]);
 
-  // Automatic update when switching to a group that hasn't been checked in the last 45 seconds
+  // Automatic update when switching to a group that hasn't been checked in the last 20 seconds
   useEffect(() => {
     if (!isOnline || activeGroupId === 'all') return;
     const channelsInGroup = latestStateRef.current.channels.filter(
@@ -1424,7 +1460,7 @@ export default function App() {
     if (channelsInGroup.length === 0) return;
 
     const lastGroupCheck = lastGroupSyncAtRef.current.get(activeGroupId) || 0;
-    if (Date.now() - lastGroupCheck < 45 * 1000) return;
+    if (Date.now() - lastGroupCheck < 20 * 1000) return;
 
     const timer = setTimeout(() => {
       void syncHandlersRef.current.syncChannelFeeds({
@@ -1432,11 +1468,11 @@ export default function App() {
         silent: true,
         force: true,
       });
-    }, 250);
+    }, 200);
     return () => clearTimeout(timer);
   }, [activeGroupId, isOnline, channels.length]);
 
-  // Periodic background auto-update (every 2 minutes) & on tab visibility return (>= 1 minute away)
+  // Periodic background auto-update (every 60s while visible) & on tab visibility / focus / pageshow / online return
   useEffect(() => {
     if (!isOnline || channels.length === 0) return;
 
@@ -1445,9 +1481,9 @@ export default function App() {
       const lastAll = lastGroupSyncAtRef.current.get('all') || loadLastFeedSyncAt();
       const targetGroup =
         activeGroupId !== 'all' &&
-        Date.now() - (lastGroupSyncAtRef.current.get(activeGroupId) || 0) >= 60 * 1000
+        Date.now() - (lastGroupSyncAtRef.current.get(activeGroupId) || 0) >= 25 * 1000
           ? activeGroupId
-          : Date.now() - lastAll >= 2 * 60 * 1000
+          : Date.now() - lastAll >= 55 * 1000
           ? 'all'
           : null;
       if (targetGroup) {
@@ -1466,14 +1502,18 @@ export default function App() {
         silent: true,
         force: true,
       });
-    }, 2 * 60 * 1000);
+    }, 60 * 1000);
 
     document.addEventListener('visibilitychange', checkAndSyncIfDue);
     window.addEventListener('focus', checkAndSyncIfDue);
+    window.addEventListener('pageshow', checkAndSyncIfDue);
+    window.addEventListener('online', checkAndSyncIfDue);
     return () => {
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', checkAndSyncIfDue);
       window.removeEventListener('focus', checkAndSyncIfDue);
+      window.removeEventListener('pageshow', checkAndSyncIfDue);
+      window.removeEventListener('online', checkAndSyncIfDue);
     };
   }, [isOnline, channels.length, activeGroupId]);
 
@@ -2216,14 +2256,16 @@ export default function App() {
                     </span>
                   </span>
                   <div className="flex items-center gap-3 shrink-0">
-                    {isAutoCheckingGroup ? (
+                    {isAutoCheckingGroup || isRefreshing ? (
                       <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
                         <RefreshCw className="w-3 h-3 animate-spin" />
                         <span>Memeriksa video baru...</span>
                       </span>
                     ) : (
                       <span className="hidden sm:inline text-[11px] text-slate-400 font-medium">
-                        Auto-update aktif
+                        {lastSyncedTimeLabel
+                          ? `Auto-update aktif · ${lastSyncedTimeLabel}`
+                          : 'Auto-update aktif'}
                       </span>
                     )}
                     {selectedChannelId && (
@@ -2317,13 +2359,32 @@ export default function App() {
                 <input
                   ref={searchInputRef}
                   type="text"
-                  placeholder="Cari judul video atau nama channel... (tekan /)"
+                  placeholder="Cari judul video, nama channel, atau tempel link..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && searchQuery.trim() && filteredVideos.length === 0) {
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData.getData('text');
+                    if (
+                      pasted &&
+                      /(?:https?:\/\/)?(?:[a-z0-9-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(pasted)
+                    ) {
                       e.preventDefault();
-                      openSearchChannelModal(searchQuery.trim());
+                      openSearchChannelModal(pasted.trim());
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && searchQuery.trim()) {
+                      const trimmed = searchQuery.trim();
+                      const isLinkOrHandle =
+                        /(?:https?:\/\/)?(?:[a-z0-9-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(
+                          trimmed
+                        ) ||
+                        /^@[a-zA-Z0-9_.-]{2,}$/.test(trimmed) ||
+                        /^UC[a-zA-Z0-9_-]{22}$/.test(trimmed);
+                      if (isLinkOrHandle || filteredVideos.length === 0) {
+                        e.preventDefault();
+                        openSearchChannelModal(trimmed);
+                      }
                     }
                   }}
                   className="w-full pl-9 pr-10 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"

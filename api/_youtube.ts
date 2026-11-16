@@ -344,6 +344,8 @@ function extractChannelFromHtml(html: string): { channelId: string; title?: stri
     html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/i) ||
     html.match(/feeds\/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{22})/i) ||
     html.match(/"externalId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
+    html.match(/"externalChannelId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
+    html.match(/"ownerProfileUrl":"https?:\/\/www\.youtube\.com\/(?:@[^"]+|channel\/(UC[a-zA-Z0-9_-]{22}))"/i) ||
     html.match(/"browseId":"(UC[a-zA-Z0-9_-]{22})"/i) ||
     html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/i);
 
@@ -390,6 +392,28 @@ async function readChannelFromResponse(
   return extractChannelFromHtml(accumulated);
 }
 
+function unwrapYouTubeInputUrl(raw: string): string {
+  const stripped = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  const urlMatch = stripped.match(/https?:\/\/[^\s]+/i);
+  const candidate = urlMatch
+    ? urlMatch[0].replace(/[),.;!?'"\]]+$/g, '')
+    : stripped;
+
+  try {
+    const u = new URL(candidate.startsWith('http') ? candidate : `https://${candidate}`);
+    if (u.hostname.includes('google.') && (u.searchParams.get('q') || u.searchParams.get('url'))) {
+      return u.searchParams.get('q') || u.searchParams.get('url') || stripped;
+    }
+    if (u.hostname.includes('youtube.com') && u.pathname === '/attribution_link' && u.searchParams.get('u')) {
+      const inner = u.searchParams.get('u') || '';
+      return inner.startsWith('http') ? inner : `https://www.youtube.com${inner.startsWith('/') ? '' : '/'}${inner}`;
+    }
+  } catch {
+    // not a valid full URL, return original stripped input
+  }
+  return stripped;
+}
+
 export async function resolveYouTubeChannel(
   rawInput: string,
   depth = 0
@@ -397,7 +421,7 @@ export async function resolveYouTubeChannel(
   if (depth > 2) {
     throw new Error('Channel YouTube tidak dapat diselesaikan.');
   }
-  const cleaned = rawInput.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  const cleaned = unwrapYouTubeInputUrl(rawInput);
   if (!cleaned) {
     throw new Error('Input link channel kosong.');
   }
@@ -407,8 +431,10 @@ export async function resolveYouTubeChannel(
     return { channelId: cleaned };
   }
 
-  // 2. URL with /channel/UC...
-  const channelUrlMatch = cleaned.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/i);
+  // 2. URL with /channel/UC... or /feeds/videos.xml?channel_id=UC...
+  const channelUrlMatch =
+    cleaned.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/i) ||
+    cleaned.match(/[?&]channel_id=(UC[a-zA-Z0-9_-]{22})/i);
   if (channelUrlMatch) {
     return { channelId: channelUrlMatch[1] };
   }
@@ -435,15 +461,15 @@ export async function resolveYouTubeChannel(
     }
   }
 
-  // 4. Video / Shorts / Live URL -> resolve via oEmbed or watch page
+  // 4. Video / Shorts / Live / Embed URL -> resolve via oEmbed, watch HTML, or InnerTube player
   const videoMatch = cleaned.match(
-    /(?:watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/live\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/i
+    /(?:[?&]v=|youtu\.be\/|youtube\.com\/(?:shorts|live|embed|v)\/)([a-zA-Z0-9_-]{11})/i
   );
   if (videoMatch) {
     const videoId = videoMatch[1];
     try {
       const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-      const oembedRes = await fetchWithTimeout(oembedUrl, {}, 8000);
+      const oembedRes = await fetchWithTimeout(oembedUrl, {}, 6500);
       if (oembedRes.ok) {
         const oembed = (await oembedRes.json()) as { author_url?: string; author_name?: string };
         if (oembed.author_url) {
@@ -455,37 +481,107 @@ export async function resolveYouTubeChannel(
         }
       }
     } catch {
-      // fallback to watch HTML
+      // fallback to watch HTML / InnerTube
     }
 
-    try {
-      const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const res = await fetchWithTimeout(videoPageUrl);
-      if (res.ok) {
+    const [htmlOutcome, playerOutcome] = await Promise.allSettled([
+      (async () => {
+        const res = await fetchWithTimeout(`https://www.youtube.com/watch?v=${videoId}`, {}, 7500);
+        if (!res.ok) return null;
         const html = await res.text();
-        const extracted = extractChannelFromHtml(html);
+        return extractChannelFromHtml(html);
+      })(),
+      (async () => {
+        const res = await fetchWithTimeout(
+          'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              videoId,
+              context: {
+                client: { clientName: 'ANDROID_VR', clientVersion: '1.60.19', hl: 'id', gl: 'ID' },
+              },
+            }),
+          },
+          6000
+        );
+        if (!res.ok) return null;
+        const data = await safeResponseJson<any>(res);
+        const cid = String(data?.videoDetails?.channelId || '').trim();
+        if (!/^UC[a-zA-Z0-9_-]{22}$/.test(cid)) return null;
+        return {
+          channelId: cid,
+          title: typeof data?.videoDetails?.author === 'string' ? data.videoDetails.author : undefined,
+        };
+      })(),
+    ]);
+
+    if (htmlOutcome.status === 'fulfilled' && htmlOutcome.value) {
+      return htmlOutcome.value;
+    }
+    if (playerOutcome.status === 'fulfilled' && playerOutcome.value) {
+      return playerOutcome.value;
+    }
+  }
+
+  // 4b. Playlist URL -> resolve uploads playlist (UU...) or extract channel from playlist feed/HTML
+  const playlistMatch = cleaned.match(/[?&]list=([a-zA-Z0-9_-]{10,})/i);
+  if (playlistMatch) {
+    const listId = playlistMatch[1];
+    if (/^UU[a-zA-Z0-9_-]{22}$/.test(listId)) {
+      return { channelId: `UC${listId.slice(2)}` };
+    }
+    try {
+      const rssRes = await fetchWithTimeout(
+        `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(listId)}`,
+        {},
+        6500
+      );
+      if (rssRes.ok) {
+        const xml = await rssRes.text();
+        const authorUriMatch = xml.match(/<author>[\s\S]*?<uri>https?:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})<\/uri>/i);
+        const authorNameMatch = xml.match(/<author>[\s\S]*?<name>(.*?)<\/name>/i);
+        if (authorUriMatch?.[1]) {
+          return {
+            channelId: authorUriMatch[1],
+            title: authorNameMatch?.[1] ? decodeXml(authorNameMatch[1].trim()) : undefined,
+          };
+        }
+      }
+    } catch {
+      // continue to playlist HTML
+    }
+    try {
+      const plRes = await fetchWithTimeout(`https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`, {}, 7500);
+      if (plRes.ok) {
+        const extracted = await readChannelFromResponse(plRes);
         if (extracted) return extracted;
       }
     } catch {
-      // continue
+      // ignore
     }
   }
 
   // 5. Handle (@username), /c/name, /user/name, or bare youtube.com/name
   let targetUrl = '';
   let handle: string | undefined;
+  let fallbackSearchHint: string | undefined;
 
-  const handleUrlMatch = cleaned.match(/youtube\.com\/(@[^/\s?#&]+)/i);
+  const decodedForHandle = cleaned.replace(/%40/gi, '@');
+  const handleUrlMatch = decodedForHandle.match(/youtube\.com\/(@[^/\s?#&]+)/i);
   const customUrlMatch = cleaned.match(/youtube\.com\/(c|user)\/([^/\s?#&]+)/i);
   const bareUrlMatch = cleaned.match(/youtube\.com\/([^/\s?#&]+)/i);
 
   if (handleUrlMatch) {
     handle = decodeURIComponent(handleUrlMatch[1]);
-    targetUrl = `https://www.youtube.com/${handle}`;
+    targetUrl = `https://www.youtube.com/${encodeURI(handle)}`;
+    fallbackSearchHint = handle;
   } else if (customUrlMatch) {
     const kind = customUrlMatch[1].toLowerCase();
     const name = decodeURIComponent(customUrlMatch[2]);
-    targetUrl = `https://www.youtube.com/${kind}/${name}`;
+    targetUrl = `https://www.youtube.com/${kind}/${encodeURIComponent(name)}`;
+    fallbackSearchHint = name;
     if (kind === 'user') {
       try {
         const rssRes = await fetchWithTimeout(`https://www.youtube.com/feeds/videos.xml?user=${encodeURIComponent(name)}`, {}, 8000);
@@ -500,15 +596,23 @@ export async function resolveYouTubeChannel(
         // fallback to HTML fetch
       }
     }
-  } else if (cleaned.startsWith('@')) {
-    handle = cleaned.split(/[/?#\s]/)[0];
-    targetUrl = `https://www.youtube.com/${handle}`;
-  } else if (bareUrlMatch && !['watch', 'shorts', 'live', 'playlist', 'results', 'feed'].includes(bareUrlMatch[1].toLowerCase())) {
+  } else if (decodedForHandle.startsWith('@')) {
+    handle = decodedForHandle.split(/[/?#\s]/)[0];
+    targetUrl = `https://www.youtube.com/${encodeURI(handle)}`;
+    fallbackSearchHint = handle;
+  } else if (
+    bareUrlMatch &&
+    !['watch', 'shorts', 'live', 'playlist', 'results', 'feed', 'feeds', 'attribution_link', 'clip'].includes(
+      bareUrlMatch[1].toLowerCase()
+    )
+  ) {
     const slug = decodeURIComponent(bareUrlMatch[1]);
-    targetUrl = `https://www.youtube.com/${slug}`;
+    targetUrl = `https://www.youtube.com/${encodeURIComponent(slug)}`;
+    fallbackSearchHint = slug;
   } else if (!cleaned.includes('/') && !cleaned.includes('.')) {
     handle = `@${cleaned}`;
-    targetUrl = `https://www.youtube.com/${handle}`;
+    targetUrl = `https://www.youtube.com/${encodeURI(handle)}`;
+    fallbackSearchHint = cleaned;
   }
 
   if (targetUrl) {
@@ -525,26 +629,31 @@ export async function resolveYouTubeChannel(
         }
       }
     } catch {
-      // ignore and throw clear message below
+      // fall through to InnerTube fallback
     }
   }
 
-  // Fallback: if input looks like a plain channel name without slashes/dots, try fast InnerTube channel search
-  if (
-    depth === 0 &&
-    !cleaned.includes('/') &&
-    !cleaned.includes('.') &&
-    !cleaned.startsWith('@')
-  ) {
+  // Fallback: try fast InnerTube channel search for plain names, handles, or custom slugs
+  const innerTubeQuery = fallbackSearchHint?.trim() || (!cleaned.includes('/') && !cleaned.includes('.') ? cleaned : '');
+  if (depth === 0 && innerTubeQuery) {
     try {
-      const searched = await searchChannelsViaInnerTubeHttp(cleaned, true, 3500);
+      const searched = await searchChannelsViaInnerTubeHttp(innerTubeQuery, true, 4000);
       if (searched.ok && searched.results.length > 0) {
-        const top = searched.results[0];
-        return {
-          channelId: top.id,
-          handle: top.handle,
-          title: top.title,
-        };
+        const normalizedTarget = innerTubeQuery.toLowerCase();
+        const exactMatch = searched.results.find(
+          (r) =>
+            r.handle?.toLowerCase() === normalizedTarget ||
+            r.handle?.toLowerCase() === `@${normalizedTarget.replace(/^@/, '')}` ||
+            r.title.toLowerCase() === normalizedTarget.replace(/^@/, '')
+        );
+        const top = exactMatch || (handle ? undefined : searched.results[0]);
+        if (top) {
+          return {
+            channelId: top.id,
+            handle: top.handle || handle,
+            title: top.title,
+          };
+        }
       }
     } catch {
       // fall through to clear error message
@@ -552,7 +661,7 @@ export async function resolveYouTubeChannel(
   }
 
   throw new Error(
-    `Tidak dapat menemukan Channel ID untuk input: "${rawInput}". Pastikan link channel valid (contoh: https://www.youtube.com/@username atau https://www.youtube.com/channel/UC...).`
+    `Tidak dapat menemukan Channel ID untuk input: "${rawInput}". Pastikan link video, channel, atau @handle YouTube valid.`
   );
 }
 
@@ -561,18 +670,28 @@ function relativeTimeToIso(relText: string | undefined, fallbackOffsetIndex: num
   if (!relText) {
     return new Date(now - (fallbackOffsetIndex + 16) * 86400_000).toISOString();
   }
-  const lower = relText.toLowerCase();
+  const lower = relText.toLowerCase().trim();
+  if (
+    lower.includes('baru saja') ||
+    lower.includes('just now') ||
+    lower.includes('moments ago') ||
+    lower === 'live' ||
+    lower.includes('live now') ||
+    lower.includes('sedang berlangsung')
+  ) {
+    return new Date(now - fallbackOffsetIndex * 1000).toISOString();
+  }
   const numMatch = lower.match(/(\d+)/);
   const num = numMatch ? parseInt(numMatch[1], 10) : 1;
 
   let ms = 86400_000 * (fallbackOffsetIndex + 16);
-  if (lower.includes('detik') || lower.includes('second')) ms = num * 1000;
-  else if (lower.includes('menit') || lower.includes('minute')) ms = num * 60_000;
-  else if (lower.includes('jam') || lower.includes('hour')) ms = num * 3600_000;
+  if (lower.includes('detik') || lower.includes('dtk') || lower.includes('second') || /\bsec\b/.test(lower)) ms = num * 1000;
+  else if (lower.includes('menit') || lower.includes('mnt') || lower.includes('minute') || /\bmin\b/.test(lower)) ms = num * 60_000;
+  else if (lower.includes('jam') || lower.includes('hour') || /\bhr\b/.test(lower)) ms = num * 3600_000;
   else if (lower.includes('hari') || lower.includes('day')) ms = num * 86400_000;
-  else if (lower.includes('minggu') || lower.includes('week')) ms = num * 7 * 86400_000;
-  else if (lower.includes('bulan') || lower.includes('month')) ms = num * 30 * 86400_000;
-  else if (lower.includes('tahun') || lower.includes('year')) ms = num * 365 * 86400_000;
+  else if (lower.includes('minggu') || lower.includes('mgg') || lower.includes('week')) ms = num * 7 * 86400_000;
+  else if (lower.includes('bulan') || lower.includes('bln') || lower.includes('month')) ms = num * 30 * 86400_000;
+  else if (lower.includes('tahun') || lower.includes('thn') || lower.includes('year')) ms = num * 365 * 86400_000;
 
   return new Date(now - ms - fallbackOffsetIndex * 1000).toISOString();
 }
@@ -2530,6 +2649,10 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
   }
 
   const promise = (async (): Promise<ChannelSearchResult[]> => {
+    const deadlineAt = Date.now() + 8500;
+    const budgetMs = (preferredMs: number) =>
+      Math.max(1000, Math.min(preferredMs, deadlineAt - Date.now()));
+
     const results: ChannelSearchResult[] = [];
     const seenIds = new Set<string>();
     let lastError: Error | null = null;
@@ -2545,7 +2668,7 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
     };
 
     const isDirectChannelId = VALID_CHANNEL_ID_RE.test(cleaned);
-    const isYouTubeUrl = /(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i.test(cleaned);
+    const isYouTubeUrl = /(?:https?:\/\/)?(?:[a-z0-9-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(cleaned);
     const isSingleHandle = /^@[a-zA-Z0-9_.-]{2,}$/.test(cleaned);
 
     // Exact Channel ID or YouTube URL: resolve directly
@@ -2579,13 +2702,9 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
       }
     }
 
-    const deadlineAt = Date.now() + 8500;
-    const budgetMs = (preferredMs: number) =>
-      Math.max(1000, Math.min(preferredMs, deadlineAt - Date.now()));
-
     let searchTerm = isSingleHandle ? cleaned.slice(1) : cleaned;
     if (isYouTubeUrl) {
-      const handleMatch = cleaned.match(/youtube\.com\/(@[^/\s?#&]+)/i);
+      const handleMatch = cleaned.replace(/%40/gi, '@').match(/youtube\.com\/(@[^/\s?#&]+)/i);
       const customMatch = cleaned.match(/youtube\.com\/(?:c|user)\/([^/\s?#&]+)/i);
       const slug = handleMatch?.[1] || customMatch?.[1];
       if (slug) {

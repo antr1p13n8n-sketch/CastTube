@@ -134,7 +134,7 @@ async function startServer() {
       }
 
       const { channelId, handle, title: resolvedTitle } = await resolveYouTubeChannel(input);
-      const data = await fetchChannelRss(channelId);
+      const data = await fetchChannelRss(channelId, 1);
 
       if (handle && !data.channel.handle) {
         data.channel.handle = handle;
@@ -199,7 +199,7 @@ async function startServer() {
         return;
       }
 
-      const payload = await fetchBatchChannelFeeds(channelIds, 2, 6, Boolean(force));
+      const payload = await fetchBatchChannelFeeds(channelIds, 1, 8, Boolean(force));
       res.setHeader('Cache-Control', 'no-store');
       res.json(payload);
     } catch (err: unknown) {

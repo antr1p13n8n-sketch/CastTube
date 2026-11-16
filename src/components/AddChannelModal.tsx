@@ -34,14 +34,31 @@ interface AddChannelModalProps {
   initialSearchQuery?: string;
 }
 
-// Helper to extract and clean YouTube URLs / handles from any text block (including mobile share text like "Title https://youtu.be/...")
+// Helper to extract, unwrap, and clean YouTube URLs / handles from any text block (including mobile share text like "Title https://youtu.be/...")
 function cleanYouTubeUrl(rawUrl: string): string {
   const trimmed = rawUrl.replace(/[),.;!?'"\]]+$/g, '').trim();
   try {
-    const urlObj = new URL(trimmed);
-    urlObj.searchParams.delete('si');
-    urlObj.searchParams.delete('feature');
-    urlObj.searchParams.delete('app');
+    let urlObj = new URL(trimmed);
+    if (urlObj.hostname.includes('google.') && (urlObj.searchParams.get('q') || urlObj.searchParams.get('url'))) {
+      const target = urlObj.searchParams.get('q') || urlObj.searchParams.get('url') || '';
+      if (target) {
+        urlObj = new URL(target.startsWith('http') ? target : `https://${target}`);
+      }
+    } else if (urlObj.hostname.includes('youtube.com') && urlObj.pathname === '/attribution_link' && urlObj.searchParams.get('u')) {
+      const inner = urlObj.searchParams.get('u') || '';
+      const resolvedInner = inner.startsWith('http')
+        ? inner
+        : `https://www.youtube.com${inner.startsWith('/') ? '' : '/'}${inner}`;
+      urlObj = new URL(resolvedInner);
+    }
+    if (urlObj.hostname.includes('youtube.com') || urlObj.hostname.includes('youtu.be')) {
+      urlObj.protocol = 'https:';
+      urlObj.searchParams.delete('si');
+      urlObj.searchParams.delete('feature');
+      urlObj.searchParams.delete('app');
+      urlObj.searchParams.delete('pp');
+      urlObj.searchParams.delete('ab_channel');
+    }
     return urlObj.toString();
   } catch {
     return trimmed;
@@ -50,10 +67,7 @@ function cleanYouTubeUrl(rawUrl: string): string {
 
 export function parseAndFormatLinks(raw: string): string[] {
   if (!raw) return [];
-  const lines = raw
-    .split(/[\r\n,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const normalizedRaw = raw.replace(/[\u200B-\u200D\uFEFF]/g, '');
   const results: string[] = [];
   const seen = new Set<string>();
 
@@ -64,31 +78,45 @@ export function parseAndFormatLinks(raw: string): string[] {
     results.push(clean);
   };
 
+  let remainder = normalizedRaw;
+
+  // 1. Extract all full URLs anywhere in pasted/shared text
+  const urlMatches = remainder.match(/https?:\/\/[^\s,]+/gi);
+  if (urlMatches) {
+    for (const u of urlMatches) {
+      pushUnique(cleanYouTubeUrl(u));
+      remainder = remainder.replace(u, ' ');
+    }
+  }
+
+  // 2. Extract bare youtube.com / youtu.be URLs without scheme (e.g. m.youtube.com/@mkbhd)
+  const bareDomainMatches = remainder.match(/(?:[a-z0-9-]+\.)?(?:youtube\.com|youtu\.be)\/[^\s,]+/gi);
+  if (bareDomainMatches) {
+    for (const u of bareDomainMatches) {
+      pushUnique(cleanYouTubeUrl(`https://${u}`));
+      remainder = remainder.replace(u, ' ');
+    }
+  }
+
+  // 3. Extract standalone @handles or UC channel IDs outside URLs
+  const handleOrIdMatches = remainder.match(/(?:^|[\s,;])(@[a-zA-Z0-9_.-]{2,}|UC[a-zA-Z0-9_-]{22})(?=$|[\s,/?#])/g);
+  if (handleOrIdMatches) {
+    for (const token of handleOrIdMatches) {
+      pushUnique(token.replace(/^[\s,;]+/, '').trim());
+    }
+  }
+
+  // If real links/handles/IDs were extracted, ignore surrounding Share Sheet title text
+  if (results.length > 0) {
+    return results;
+  }
+
+  // 4. Plain channel names (line/comma separated)
+  const lines = normalizedRaw
+    .split(/[\r\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   for (const line of lines) {
-    const urlMatches = line.match(/https?:\/\/[^\s]+/gi);
-    if (urlMatches && urlMatches.length > 0) {
-      for (const u of urlMatches) {
-        pushUnique(cleanYouTubeUrl(u));
-      }
-      continue;
-    }
-
-    const bareDomainMatches = line.match(/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/gi);
-    if (bareDomainMatches && bareDomainMatches.length > 0) {
-      for (const u of bareDomainMatches) {
-        pushUnique(cleanYouTubeUrl(`https://${u}`));
-      }
-      continue;
-    }
-
-    const handleOrIdMatches = line.match(/(?:^|\s)(@[a-zA-Z0-9_.-]+|UC[a-zA-Z0-9_-]{22})(?=\s|$|[/?#])/g);
-    if (handleOrIdMatches && handleOrIdMatches.length > 0) {
-      for (const token of handleOrIdMatches) {
-        pushUnique(token.trim());
-      }
-      continue;
-    }
-
     pushUnique(line);
   }
 
@@ -112,9 +140,10 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   );
   const [isLoading, setIsLoading] = useState(false);
   const [hasPasted, setHasPasted] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
-    null
-  );
+  const [feedback, setFeedback] = useState<{
+    type: 'success' | 'error' | 'info';
+    message: string;
+  } | null>(null);
 
   // YouTube Channel Search states
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
@@ -125,6 +154,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   const [addingChannelId, setAddingChannelId] = useState<string | null>(null);
   const [addedInSession, setAddedInSession] = useState<Record<string, boolean>>({});
 
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const searchAbortRef = React.useRef<AbortController | null>(null);
   const searchDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastExecutedQueryRef = React.useRef<string>('');
@@ -223,16 +253,18 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       setSearchResults(data.channels);
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') {
-        if (didTimeout) {
+        if (didTimeout && searchAbortRef.current === controller) {
           setSearchResults([]);
           setSearchError('Pencarian channel melebihi batas waktu. Silakan klik Coba Lagi.');
         }
         return;
       }
-      setSearchResults([]);
-      setSearchError(
-        err instanceof Error ? err.message : 'Terjadi kesalahan saat mencari channel YouTube.'
-      );
+      if (searchAbortRef.current === controller) {
+        setSearchResults([]);
+        setSearchError(
+          err instanceof Error ? err.message : 'Terjadi kesalahan saat mencari channel YouTube.'
+        );
+      }
     } finally {
       clearTimeout(timeoutId);
       if (searchAbortRef.current === controller) {
@@ -343,7 +375,16 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     }
   };
 
-  // Read directly from system clipboard
+  // Focus textarea when entering paste tab without pre-filled links
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'paste' || initialPastedText) return;
+    const t = setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 120);
+    return () => clearTimeout(t);
+  }, [isOpen, activeTab, initialPastedText]);
+
+  // Read directly from system clipboard with smooth fallback focus when blocked by browser/iframe
   const handlePasteFromClipboard = async () => {
     try {
       if (!navigator.clipboard || !navigator.clipboard.readText) {
@@ -352,10 +393,11 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
 
       const text = await navigator.clipboard.readText();
       if (!text || !text.trim()) {
+        textareaRef.current?.focus();
         setFeedback({
-          type: 'error',
+          type: 'info',
           message:
-            'Papan klip (clipboard) Anda kosong. Silakan salin link YouTube terlebih dahulu.',
+            'Papan klip (clipboard) kosong. Salin link YouTube terlebih dahulu, atau ketik langsung di bawah.',
         });
         return;
       }
@@ -364,8 +406,9 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       const textToAdd = formattedLinks.length > 0 ? formattedLinks.join('\n') : text.trim();
 
       setInputText((prev) => {
-        const trimmed = prev.trim();
-        return trimmed ? `${trimmed}\n${textToAdd}` : textToAdd;
+        const existing = parseAndFormatLinks(prev);
+        const merged = Array.from(new Set([...existing, ...formattedLinks]));
+        return merged.length > 0 ? merged.join('\n') : prev.trim() ? `${prev.trim()}\n${textToAdd}` : textToAdd;
       });
 
       setHasPasted(true);
@@ -379,30 +422,37 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
       feedbackTimerRef.current = setTimeout(() => setFeedback(null), 3000);
     } catch {
+      textareaRef.current?.focus();
       setFeedback({
-        type: 'error',
+        type: 'info',
         message:
-          'Izin clipboard ditolak. Silakan gunakan tombol keyboard Ctrl+V (atau Cmd+V) / klik kanan lalu pilih Tempel.',
+          'Browser membatasi tempel otomatis. Kotak input di bawah sudah aktif — ketuk lalu pilih Tempel / Paste (atau tekan Ctrl+V / Cmd+V).',
       });
     }
   };
 
-  // Handle native paste event to auto-format multiple URLs
+  // Handle native paste event to extract & clean URLs automatically (even single mobile Share link + title)
   const handleNativePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const pasteData = e.clipboardData.getData('text');
-    if (pasteData) {
-      const formatted = parseAndFormatLinks(pasteData);
-      if (formatted.length > 1) {
-        e.preventDefault();
-        const textToAdd = formatted.join('\n');
-        setInputText((prev) => {
-          const trimmed = prev.trim();
-          return trimmed ? `${trimmed}\n${textToAdd}` : textToAdd;
-        });
-        setHasPasted(true);
-        if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
-        pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
-      }
+    if (!pasteData) return;
+
+    const formatted = parseAndFormatLinks(pasteData);
+    if (formatted.length > 0) {
+      e.preventDefault();
+      setInputText((prev) => {
+        const existing = prev.trim() ? parseAndFormatLinks(prev) : [];
+        const merged = Array.from(new Set([...existing, ...formatted]));
+        return merged.join('\n');
+      });
+      setHasPasted(true);
+      if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
+      pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
+      setFeedback({
+        type: 'success',
+        message: `${formatted.length} link YouTube berhasil ditempel!`,
+      });
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = setTimeout(() => setFeedback(null), 2500);
     }
   };
 
@@ -410,11 +460,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     e.preventDefault();
     if (!inputText.trim()) return;
 
-    const lines = inputText
-      .split(/[\n,]+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
+    const lines = parseAndFormatLinks(inputText);
     if (lines.length === 0) return;
 
     setIsLoading(true);
@@ -440,7 +486,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
           type: 'error',
           message:
             result.lastError ||
-            'Tidak dapat menemukan channel. Pastikan link atau handle benar.',
+            'Tidak dapat menemukan channel. Pastikan link atau handle YouTube benar.',
         });
       }
     } catch (err: unknown) {
@@ -602,6 +648,18 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   <input
                     type="text"
                     value={searchQuery}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData.getData('text');
+                      if (!pasted) return;
+                      const extracted = parseAndFormatLinks(pasted);
+                      if (extracted.length > 0 && /(?:youtube\.com|youtu\.be|^@|^UC[a-zA-Z0-9_-]{22}$)/i.test(extracted[0])) {
+                        e.preventDefault();
+                        const target = extracted[0];
+                        setSearchQuery(target);
+                        if (searchError) setSearchError(null);
+                        void executeYouTubeSearch(target);
+                      }
+                    }}
                     onChange={(e) => {
                       const val = e.target.value;
                       setSearchQuery(val);
@@ -614,7 +672,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                         setIsSearching(false);
                       }
                     }}
-                    placeholder="Ketik nama channel YouTube..."
+                    placeholder="Ketik nama channel, @handle, atau tempel link YouTube..."
                     autoFocus={typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches}
                     className="w-full pl-10 pr-10 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
                   />
@@ -686,6 +744,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
                     feedback.type === 'success'
                       ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                      : feedback.type === 'info'
+                      ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
                       : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 border border-red-200 dark:border-red-800'
                   }`}
                 >
@@ -902,18 +962,19 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 </div>
 
                 <textarea
+                  ref={textareaRef}
                   rows={4}
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
                   onPaste={handleNativePaste}
-                  placeholder={`Klik tombol "Tempel dari Clipboard" di atas atau tekan Ctrl+V di sini.\n\nContoh yang didukung:\nhttps://www.youtube.com/@mkbhd\nhttps://www.youtube.com/@GadgetIn\n@corbuzier\nUCsXVk37bltHxD1rDPwtNM8Q`}
+                  placeholder={`Ketuk di sini lalu pilih Tempel (atau Ctrl+V / klik tombol "Tempel dari Clipboard").\n\nContoh yang didukung:\nhttps://www.youtube.com/@mkbhd\nhttps://youtu.be/VIDEO_ID\nhttps://youtube.com/shorts/VIDEO_ID\n@corbuzier\nUCsXVk37bltHxD1rDPwtNM8Q`}
                   className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 font-mono focus:outline-hidden focus:ring-2 focus:ring-red-500 leading-relaxed"
                 />
                 <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400">
-                  <span>Bisa paste URL video, URL channel, atau @handle.</span>
+                  <span>Bisa paste URL video, Shorts, Playlist, URL channel, atau @handle.</span>
                   <span className="font-mono tabular-nums">
                     {inputText.trim()
-                      ? `${inputText.split(/[\n,]+/).filter(Boolean).length} link`
+                      ? `${parseAndFormatLinks(inputText).length} link`
                       : '0 link'}
                   </span>
                 </div>
@@ -945,6 +1006,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
                     feedback.type === 'success'
                       ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                      : feedback.type === 'info'
+                      ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
                       : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 border border-red-200 dark:border-red-800'
                   }`}
                 >
