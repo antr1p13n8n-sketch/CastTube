@@ -351,7 +351,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-xs"
         >
           <motion.div
             key="extractor-modal-card"
@@ -360,16 +360,16 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left"
+            className="w-full max-w-lg max-h-[90dvh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left"
           >
             {/* Header */}
-            <div className="flex items-start justify-between gap-3 px-6 py-5 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-start gap-3">
+            <div className="flex items-start justify-between gap-3 px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-start gap-3 min-w-0">
                 <div className="p-2.5 rounded-2xl bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">
                   <ShieldAlert className="w-5 h-5" />
                 </div>
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                <div className="min-w-0">
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
                     Atasi Pembatasan Download Audio YouTube
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
@@ -380,14 +380,14 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
                 title="Tutup"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-5">
               {/* Pending Video Notice */}
               {pendingVideo && (
                 <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/70">

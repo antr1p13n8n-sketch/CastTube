@@ -10,10 +10,13 @@
 
   html {
     scroll-behavior: smooth;
+    overflow-x: clip;
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
     font-family: var(--font-sans);
+    overflow-x: clip;
   }
 }
 
@@ -40,5 +43,12 @@
   .video-card-auto {
     content-visibility: auto;
     contain-intrinsic-size: 340px 330px;
+  }
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }

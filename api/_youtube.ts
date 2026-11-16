@@ -410,10 +410,22 @@ export async function resolveYouTubeChannel(
   }
 
   // 3. Check preset channels first for instant match
+  const lowerCleaned = cleaned.toLowerCase();
   for (const [id, data] of Object.entries(PRESET_CHANNELS)) {
+    const idLower = id.toLowerCase();
+    const handleLower = data.channel.handle?.toLowerCase();
+    const escapedHandle = handleLower
+      ? handleLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      : '';
+    const matchesHandle = Boolean(
+      handleLower &&
+        (lowerCleaned === handleLower ||
+          new RegExp(`(?:^|/)${escapedHandle}(?:[/?#\\s]|$)`, 'i').test(cleaned))
+    );
     if (
-      cleaned.toLowerCase().includes(id.toLowerCase()) ||
-      (data.channel.handle && cleaned.toLowerCase().includes(data.channel.handle.toLowerCase()))
+      lowerCleaned === idLower ||
+      lowerCleaned.includes(`/channel/${idLower}`) ||
+      matchesHandle
     ) {
       return { channelId: id, handle: data.channel.handle, title: data.channel.title };
     }

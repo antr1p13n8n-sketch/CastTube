@@ -14,8 +14,16 @@ import {
   Check,
   AlertCircle,
   X,
+  Download,
 } from 'lucide-react';
-import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
+import {
+  User,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+} from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
 
 type FirestoreServiceModule = typeof import('./services/firestoreService');
@@ -204,6 +212,7 @@ export default function App() {
     downloads: audioDownloads,
     notice: downloadNotice,
     startDownload: handleDownloadAudio,
+    saveOrShareDownload: handleSaveOrShareDownload,
     dismissNotice: dismissDownloadNotice,
   } = useAudioDownload({
     onRestrictionBlocked: handleDownloadRestrictionBlocked,
@@ -457,6 +466,21 @@ export default function App() {
   const [cloudReadyUid, setCloudReadyUid] = useState<string | null>(null);
 
   useEffect(() => {
+    getRedirectResult(auth).catch((error: unknown) => {
+      const code = (error as { code?: string })?.code;
+      if (!code || code === 'auth/no-auth-event') return;
+      console.warn('Gagal menyelesaikan login redirect Google:', error);
+      if (code === 'auth/unauthorized-domain') {
+        setAuthNotice(
+          'Domain belum terdaftar di Firebase Auth. Sinkronisasi cloud dinonaktifkan sementara (data lokal tetap aman).'
+        );
+      } else {
+        setAuthNotice(
+          'Login Google di browser HP diblokir cookie/privasi. Coba izinkan cookie pihak ketiga atau buka di Chrome/Safari utama (data lokal tetap aman).'
+        );
+      }
+    });
+
     const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       setAuthLoading(false);
@@ -523,12 +547,21 @@ export default function App() {
 
   const handleSignIn = useCallback(async () => {
     setAuthNotice(null);
+    const inIframe = typeof window !== 'undefined' && window.self !== window.top;
+    const isStandalonePwa =
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(display-mode: standalone)').matches ||
+        (window.navigator as { standalone?: boolean }).standalone === true);
+
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error: unknown) {
       const code = (error as { code?: string })?.code;
-      if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
-        const inIframe = typeof window !== 'undefined' && window.self !== window.top;
+      if (
+        code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment' ||
+        (isStandalonePwa && code === 'auth/popup-closed-by-user')
+      ) {
         if (!inIframe) {
           try {
             await signInWithRedirect(auth, googleProvider);
@@ -543,6 +576,12 @@ export default function App() {
         return;
       }
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        return;
+      }
+      if (code === 'auth/unauthorized-domain') {
+        setAuthNotice(
+          'Domain belum diotorisasi untuk login Google. Data lokal tetap tersimpan aman di perangkat Anda.'
+        );
         return;
       }
       console.warn('Gagal masuk dengan Google:', error);
@@ -1839,7 +1878,7 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 selection:bg-red-500 selection:text-white transition-colors duration-200 pb-28">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 selection:bg-red-500 selection:text-white transition-colors duration-200 pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
       {/* Top Bar Header */}
       <Header
         theme={themePreference}
@@ -1922,8 +1961,8 @@ export default function App() {
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
                   : isPlaying && !useNativeAudio && !isCheckingNativeAudio
-                  ? 'fixed bottom-24 right-3 w-44 sm:w-64 aspect-video rounded-2xl overflow-hidden shadow-2xl border border-slate-300 dark:border-slate-700 z-40 bg-black transition-all'
-                  : 'fixed bottom-24 right-3 w-44 aspect-video pointer-events-none opacity-0 -z-50 overflow-hidden'
+                  ? 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 sm:w-64 aspect-video rounded-2xl overflow-hidden shadow-2xl border border-slate-300 dark:border-slate-700 z-40 bg-black transition-all'
+                  : 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 aspect-video pointer-events-none opacity-0 -z-50 overflow-hidden'
               }
             >
               <VideoPlayerView
@@ -2117,7 +2156,7 @@ export default function App() {
                       <motion.div
                         key={ch.id}
                         whileHover={{ y: -1 }}
-                        className={`group flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 text-xs font-medium rounded-xl whitespace-nowrap shrink-0 transition-colors border ${
+                        className={`group flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 text-xs font-medium rounded-xl whitespace-nowrap shrink-0 transition-colors border ${
                           isSelected
                             ? 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 shadow-xs'
                             : 'bg-slate-50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/70 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -2125,7 +2164,7 @@ export default function App() {
                       >
                         <button
                           onClick={() => setSelectedChannelId(isSelected ? null : ch.id)}
-                          className="flex items-center gap-2 cursor-pointer"
+                          className="flex items-center gap-2 py-0.5 cursor-pointer"
                         >
                           <img
                             src={ch.avatar || `https://avatar.vercel.sh/${ch.id}?size=64`}
@@ -2138,7 +2177,7 @@ export default function App() {
                             }}
                             className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700"
                           />
-                          <span className="max-w-[160px] truncate">{ch.title}</span>
+                          <span className="max-w-[140px] sm:max-w-[160px] truncate">{ch.title}</span>
                           <span
                             className={`text-[10px] px-1.5 py-0.2 rounded-full tabular-nums ${
                               isSelected
@@ -2154,10 +2193,10 @@ export default function App() {
                             e.stopPropagation();
                             setChannelToDelete(ch);
                           }}
-                          className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-100/70 dark:hover:text-red-400 dark:hover:bg-red-900/40 transition-colors cursor-pointer"
+                          className="p-1.5 ml-0.5 pl-2 border-l border-slate-200/70 dark:border-slate-700/70 rounded-r-lg text-slate-400 hover:text-red-600 hover:bg-red-100/70 dark:hover:text-red-400 dark:hover:bg-red-900/40 transition-colors cursor-pointer"
                           title={`Hapus channel ${ch.title}`}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </motion.div>
                     );
@@ -2608,7 +2647,7 @@ export default function App() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.96 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md pointer-events-auto"
+            className="fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md pointer-events-auto"
           >
             <div
               className={`flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs ${
@@ -2625,6 +2664,16 @@ export default function App() {
               <div className="flex-1 min-w-0 text-left">
                 <div className="font-bold truncate">{downloadNotice.title}</div>
                 <div className="opacity-90 break-words">{downloadNotice.message}</div>
+                {downloadNotice.type === 'success' && downloadNotice.hasLocalFile && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveOrShareDownload(downloadNotice.videoId)}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-emerald-800 font-bold text-[11px] hover:bg-emerald-50 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Simpan / Bagikan File</span>
+                  </button>
+                )}
                 {downloadNotice.requiresAuth && (
                   <button
                     type="button"
@@ -2637,7 +2686,7 @@ export default function App() {
                       setIsExtractorModalOpen(true);
                       dismissDownloadNotice();
                     }}
-                    className="mt-2 px-3 py-1 rounded-lg bg-white text-red-700 font-bold text-[11px] hover:bg-red-50 transition-colors cursor-pointer"
+                    className="mt-2 px-3 py-1.5 rounded-lg bg-white text-red-700 font-bold text-[11px] hover:bg-red-50 transition-colors cursor-pointer"
                   >
                     Atasi Pembatasan YouTube
                   </button>
@@ -2646,7 +2695,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={dismissDownloadNotice}
-                className="p-1 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
                 title="Tutup"
               >
                 <X className="w-3.5 h-3.5" />
@@ -2664,7 +2713,7 @@ export default function App() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.96 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-24 right-4 z-40 w-[calc(100%-2rem)] sm:w-auto max-w-sm pointer-events-auto"
+            className="fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] left-4 z-40 w-[calc(100%-2rem)] sm:w-auto max-w-sm pointer-events-auto"
           >
             <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-emerald-950/95 border-emerald-700/80 text-emerald-50">
               <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
@@ -2681,7 +2730,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setFeedUpdateNotice(null)}
-                className="p-1 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
                 title="Tutup"
               >
                 <X className="w-3.5 h-3.5" />
@@ -2700,7 +2749,7 @@ export default function App() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.96 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md pointer-events-auto"
+            className="fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-md pointer-events-auto"
           >
             <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-amber-950/95 border-amber-700/80 text-amber-50">
               <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -2708,7 +2757,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setAuthNotice(null)}
-                className="p-1 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
                 title="Tutup"
               >
                 <X className="w-3.5 h-3.5" />

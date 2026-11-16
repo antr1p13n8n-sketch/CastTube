@@ -168,7 +168,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs"
         >
           <motion.div
             key="playlist-modal-dialog"
@@ -177,26 +177,26 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-4xl max-h-[90vh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left transition-colors duration-200"
+            className="relative w-full max-w-4xl max-h-[90dvh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left transition-colors duration-200"
           >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-red-600 text-white shadow-sm">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-red-600 text-white shadow-sm shrink-0">
               <ListMusic className="w-5 h-5" />
             </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
                 Playlist Kurasi Lintas Channel
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 truncate">
                 Susun urutan video dari berbagai channel & sinkron otomatis ke Firestore
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -204,7 +204,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
 
         {/* Quick Add-To-Playlist Banner if opened from a VideoCard */}
         {initialVideoToAdd && (
-          <div className="px-6 py-3 bg-red-50/80 dark:bg-red-950/30 border-b border-red-200/70 dark:border-red-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shrink-0">
+          <div className="px-4 sm:px-6 py-3 bg-red-50/80 dark:bg-red-950/30 border-b border-red-200/70 dark:border-red-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <img
                 src={initialVideoToAdd.thumbnail}
@@ -228,7 +228,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                   <button
                     key={pl.id}
                     onClick={() => handleToggleVideoInPlaylist(pl, initialVideoToAdd.id)}
-                    className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                    className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                       added
                         ? 'bg-emerald-600 text-white'
                         : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-red-400'
@@ -244,9 +244,9 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
         )}
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-12 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto md:overflow-hidden grid grid-cols-1 md:grid-cols-12">
           {/* Left Column: Playlists List & Create Form */}
-          <div className="md:col-span-4 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800 p-4 space-y-3 bg-slate-50/60 dark:bg-slate-950/40">
+          <div className="md:col-span-4 md:overflow-y-auto border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800 p-4 space-y-3 bg-slate-50/60 dark:bg-slate-950/40">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                 Daftar Playlist ({playlists.length})
@@ -272,8 +272,8 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                   placeholder="Nama playlist (misal: Podcast Pagi)..."
                   maxLength={100}
                   required
-                  autoFocus
-                  className="w-full px-3 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500"
+                  autoFocus={typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500"
                 />
                 <input
                   type="text"
@@ -342,7 +342,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
           </div>
 
           {/* Right Column: Active Playlist Editor & Video Picker */}
-          <div className="md:col-span-8 p-5 space-y-5 overflow-y-auto">
+          <div className="md:col-span-8 p-4 sm:p-5 space-y-5 md:overflow-y-auto">
             {!activePlaylist ? (
               <div className="py-16 text-center text-xs text-slate-400">
                 Pilih atau buat playlist untuk mulai menyusun daftar video dari berbagai channel.
@@ -360,17 +360,17 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                           onChange={(e) => setEditingName(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && handleSaveRename()}
                           autoFocus
-                          className="px-2.5 py-1 text-sm font-bold rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500"
+                          className="px-2.5 py-1.5 text-sm font-bold rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500"
                         />
                         <button
                           onClick={handleSaveRename}
-                          className="px-2.5 py-1 text-xs font-bold text-white bg-emerald-600 rounded-lg cursor-pointer"
+                          className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 rounded-lg cursor-pointer"
                         >
                           Simpan
                         </button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         <h3 className="text-base font-extrabold text-slate-900 dark:text-white truncate">
                           {activePlaylist.name}
                         </h3>
@@ -380,26 +380,26 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                             setIsRenaming(true);
                             setConfirmingDelete(false);
                           }}
-                          className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                          className="p-2 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
                           title="Ganti nama playlist"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         {confirmingDelete ? (
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             <button
                               onClick={() => {
                                 onDeletePlaylist(activePlaylist.id);
                                 setSelectedPlaylistId(null);
                                 setConfirmingDelete(false);
                               }}
-                              className="px-2 py-0.5 text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-md cursor-pointer"
+                              className="px-2.5 py-1 text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-md cursor-pointer"
                             >
                               Hapus
                             </button>
                             <button
                               onClick={() => setConfirmingDelete(false)}
-                              className="px-2 py-0.5 text-[11px] font-semibold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-md cursor-pointer"
+                              className="px-2.5 py-1 text-[11px] font-semibold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-md cursor-pointer"
                             >
                               Batal
                             </button>
@@ -407,7 +407,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                         ) : (
                           <button
                             onClick={() => setConfirmingDelete(true)}
-                            className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                            className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer shrink-0"
                             title="Hapus playlist"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -416,7 +416,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                       </div>
                     )}
                     <p className="text-xs text-slate-500 mt-0.5">
-                      {orderedPlaylistVideos.length} video · Seret atau gunakan panah untuk mengubah urutan
+                      {orderedPlaylistVideos.length} video · Gunakan tombol panah untuk mengubah urutan
                     </p>
                   </div>
 
@@ -460,23 +460,23 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                         onDragStart={() => setDragIndex(idx)}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={() => handleDropReorder(idx)}
-                        className={`flex items-center gap-3 p-2.5 rounded-2xl border transition-all ${
+                        className={`flex items-center gap-2 sm:gap-3 p-2.5 rounded-2xl border transition-all ${
                           dragIndex === idx
                             ? 'opacity-50 border-red-400 bg-red-50/40 dark:bg-red-950/20'
                             : 'bg-slate-50/80 dark:bg-slate-800/50 border-slate-200/70 dark:border-slate-800'
                         }`}
                       >
-                        <div className="cursor-grab text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 shrink-0">
+                        <div className="hidden sm:block cursor-grab text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 shrink-0">
                           <GripVertical className="w-4 h-4" />
                         </div>
-                        <span className="text-[11px] font-mono text-slate-400 w-5 text-center shrink-0">
+                        <span className="text-[11px] font-mono text-slate-400 w-4 sm:w-5 text-center shrink-0">
                           {idx + 1}
                         </span>
                         <img
                           src={vid.thumbnail}
                           alt={vid.title}
                           referrerPolicy="no-referrer"
-                          className="w-16 h-10 rounded-lg object-cover shrink-0"
+                          className="w-12 h-8 sm:w-16 sm:h-10 rounded-lg object-cover shrink-0"
                         />
                         <div className="min-w-0 flex-1">
                           <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
@@ -484,11 +484,11 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                           </div>
                           <div className="text-[11px] text-slate-500 truncate">{vid.channelTitle}</div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex items-center gap-0.5 shrink-0">
                           <button
                             onClick={() => handleMoveVideo(idx, -1)}
                             disabled={idx === 0}
-                            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30 cursor-pointer"
+                            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30 cursor-pointer"
                             title="Pindah ke atas"
                           >
                             <ArrowUp className="w-3.5 h-3.5" />
@@ -496,14 +496,14 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                           <button
                             onClick={() => handleMoveVideo(idx, 1)}
                             disabled={idx === orderedPlaylistVideos.length - 1}
-                            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30 cursor-pointer"
+                            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30 cursor-pointer"
                             title="Pindah ke bawah"
                           >
                             <ArrowDown className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleToggleVideoInPlaylist(activePlaylist, vid.id)}
-                            className="p-1 rounded-lg text-slate-400 hover:text-red-600 cursor-pointer"
+                            className="p-2 rounded-lg text-slate-400 hover:text-red-600 cursor-pointer"
                             title="Hapus dari playlist"
                           >
                             <X className="w-3.5 h-3.5" />
@@ -527,12 +527,12 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                         value={pickerSearch}
                         onChange={(e) => setPickerSearch(e.target.value)}
                         placeholder="Cari judul atau channel..."
-                        className="w-full pl-8 pr-3 py-1 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500"
+                        className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500"
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:max-h-56 md:overflow-y-auto pr-1">
                     {filteredPickerVideos.map((vid) => {
                       const inPlaylist = activePlaylist.videoIds.includes(vid.id);
                       return (

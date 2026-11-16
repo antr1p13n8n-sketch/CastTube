@@ -25,6 +25,14 @@ export interface AudioDownloadNotice {
   type: 'success' | 'error';
   message: string;
   requiresAuth?: boolean;
+  filename?: string;
+  hasLocalFile?: boolean;
+}
+
+interface StoredDownloadFile {
+  blob: Blob;
+  blobUrl: string;
+  filename: string;
 }
 
 function getFallbackExtension(mimeType: string): string {
@@ -76,6 +84,17 @@ function extractFilenameFromHeaders(
   return `${cleaned || `casttube-${videoId}`}.${ext}`;
 }
 
+function triggerAnchorDownload(blobUrl: string, filename: string): void {
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = filename;
+  link.rel = 'noopener';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 interface UseAudioDownloadOptions {
   onRestrictionBlocked?: (video: Video) => void;
 }
@@ -86,32 +105,96 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
   const controllersRef = useRef<Record<string, AbortController>>({});
   const resetTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completedFilesRef = useRef<Record<string, StoredDownloadFile>>({});
   const onRestrictionBlockedRef = useRef(options?.onRestrictionBlocked);
   onRestrictionBlockedRef.current = options?.onRestrictionBlocked;
 
-  const showNotice = useCallback((nextNotice: AudioDownloadNotice) => {
-    setNotice(nextNotice);
-    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-    noticeTimerRef.current = setTimeout(
-      () => {
-        setNotice(null);
-      },
-      nextNotice.requiresAuth ? 10000 : 5500
-    );
+  const revokeStoredFile = useCallback((videoId: string) => {
+    const existing = completedFilesRef.current[videoId];
+    if (existing) {
+      URL.revokeObjectURL(existing.blobUrl);
+      delete completedFilesRef.current[videoId];
+    }
   }, []);
+
+  const showNotice = useCallback(
+    (nextNotice: AudioDownloadNotice) => {
+      setNotice((prev) => {
+        if (prev && prev.videoId !== nextNotice.videoId) {
+          revokeStoredFile(prev.videoId);
+        }
+        return nextNotice;
+      });
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      const durationMs = nextNotice.requiresAuth
+        ? 10000
+        : nextNotice.hasLocalFile
+        ? 15000
+        : 5500;
+      noticeTimerRef.current = setTimeout(() => {
+        setNotice((cur) => {
+          if (cur) revokeStoredFile(cur.videoId);
+          return null;
+        });
+      }, durationMs);
+    },
+    [revokeStoredFile]
+  );
 
   const dismissNotice = useCallback(() => {
     if (noticeTimerRef.current) {
       clearTimeout(noticeTimerRef.current);
       noticeTimerRef.current = null;
     }
-    setNotice(null);
+    setNotice((cur) => {
+      if (cur) revokeStoredFile(cur.videoId);
+      return null;
+    });
+  }, [revokeStoredFile]);
+
+  const saveOrShareDownload = useCallback(async (videoId: string) => {
+    const stored = completedFilesRef.current[videoId];
+    if (!stored) return;
+
+    const isTouchDevice =
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(pointer: coarse)').matches || (navigator.maxTouchPoints || 0) > 0);
+
+    if (
+      isTouchDevice &&
+      typeof navigator !== 'undefined' &&
+      typeof File !== 'undefined' &&
+      typeof navigator.share === 'function' &&
+      typeof navigator.canShare === 'function'
+    ) {
+      try {
+        const file = new File([stored.blob], stored.filename, {
+          type: stored.blob.type || 'audio/mp4',
+        });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: stored.filename,
+          });
+          return;
+        }
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') {
+          return;
+        }
+        // Fallback to direct anchor download below
+      }
+    }
+
+    triggerAnchorDownload(stored.blobUrl, stored.filename);
   }, []);
 
   useEffect(() => {
     return () => {
       Object.values(controllersRef.current).forEach((ctrl) => ctrl.abort());
       Object.values(resetTimersRef.current).forEach((t) => clearTimeout(t));
+      Object.values(completedFilesRef.current).forEach((f) => URL.revokeObjectURL(f.blobUrl));
+      completedFilesRef.current = {};
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
     };
   }, []);
@@ -156,6 +239,7 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
         clearTimeout(resetTimersRef.current[videoId]);
         delete resetTimersRef.current[videoId];
       }
+      revokeStoredFile(videoId);
 
       const controller = new AbortController();
       controllersRef.current[videoId] = controller;
@@ -282,14 +366,8 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
         }
 
         const blobUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = filename;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 20000);
+        completedFilesRef.current[videoId] = { blob, blobUrl, filename };
+        triggerAnchorDownload(blobUrl, filename);
 
         setDownloads((prev) => ({
           ...prev,
@@ -306,7 +384,9 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
           videoId,
           title: video.title,
           type: 'success',
-          message: `Audio berhasil diunduh: ${filename}`,
+          message: `Audio siap: ${filename}`,
+          filename,
+          hasLocalFile: true,
         });
 
         resetTimersRef.current[videoId] = setTimeout(() => {
@@ -336,13 +416,14 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
         delete controllersRef.current[videoId];
       }
     },
-    [clearDownloadState, showNotice]
+    [clearDownloadState, revokeStoredFile, showNotice]
   );
 
   return {
     downloads,
     notice,
     startDownload,
+    saveOrShareDownload,
     clearDownloadState,
     dismissNotice,
   };

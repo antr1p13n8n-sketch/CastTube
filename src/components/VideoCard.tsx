@@ -57,7 +57,10 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
       }`}
     >
       {/* Thumbnail area with overlay controls */}
-      <div className="relative aspect-video w-full bg-slate-900 overflow-hidden">
+      <div
+        onClick={() => onPlayVideo(video)}
+        className="relative aspect-video w-full bg-slate-900 overflow-hidden cursor-pointer"
+      >
         <img
           src={video.thumbnail}
           alt={video.title}
@@ -111,10 +114,14 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
           </div>
         )}
 
-        {/* Hover quick play buttons in center */}
-        <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150 bg-black/45">
+        {/* Hover quick play buttons in center (desktop hover only so touch taps open immediately) */}
+        <div className="hidden sm:flex absolute inset-0 items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150 bg-black/45">
           <button
-            onClick={() => onPlayVideo(video)}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPlayVideo(video);
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
             title="Putar Video"
           >
@@ -122,13 +129,22 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
             <span>Video</span>
           </button>
           <button
-            onClick={() => onPlayAudio(video)}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPlayAudio(video);
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-xl shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
             title="Dengarkan Audio Podcast"
           >
             <Headphones className="w-3.5 h-3.5 text-red-600" />
             <span>Audio</span>
           </button>
+        </div>
+
+        {/* Subtle mobile tap-to-play indicator */}
+        <div className="sm:hidden absolute bottom-2 left-2 w-7 h-7 rounded-full bg-black/70 text-white flex items-center justify-center backdrop-blur-xs pointer-events-none">
+          <Play className="w-3.5 h-3.5 fill-white ml-0.5" />
         </div>
 
         {/* Duration / Live info bottom right */}
@@ -185,11 +201,12 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         </div>
 
         {/* Card Footer Actions */}
-        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
+        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
+              type="button"
               onClick={() => onPlayAudio(video)}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-all active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-all active:scale-95 cursor-pointer"
               title="Dengarkan Mode Podcast"
             >
               <Headphones className="w-3.5 h-3.5" />
@@ -197,8 +214,9 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
             </button>
 
             <button
+              type="button"
               onClick={() => onToggleQueue(video)}
-              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer ${
+              className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer ${
                 isInQueue
                   ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
                   : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -211,8 +229,9 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
 
             {onAddToPlaylist && (
               <button
+                type="button"
                 onClick={() => onAddToPlaylist(video)}
-                className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-all active:scale-95 cursor-pointer"
                 title="Simpan ke Playlist"
               >
                 <ListPlus className="w-3.5 h-3.5" />
@@ -221,11 +240,12 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
             )}
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             {onDownloadAudio && (
               <button
+                type="button"
                 onClick={() => onDownloadAudio(video)}
-                className={`p-1.5 rounded-lg transition-all active:scale-90 cursor-pointer flex items-center gap-1 ${
+                className={`p-2 rounded-lg transition-all active:scale-90 cursor-pointer flex items-center gap-1 ${
                   downloadState?.status === 'completed'
                     ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
                     : downloadState?.status === 'preparing' || downloadState?.status === 'downloading'
@@ -257,8 +277,9 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
 
             {onTogglePlayed && (
               <button
+                type="button"
                 onClick={() => onTogglePlayed(video.id)}
-                className={`p-1.5 rounded-lg transition-all active:scale-90 cursor-pointer ${
+                className={`p-2 rounded-lg transition-all active:scale-90 cursor-pointer ${
                   isPlayed
                     ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
                     : 'text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -273,7 +294,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
               href={`https://www.youtube.com/watch?v=${video.id}`}
               target="_blank"
               rel="noreferrer"
-              className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+              className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
               title="Buka langsung di YouTube"
             >
               <ExternalLink className="w-3.5 h-3.5" />

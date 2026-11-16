@@ -70,18 +70,18 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 84, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 420, damping: 36 }}
-          className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl transition-colors duration-200"
+          className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl transition-colors duration-200 pb-[env(safe-area-inset-bottom)]"
         >
           {/* Top thin progress bar isolated from full-bar re-renders */}
           <MiniPlayerTopProgress videoId={currentVideo.id} />
 
-          <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between gap-4">
+          <div className="max-w-7xl mx-auto px-2.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2 sm:gap-4">
             {/* Left: Thumbnail & Title */}
             <div
-              className="flex items-center gap-3 min-w-0 cursor-pointer flex-1 sm:flex-initial max-w-sm sm:max-w-md group active:scale-[0.99] transition-transform"
+              className="flex items-center gap-2.5 sm:gap-3 min-w-0 cursor-pointer flex-1 sm:flex-initial max-w-sm sm:max-w-md group active:scale-[0.99] transition-transform"
               onClick={onExpand}
             >
-              <div className="relative w-11 h-11 rounded-lg overflow-hidden bg-slate-800 shrink-0 shadow-xs">
+              <div className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-lg overflow-hidden bg-slate-800 shrink-0 shadow-xs">
                 <img
                   src={currentVideo.thumbnail}
                   alt={currentVideo.title}
@@ -117,7 +117,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
                 <div className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
                   {currentVideo.title}
                 </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1.5">
+                <div className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 sm:gap-1.5">
                   <span className="truncate">{currentVideo.channelTitle}</span>
                   <span aria-hidden="true">·</span>
                   <MiniPlayerTimeReadout videoId={currentVideo.id} />
@@ -137,10 +137,10 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
             </div>
 
             {/* Center: Playback Controls */}
-            <div className="flex items-center gap-1 sm:gap-3 shrink-0">
+            <div className="flex items-center gap-0.5 sm:gap-2.5 shrink-0">
               <button
                 onClick={() => onSkipBack(15)}
-                className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
+                className="p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
                 title="Mundur 15 detik"
                 aria-label="Mundur 15 detik"
               >
@@ -149,16 +149,16 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
 
               <button
                 onClick={onPlayPause}
-                className="w-10 h-10 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-md transition-transform hover:scale-105 active:scale-90 cursor-pointer"
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-md transition-transform hover:scale-105 active:scale-90 cursor-pointer"
                 title={isPlaying ? 'Jeda' : 'Putar'}
                 aria-label={isPlaying ? 'Jeda' : 'Putar'}
               >
-                {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
+                {isPlaying ? <Pause className="w-4 h-4 sm:w-5 sm:h-5" /> : <Play className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />}
               </button>
 
               <button
                 onClick={() => onSkipForward(30)}
-                className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
+                className="p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
                 title="Maju 30 detik"
                 aria-label="Maju 30 detik"
               >
@@ -168,7 +168,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
               {hasNext && onNext && (
                 <button
                   onClick={onNext}
-                  className="hidden sm:flex p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
+                  className="flex p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
                   title="Putar Episode Berikutnya"
                   aria-label="Putar Episode Berikutnya"
                 >
@@ -178,10 +178,10 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
             </div>
 
             {/* Right: Mode indicator & Expand button */}
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
               <button
                 onClick={onToggleMode}
-                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors active:scale-95 cursor-pointer"
+                className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors active:scale-95 cursor-pointer"
                 title={mode === 'audio' ? 'Beralih ke Video' : 'Beralih ke Audio Saja'}
                 aria-label={mode === 'audio' ? 'Beralih ke Video' : 'Beralih ke Audio Saja'}
               >
@@ -204,7 +204,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
 
               <button
                 onClick={onExpand}
-                className="p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors active:scale-90 cursor-pointer"
+                className="p-1.5 sm:p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors active:scale-90 cursor-pointer"
                 title="Buka Pemutar Penuh"
                 aria-label="Buka Pemutar Penuh"
               >

@@ -85,12 +85,22 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
       <div className="relative w-full h-full group bg-black overflow-hidden rounded-2xl">
         {playerSlot}
         <button
+          type="button"
           onClick={onExpandPiP}
-          className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white text-xs font-semibold transition-opacity cursor-pointer z-10"
+          className="hidden sm:flex absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 items-center justify-center gap-1.5 text-white text-xs font-semibold transition-opacity cursor-pointer z-10"
           title="Perbesar Pemutar Video"
         >
           <Maximize2 className="w-4 h-4" />
           <span>Buka Video Penuh</span>
+        </button>
+        <button
+          type="button"
+          onClick={onExpandPiP}
+          className="sm:hidden absolute top-1.5 right-1.5 p-1.5 rounded-lg bg-black/75 text-white shadow-md backdrop-blur-xs z-20 active:scale-90 transition-transform cursor-pointer"
+          title="Perbesar Pemutar Video"
+          aria-label="Perbesar Pemutar Video"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
         </button>
       </div>
     );
@@ -99,7 +109,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
   return (
     <div className="w-full max-w-5xl mx-auto rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden p-4 sm:p-6 md:p-8 transition-colors duration-200">
       {/* Top action strip */}
-      <div className="flex items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
             Mode Video Aktif
@@ -112,7 +122,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.95 }}
             onClick={onSwitchToAudio}
-            className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-sm transition-colors cursor-pointer"
+            className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-sm transition-colors cursor-pointer"
             title="Dengarkan sebagai podcast dengan visualizer frekuensi"
           >
             <Headphones className="w-4 h-4 animate-pulse" />

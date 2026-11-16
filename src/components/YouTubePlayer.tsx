@@ -347,13 +347,26 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     };
   }, [onStateChange, stopTimePolling]);
 
-  // Handle play / pause toggle
+  // Handle play / pause toggle (and verify mobile autoplay didn't silently stay unstarted/cued)
   useEffect(() => {
     if (!playerRef.current || !isReadyRef.current) return;
+    let autoplayCheckTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       if (isPlaying) {
         playerRef.current.playVideo();
         startTimePolling();
+        autoplayCheckTimer = setTimeout(() => {
+          try {
+            const state = playerRef.current?.getPlayerState?.();
+            // Still unstarted (-1) or cued (5) -> mobile browser blocked programmatic iframe autoplay
+            if (intendedPlayingRef.current && (state === -1 || state === 5)) {
+              onStateChange(false);
+              stopTimePolling();
+            }
+          } catch {
+            // ignore
+          }
+        }, 2000);
       } else {
         playerRef.current.pauseVideo();
         stopTimePolling();
@@ -361,7 +374,10 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     } catch {
       // ignore
     }
-  }, [isPlaying, startTimePolling, stopTimePolling]);
+    return () => {
+      if (autoplayCheckTimer) clearTimeout(autoplayCheckTimer);
+    };
+  }, [isPlaying, startTimePolling, stopTimePolling, onStateChange]);
 
   // Handle seek command
   useEffect(() => {

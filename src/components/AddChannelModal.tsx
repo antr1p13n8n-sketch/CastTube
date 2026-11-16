@@ -34,34 +34,62 @@ interface AddChannelModalProps {
   initialSearchQuery?: string;
 }
 
-// Helper to extract and clean YouTube URLs / handles from any text block
-function parseAndFormatLinks(raw: string): string[] {
+// Helper to extract and clean YouTube URLs / handles from any text block (including mobile share text like "Title https://youtu.be/...")
+function cleanYouTubeUrl(rawUrl: string): string {
+  const trimmed = rawUrl.replace(/[),.;!?'"\]]+$/g, '').trim();
+  try {
+    const urlObj = new URL(trimmed);
+    urlObj.searchParams.delete('si');
+    urlObj.searchParams.delete('feature');
+    urlObj.searchParams.delete('app');
+    return urlObj.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+export function parseAndFormatLinks(raw: string): string[] {
   if (!raw) return [];
   const lines = raw
     .split(/[\r\n,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
   const results: string[] = [];
+  const seen = new Set<string>();
+
+  const pushUnique = (item: string) => {
+    const clean = item.trim();
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    results.push(clean);
+  };
 
   for (const line of lines) {
-    const parts = line.split(/\s+/);
-    for (const part of parts) {
-      const clean = part.trim();
-      if (!clean) continue;
-      try {
-        if (clean.startsWith('http')) {
-          const urlObj = new URL(clean);
-          urlObj.searchParams.delete('si');
-          urlObj.searchParams.delete('feature');
-          urlObj.searchParams.delete('app');
-          results.push(urlObj.toString());
-          continue;
-        }
-      } catch {
-        // Keep as-is
+    const urlMatches = line.match(/https?:\/\/[^\s]+/gi);
+    if (urlMatches && urlMatches.length > 0) {
+      for (const u of urlMatches) {
+        pushUnique(cleanYouTubeUrl(u));
       }
-      results.push(clean);
+      continue;
     }
+
+    const bareDomainMatches = line.match(/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/gi);
+    if (bareDomainMatches && bareDomainMatches.length > 0) {
+      for (const u of bareDomainMatches) {
+        pushUnique(cleanYouTubeUrl(`https://${u}`));
+      }
+      continue;
+    }
+
+    const handleOrIdMatches = line.match(/(?:^|\s)(@[a-zA-Z0-9_.-]+|UC[a-zA-Z0-9_-]{22})(?=\s|$|[/?#])/g);
+    if (handleOrIdMatches && handleOrIdMatches.length > 0) {
+      for (const token of handleOrIdMatches) {
+        pushUnique(token.trim());
+      }
+      continue;
+    }
+
+    pushUnique(line);
   }
 
   return results;
@@ -460,7 +488,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs"
         >
           <motion.div
             key="add-channel-dialog"
@@ -469,41 +497,41 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left transition-colors duration-200"
+            className="relative w-full max-w-2xl max-h-[90dvh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left transition-colors duration-200"
           >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-red-600 text-white shadow-sm">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-red-600 text-white shadow-sm shrink-0">
               <Youtube className="w-5 h-5" />
             </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
                 Cari & Tambah Channel YouTube
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 truncate">
                 Cari langsung dari YouTube atau tempel URL / @handle channel
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Mode Tabs & Group Selector */}
-        <div className="px-6 pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 bg-slate-50/70 dark:bg-slate-950/30">
-          <div className="flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-xl w-fit">
+        <div className="px-4 sm:px-6 pt-3 sm:pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 shrink-0 bg-slate-50/70 dark:bg-slate-950/30">
+          <div className="flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-xl w-full sm:w-fit">
             <button
               type="button"
               onClick={() => {
                 setActiveTab('search');
                 setFeedback(null);
               }}
-              className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
+              className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                 activeTab === 'search'
                   ? 'text-slate-900 dark:text-white'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -516,8 +544,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
                 />
               )}
-              <Search className="relative z-10 w-3.5 h-3.5 text-red-500" />
-              <span className="relative z-10">Cari Channel YouTube</span>
+              <Search className="relative z-10 w-3.5 h-3.5 text-red-500 shrink-0" />
+              <span className="relative z-10">Cari Channel</span>
             </button>
             <button
               type="button"
@@ -525,7 +553,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 setActiveTab('paste');
                 setFeedback(null);
               }}
-              className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
+              className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                 activeTab === 'paste'
                   ? 'text-slate-900 dark:text-white'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -538,12 +566,12 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
                 />
               )}
-              <Clipboard className="relative z-10 w-3.5 h-3.5 text-red-500" />
+              <Clipboard className="relative z-10 w-3.5 h-3.5 text-red-500 shrink-0" />
               <span className="relative z-10">Tempel Link / Handle</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between sm:justify-start gap-2">
             <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">
               Grup Tujuan:
             </span>
@@ -564,12 +592,12 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
           {activeTab === 'search' ? (
             <>
               {/* YouTube Channel Search Input */}
               <form onSubmit={handleSearchSubmit} className="flex gap-2">
-                <div className="relative flex-1">
+                <div className="relative flex-1 min-w-0">
                   <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
@@ -586,8 +614,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                         setIsSearching(false);
                       }
                     }}
-                    placeholder="Ketik nama channel YouTube (misal: Raditya Dika, GadgetIn, Deddy Corbuzier)..."
-                    autoFocus
+                    placeholder="Ketik nama channel YouTube..."
+                    autoFocus={typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches}
                     className="w-full pl-10 pr-8 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
                   />
                   {searchQuery && (
@@ -746,9 +774,9 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                           ease: [0.16, 1, 0.3, 1],
                         }}
                         whileHover={{ y: -2 }}
-                        className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                        className="flex items-center justify-between gap-2.5 sm:gap-3 p-2.5 sm:p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
                       >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                           <img
                             src={item.avatar || `https://avatar.vercel.sh/${item.id}?size=100`}
                             alt={item.title}
@@ -758,7 +786,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                               const fallback = `https://avatar.vercel.sh/${item.id}?size=100`;
                               if (img.src !== fallback) img.src = fallback;
                             }}
-                            className="w-12 h-12 rounded-full object-cover shrink-0 bg-slate-200 dark:bg-slate-700"
+                            className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover shrink-0 bg-slate-200 dark:bg-slate-700"
                           />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">

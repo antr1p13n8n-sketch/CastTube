@@ -71,7 +71,7 @@ const PodcastScrubber: React.FC<{
 
   return (
     <div className="space-y-2 mb-6">
-      <div className="relative w-full flex items-center group">
+      <div className="relative w-full h-8 flex items-center group touch-none">
         <input
           type="range"
           aria-label="Posisi pemutaran audio"
@@ -79,7 +79,7 @@ const PodcastScrubber: React.FC<{
           max={duration || 100}
           value={currentTime}
           onChange={(e) => onSeek(Number(e.target.value))}
-          className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-hidden"
+          className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-600 focus:outline-hidden"
           style={{
             background: `linear-gradient(to right, #dc2626 0%, #dc2626 ${progressPercent}%, rgba(148, 163, 184, 0.35) ${progressPercent}%, rgba(148, 163, 184, 0.35) 100%)`,
           }}
@@ -157,27 +157,29 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
   ];
 
   return (
-    <div className="relative w-full max-w-4xl mx-auto rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden p-6 md:p-8 transition-colors duration-200">
-      {/* Static GPU-friendly ambient lighting */}
-      <div
-        className={`absolute -top-32 -left-32 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
-          isPlaying ? 'opacity-28' : 'opacity-15'
-        }`}
-        style={{
-          background: 'radial-gradient(circle, #ef4444 0%, #f97316 70%, transparent 100%)',
-        }}
-      />
-      <div
-        className={`absolute -bottom-32 -right-32 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
-          isPlaying ? 'opacity-22' : 'opacity-12'
-        }`}
-        style={{
-          background: 'radial-gradient(circle, #6366f1 0%, #a855f7 70%, transparent 100%)',
-        }}
-      />
+    <div className="relative w-full max-w-4xl mx-auto rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-4 sm:p-6 md:p-8 transition-colors duration-200">
+      {/* Static GPU-friendly ambient lighting clipped separately so dropdown menus never clip */}
+      <div className="absolute inset-0 rounded-3xl overflow-hidden pointer-events-none" aria-hidden="true">
+        <div
+          className={`absolute -top-32 -left-32 w-80 h-80 rounded-full blur-3xl transition-opacity duration-700 ${
+            isPlaying ? 'opacity-28' : 'opacity-15'
+          }`}
+          style={{
+            background: 'radial-gradient(circle, #ef4444 0%, #f97316 70%, transparent 100%)',
+          }}
+        />
+        <div
+          className={`absolute -bottom-32 -right-32 w-80 h-80 rounded-full blur-3xl transition-opacity duration-700 ${
+            isPlaying ? 'opacity-22' : 'opacity-12'
+          }`}
+          style={{
+            background: 'radial-gradient(circle, #6366f1 0%, #a855f7 70%, transparent 100%)',
+          }}
+        />
+      </div>
 
       {/* Top Header inside Player: Mode Switcher & Actions */}
-      <div className="relative z-10 flex items-center justify-between gap-4 pb-6 border-b border-slate-100 dark:border-slate-800">
+      <div className="relative z-10 flex flex-wrap items-center justify-between gap-3 pb-4 sm:pb-6 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-xl bg-red-500/10 text-red-600 dark:text-red-400">
             <Radio className={`w-5 h-5 ${isPlaying ? 'animate-pulse' : ''}`} />
@@ -275,8 +277,8 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
 
       {/* Contextual mobile background playback banner when YouTube restricts direct stream */}
       {!usingNativeAudio && nativeAudioStatus !== 'checking' && (
-        <div className="relative z-10 mt-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 px-4 py-3 text-left">
-          <div className="flex items-start justify-between gap-3">
+        <div className="relative z-10 mt-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 px-3.5 sm:px-4 py-3 text-left">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="flex items-start gap-2.5 text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
               <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div>
@@ -286,7 +288,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                   : 'YouTube membatasi ekstraksi audio langsung untuk video ini dari server cloud, sehingga pemutaran beralih ke iframe YouTube yang otomatis dijeda browser HP saat diminimize/layar dikunci.'}
               </div>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
               {nativeAudioStatus !== 'live_stream' && onOpenAudioExtractorSettings && (
                 <button
                   type="button"
@@ -517,16 +519,16 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
           </div>
 
           {/* Secondary Controls Bar: Speed, Volume, Sleep Timer */}
-          <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-4 text-xs">
+          <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 sm:gap-4 text-xs">
             {/* Playback speed selector */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 font-medium">Kecepatan:</span>
-              <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
+            <div className="flex items-center gap-1.5 max-w-full">
+              <span className="text-slate-400 font-medium shrink-0">Kecepatan:</span>
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 overflow-x-auto scrollbar-none">
                 {speedOptions.map((speed) => (
                   <button
                     key={speed}
                     onClick={() => onSpeedChange(speed)}
-                    className={`relative px-2 py-0.5 font-mono text-[11px] rounded transition-colors cursor-pointer ${
+                    className={`relative px-2 py-1 font-mono text-[11px] rounded transition-colors cursor-pointer shrink-0 ${
                       playbackRate === speed
                         ? 'text-slate-900 dark:text-white font-bold'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -546,13 +548,13 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             </div>
 
             {/* Volume slider & Sleep Timer */}
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 sm:gap-4">
               {/* Sleep timer dropdown trigger */}
               <div className="relative">
                 <motion.button
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setShowSleepMenu(!showSleepMenu)}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
                     sleepTimerExpiresAt
                       ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold'
                       : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -570,7 +572,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 6, scale: 0.95 }}
                       transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                      className="absolute right-0 bottom-full mb-2 w-36 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-30"
+                      className="absolute left-0 sm:left-auto sm:right-0 bottom-full mb-2 w-36 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-30"
                     >
                       <div className="px-3 py-1 text-[11px] font-semibold text-slate-400">
                         Waktu Berhenti:
