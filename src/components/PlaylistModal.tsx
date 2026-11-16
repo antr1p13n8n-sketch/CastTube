@@ -22,7 +22,7 @@ interface PlaylistModalProps {
   playlists: Playlist[];
   videos: Video[];
   initialVideoToAdd?: Video | null;
-  onCreatePlaylist: (name: string, description: string, initialVideoIds: string[]) => void;
+  onCreatePlaylist: (name: string, description: string, initialVideoIds: string[]) => Playlist | void;
   onUpdatePlaylist: (
     playlistId: string,
     updates: { name?: string; description?: string; videoIds?: string[] }
@@ -113,7 +113,10 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
     const trimmed = newName.trim();
     if (!trimmed) return;
     const initialIds = initialVideoToAdd ? [initialVideoToAdd.id] : [];
-    onCreatePlaylist(trimmed, newDescription.trim(), initialIds);
+    const created = onCreatePlaylist(trimmed, newDescription.trim(), initialIds);
+    if (created?.id) {
+      setSelectedPlaylistId(created.id);
+    }
     setNewName('');
     setNewDescription('');
     setIsCreating(false);

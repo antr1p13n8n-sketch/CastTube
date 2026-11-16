@@ -54,6 +54,12 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const isMutedRef = useRef<boolean>(isMuted);
   const playbackRateRef = useRef<number>(playbackRate);
   const loadedVideoIdRef = useRef<string | null>(currentVideo?.id || null);
+  const skipNextPlayVideoRef = useRef<string | null>(null);
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  const onStateChangeRef = useRef(onStateChange);
+  const onEndedRef = useRef(onEnded);
+  const onErrorRef = useRef(onError);
+  const onSeekHandledRef = useRef(onSeekHandled);
   const [playerErrorCode, setPlayerErrorCode] = useState<string | number | null>(null);
 
   initialSeekSecondsRef.current = initialSeekSeconds;
@@ -62,6 +68,11 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   volumeRef.current = volume;
   isMutedRef.current = isMuted;
   playbackRateRef.current = playbackRate;
+  onTimeUpdateRef.current = onTimeUpdate;
+  onStateChangeRef.current = onStateChange;
+  onEndedRef.current = onEnded;
+  onErrorRef.current = onError;
+  onSeekHandledRef.current = onSeekHandled;
 
   useEffect(() => {
     intendedPlayingRef.current = isPlaying;
@@ -77,13 +88,13 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         try {
           const cur = playerRef.current.getCurrentTime() || 0;
           const dur = playerRef.current.getDuration() || 0;
-          onTimeUpdate(cur, dur);
+          onTimeUpdateRef.current(cur, dur);
         } catch {
           // player might be reloading
         }
       }
     }, 400);
-  }, [onTimeUpdate]);
+  }, []);
 
   const stopTimePolling = useCallback(() => {
     if (timeIntervalRef.current) {
@@ -174,7 +185,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 clearTimeout(verifyPauseTimerRef.current);
                 verifyPauseTimerRef.current = null;
               }
-              onStateChange(true);
+              onStateChangeRef.current(true);
               startTimePolling();
             } else if (event.data === 2) {
               // When minimized/backgrounded, retry at most 2 quick times.
@@ -197,32 +208,32 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                   try {
                     const state = playerRef.current?.getPlayerState?.();
                     if (state !== 1 && state !== 3) {
-                      onStateChange(false);
+                      onStateChangeRef.current(false);
                       stopTimePolling();
                     }
                   } catch {
-                    onStateChange(false);
+                    onStateChangeRef.current(false);
                     stopTimePolling();
                   }
                 }, 700);
                 return;
               }
-              onStateChange(false);
+              onStateChangeRef.current(false);
               stopTimePolling();
             } else if (event.data === 0) {
               if (verifyPauseTimerRef.current) {
                 clearTimeout(verifyPauseTimerRef.current);
                 verifyPauseTimerRef.current = null;
               }
-              onStateChange(false);
+              onStateChangeRef.current(false);
               stopTimePolling();
-              onEnded();
+              onEndedRef.current();
             }
           },
           onError: (event: any) => {
             console.warn('YouTube Player error code:', event.data);
             setPlayerErrorCode(event.data ?? 'UNKNOWN');
-            if (onError) onError(event.data);
+            onErrorRef.current?.(event.data);
           },
         },
       });
@@ -240,7 +251,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         tag.onerror = () => {
           console.warn('YouTube IFrame API gagal dimuat.');
           setPlayerErrorCode('API_BLOCKED');
-          if (onError) onError('API_BLOCKED');
+          onErrorRef.current?.('API_BLOCKED');
         };
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag?.parentNode?.insertBefore(tag, firstScriptTag);
@@ -279,12 +290,14 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         loadedVideoIdRef.current = currentVideo.id;
         const startSeconds = Math.floor(initialSeekSecondsRef.current || 0);
         if (isPlayingRef.current) {
+          skipNextPlayVideoRef.current = currentVideo.id;
           playerRef.current.loadVideoById({
             videoId: currentVideo.id,
             startSeconds,
           });
           startTimePolling();
         } else {
+          skipNextPlayVideoRef.current = null;
           playerRef.current.cueVideoById({
             videoId: currentVideo.id,
             startSeconds,
@@ -328,7 +341,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           try {
             const state = playerRef.current?.getPlayerState?.();
             if (intendedPlayingRef.current && state !== 1 && state !== 3) {
-              onStateChange(false);
+              onStateChangeRef.current(false);
               stopTimePolling();
             }
           } catch {
@@ -345,7 +358,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       timers.forEach((t) => clearTimeout(t));
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [onStateChange, stopTimePolling]);
+  }, [stopTimePolling]);
 
   // Handle play / pause toggle (and verify mobile autoplay didn't silently stay unstarted/cued)
   useEffect(() => {
@@ -353,14 +366,18 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     let autoplayCheckTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       if (isPlaying) {
-        playerRef.current.playVideo();
+        if (skipNextPlayVideoRef.current === currentVideoRef.current?.id) {
+          skipNextPlayVideoRef.current = null;
+        } else {
+          playerRef.current.playVideo();
+        }
         startTimePolling();
         autoplayCheckTimer = setTimeout(() => {
           try {
             const state = playerRef.current?.getPlayerState?.();
             // Still unstarted (-1) or cued (5) -> mobile browser blocked programmatic iframe autoplay
             if (intendedPlayingRef.current && (state === -1 || state === 5)) {
-              onStateChange(false);
+              onStateChangeRef.current(false);
               stopTimePolling();
             }
           } catch {
@@ -368,6 +385,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           }
         }, 2000);
       } else {
+        skipNextPlayVideoRef.current = null;
         playerRef.current.pauseVideo();
         stopTimePolling();
       }
@@ -377,19 +395,19 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     return () => {
       if (autoplayCheckTimer) clearTimeout(autoplayCheckTimer);
     };
-  }, [isPlaying, startTimePolling, stopTimePolling, onStateChange]);
+  }, [isPlaying, startTimePolling, stopTimePolling]);
 
   // Handle seek command
   useEffect(() => {
     if (seekCommand !== null && playerRef.current && isReadyRef.current) {
       try {
         playerRef.current.seekTo(seekCommand, true);
-        onSeekHandled();
+        onSeekHandledRef.current();
       } catch {
-        onSeekHandled();
+        onSeekHandledRef.current();
       }
     }
-  }, [seekCommand, onSeekHandled]);
+  }, [seekCommand]);
 
   // Handle volume / mute
   useEffect(() => {

@@ -391,8 +391,12 @@ async function readChannelFromResponse(
 }
 
 export async function resolveYouTubeChannel(
-  rawInput: string
+  rawInput: string,
+  depth = 0
 ): Promise<{ channelId: string; handle?: string; title?: string }> {
+  if (depth > 2) {
+    throw new Error('Channel YouTube tidak dapat diselesaikan.');
+  }
   const cleaned = rawInput.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   if (!cleaned) {
     throw new Error('Input link channel kosong.');
@@ -443,7 +447,7 @@ export async function resolveYouTubeChannel(
       if (oembedRes.ok) {
         const oembed = (await oembedRes.json()) as { author_url?: string; author_name?: string };
         if (oembed.author_url) {
-          const resolvedFromAuthor = await resolveYouTubeChannel(oembed.author_url);
+          const resolvedFromAuthor = await resolveYouTubeChannel(oembed.author_url, depth + 1);
           return {
             ...resolvedFromAuthor,
             title: resolvedFromAuthor.title || oembed.author_name,

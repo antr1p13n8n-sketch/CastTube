@@ -116,35 +116,57 @@ export function buildExtractorHeaders(configOverride?: AudioExtractorConfig): Re
   return headers;
 }
 
+let activeExtractorSyncPromise: Promise<void> | null = null;
+
 export async function syncExtractorConfigToServer(
   configOverride?: AudioExtractorConfig
 ): Promise<void> {
+  if (!configOverride && activeExtractorSyncPromise) {
+    return activeExtractorSyncPromise;
+  }
+
   const cfg = configOverride || loadExtractorConfig();
   if (!cfg.oauthTokens?.access_token && !cfg.cookies && !cfg.extractorUrl) return;
 
-  try {
-    const res = await fetch('/api/youtube/extractor-auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'restore',
-        oauthTokens: cfg.oauthTokens,
-        cookies: cfg.cookies,
-        extractorUrl: cfg.extractorUrl,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.oauthTokens && data.oauthTokens.access_token !== cfg.oauthTokens?.access_token) {
-        saveExtractorConfig({
-          ...cfg,
-          oauthTokens: data.oauthTokens,
-        });
+  const runSync = async (): Promise<void> => {
+    try {
+      const res = await fetch('/api/youtube/extractor-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'restore',
+          oauthTokens: cfg.oauthTokens,
+          cookies: cfg.cookies,
+          extractorUrl: cfg.extractorUrl,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.oauthTokens && data.oauthTokens.access_token !== cfg.oauthTokens?.access_token) {
+          saveExtractorConfig({
+            ...cfg,
+            oauthTokens: data.oauthTokens,
+          });
+        }
+      } else if (res.status >= 400 && res.status < 500 && !configOverride) {
+        clearExtractorConfig();
       }
+    } catch {
+      // non-fatal background sync
     }
-  } catch {
-    // non-fatal background sync
+  };
+
+  if (configOverride) {
+    return runSync();
   }
+
+  const task = runSync().finally(() => {
+    if (activeExtractorSyncPromise === task) {
+      activeExtractorSyncPromise = null;
+    }
+  });
+  activeExtractorSyncPromise = task;
+  return task;
 }
 
 export async function tryClientDirectExtractor(

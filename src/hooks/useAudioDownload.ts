@@ -5,7 +5,7 @@ import {
   loadExtractorConfig,
   tryClientDirectExtractor,
 } from '../utils/extractorConfig';
-import { parseJsonSafely } from '../utils/safeJson';
+import { buildHttpErrorMessage, parseJsonSafely } from '../utils/safeJson';
 
 export type AudioDownloadStatus = 'preparing' | 'downloading' | 'completed' | 'error';
 
@@ -277,11 +277,16 @@ export function useAudioDownload(options?: UseAudioDownloadOptions) {
         }
 
         if (!res.ok) {
-          const { data } = await parseJsonSafely<{ error?: string; status?: string }>(res);
+          const { data, rawText } = await parseJsonSafely<{ error?: string; status?: string }>(res);
           const errPayload = data || {};
 
           const isLoginRestricted = errPayload.status === 'login_required';
-          let friendlyMsg = errPayload.error || 'Gagal mengunduh audio untuk video ini.';
+          let friendlyMsg = buildHttpErrorMessage(
+            res,
+            data,
+            rawText,
+            'Gagal mengunduh audio untuk video ini.'
+          );
           if (errPayload.status === 'live_stream') {
             friendlyMsg = 'Siaran Live tidak dapat diunduh sebagai file audio.';
           } else if (isLoginRestricted) {

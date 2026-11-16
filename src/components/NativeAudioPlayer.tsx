@@ -76,6 +76,16 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
     playbackRateRef.current = playbackRate;
     const initialSeekSecondsRef = useRef(initialSeekSeconds);
     initialSeekSecondsRef.current = initialSeekSeconds;
+    const onSeekHandledRef = useRef(onSeekHandled);
+    onSeekHandledRef.current = onSeekHandled;
+    const onTimeUpdateRef = useRef(onTimeUpdate);
+    onTimeUpdateRef.current = onTimeUpdate;
+    const onStateChangeRef = useRef(onStateChange);
+    onStateChangeRef.current = onStateChange;
+    const onEndedRef = useRef(onEnded);
+    onEndedRef.current = onEnded;
+    const onFallbackNeededRef = useRef(onFallbackNeeded);
+    onFallbackNeededRef.current = onFallbackNeeded;
 
     const streamUrl =
       active && currentVideo
@@ -180,14 +190,14 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
             data?.status === 'login_required' || data?.status === 'live_stream'
               ? data.status
               : 'unavailable';
-          onFallbackNeeded(nextStatus);
+          onFallbackNeededRef.current(nextStatus);
         })
         .catch(() => {
           if (videoIdRef.current === failedVidId && activeRef.current) {
-            onFallbackNeeded('unavailable');
+            onFallbackNeededRef.current('unavailable');
           }
         });
-    }, [onFallbackNeeded]);
+    }, []);
 
     // Reset track-specific state when video changes
     useEffect(() => {
@@ -244,7 +254,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
           audio.play().catch((err: unknown) => {
             const name = (err as { name?: string })?.name;
             if (name === 'NotAllowedError') {
-              onStateChange(false);
+              onStateChangeRef.current(false);
             } else if (name === 'NotSupportedError') {
               handleStreamFailure();
             }
@@ -256,7 +266,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
           audio.pause();
         }
       }
-    }, [active, isPlaying, currentVideo?.id, retryAttempt, onStateChange, handleStreamFailure]);
+    }, [active, isPlaying, currentVideo?.id, retryAttempt, handleStreamFailure]);
 
     // Sync volume & mute
     useEffect(() => {
@@ -289,8 +299,8 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
           // ignore if metadata not yet loaded
         }
       }
-      onSeekHandled();
-    }, [seekCommand, active, onSeekHandled]);
+      onSeekHandledRef.current();
+    }, [seekCommand, active]);
 
     // Recover automatically if device reconnects to WiFi / 4G while minimized
     useEffect(() => {
@@ -330,13 +340,13 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
           const audio = e.currentTarget;
           applyInitialSetup(audio);
           if (Number.isFinite(audio.duration) && audio.duration > 0) {
-            onTimeUpdate(audio.currentTime || 0, audio.duration);
+            onTimeUpdateRef.current(audio.currentTime || 0, audio.duration);
           }
           if (isPlayingRef.current && audio.paused) {
             audio.play().catch((err: unknown) => {
               const name = (err as { name?: string })?.name;
               if (name === 'NotAllowedError') {
-                onStateChange(false);
+                onStateChangeRef.current(false);
               } else if (name === 'NotSupportedError') {
                 handleStreamFailure();
               }
@@ -354,7 +364,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
         onPlaying={() => {
           isSwitchingSrcRef.current = false;
           if (!activeRef.current) return;
-          onStateChange(true);
+          onStateChangeRef.current(true);
         }}
         onTimeUpdate={(e) => {
           if (!activeRef.current) return;
@@ -362,23 +372,23 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
           const cur = audio.currentTime || 0;
           if (cur > 0) latestPosRef.current = cur;
           const dur = Number.isFinite(audio.duration) ? audio.duration : 0;
-          onTimeUpdate(cur, dur);
+          onTimeUpdateRef.current(cur, dur);
         }}
         onPlay={() => {
           isSwitchingSrcRef.current = false;
           if (!activeRef.current) return;
-          onStateChange(true);
+          onStateChangeRef.current(true);
         }}
         onPause={(e) => {
           if (!activeRef.current || isSwitchingSrcRef.current) return;
           if (!e.currentTarget.ended) {
-            onStateChange(false);
+            onStateChangeRef.current(false);
           }
         }}
         onEnded={() => {
           if (!activeRef.current) return;
           isSwitchingSrcRef.current = true;
-          onEnded();
+          onEndedRef.current();
         }}
         onError={handleStreamFailure}
         className="fixed opacity-0 pointer-events-none w-1 h-1 -z-50"

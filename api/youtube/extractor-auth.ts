@@ -67,7 +67,16 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   }
 
   try {
-    const body = (req.body || {}) as Record<string, any>;
+    let body: Record<string, any> = {};
+    if (typeof req.body === 'string') {
+      try {
+        body = JSON.parse(req.body || '{}') as Record<string, any>;
+      } catch {
+        return res.status(400).json({ error: 'Payload JSON tidak valid' });
+      }
+    } else if (req.body && typeof req.body === 'object') {
+      body = req.body as Record<string, any>;
+    }
     const action = typeof body.action === 'string' ? body.action.trim() : '';
 
     if (action === 'start_device') {

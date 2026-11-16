@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   setDoc,
   updateDoc,
@@ -29,6 +30,29 @@ function clampStr(val: string | undefined | null, maxLen: number): string {
 // Sanitize ID to match ^[a-zA-Z0-9_\-]+$
 function isValidDocId(id: string): boolean {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[a-zA-Z0-9_\-]+$/.test(id);
+}
+
+function handleSubscriptionError(
+  error: unknown,
+  operationType: OperationType,
+  path: string,
+  onError?: (err: unknown) => void
+): void {
+  try {
+    handleFirestoreError(error, operationType, path);
+  } catch (err) {
+    onError?.(err);
+  }
+}
+
+export async function testFirestoreConnection(): Promise<void> {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    }
+  }
 }
 
 export async function ensureUserProfile(user: User, themePreference: ThemeMode): Promise<void> {
@@ -75,7 +99,8 @@ export async function updateThemeInFirestore(userId: string, theme: ThemeMode): 
 
 export function subscribeToPlayedVideos(
   userId: string,
-  onData: (playedVideoIds: string[]) => void
+  onData: (playedVideoIds: string[]) => void,
+  onError?: (error: unknown) => void
 ): Unsubscribe {
   const path = `users/${userId}`;
   return onSnapshot(
@@ -89,7 +114,7 @@ export function subscribeToPlayedVideos(
       }
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      handleSubscriptionError(error, OperationType.GET, path, onError);
     }
   );
 }
@@ -98,6 +123,7 @@ export async function updatePlayedVideosInFirestore(
   userId: string,
   playedVideoIds: string[]
 ): Promise<void> {
+  if (!userId || !Array.isArray(playedVideoIds)) return;
   const path = `users/${userId}`;
   const ref = doc(db, 'users', userId);
   try {
@@ -114,7 +140,8 @@ export async function updatePlayedVideosInFirestore(
 
 export function subscribeToUserGroups(
   userId: string,
-  onData: (groups: ChannelGroup[]) => void
+  onData: (groups: ChannelGroup[]) => void,
+  onError?: (error: unknown) => void
 ): Unsubscribe {
   const path = `users/${userId}/groups`;
   const q = query(collection(db, 'users', userId, 'groups'), where('ownerId', '==', userId));
@@ -141,14 +168,15 @@ export function subscribeToUserGroups(
       onData(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      handleSubscriptionError(error, OperationType.LIST, path, onError);
     }
   );
 }
 
 export function subscribeToUserChannels(
   userId: string,
-  onData: (channels: Channel[]) => void
+  onData: (channels: Channel[]) => void,
+  onError?: (error: unknown) => void
 ): Unsubscribe {
   const path = `users/${userId}/channels`;
   const q = query(collection(db, 'users', userId, 'channels'), where('ownerId', '==', userId));
@@ -174,14 +202,15 @@ export function subscribeToUserChannels(
       onData(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      handleSubscriptionError(error, OperationType.LIST, path, onError);
     }
   );
 }
 
 export function subscribeToUserVideos(
   userId: string,
-  onData: (videos: Video[]) => void
+  onData: (videos: Video[]) => void,
+  onError?: (error: unknown) => void
 ): Unsubscribe {
   const path = `users/${userId}/videos`;
   const q = query(collection(db, 'users', userId, 'videos'), where('ownerId', '==', userId));
@@ -207,7 +236,7 @@ export function subscribeToUserVideos(
       onData(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      handleSubscriptionError(error, OperationType.LIST, path, onError);
     }
   );
 }
@@ -227,7 +256,16 @@ export async function seedInitialDataIfEmpty(
       return; // User already has cloud data
     }
 
-    const batch = writeBatch(db);
+    let batch = writeBatch(db);
+    let opCount = 0;
+
+    const flushIfNeeded = async () => {
+      if (opCount >= 450) {
+        await batch.commit();
+        batch = writeBatch(db);
+        opCount = 0;
+      }
+    };
 
     for (const g of localGroups) {
       if (!isValidDocId(g.id)) continue;
@@ -240,10 +278,12 @@ export async function seedInitialDataIfEmpty(
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      opCount++;
+      await flushIfNeeded();
     }
 
     for (const c of localChannels) {
-      if (!isValidDocId(c.id) || !isValidDocId(c.groupId)) continue;
+      if (!isValidDocId(c.id)) continue;
       const ref = doc(db, 'users', userId, 'channels', c.id);
       batch.set(ref, {
         id: c.id,
@@ -252,13 +292,15 @@ export async function seedInitialDataIfEmpty(
         ...(c.avatar ? { avatar: clampStr(c.avatar, 1000) } : {}),
         ...(c.description ? { description: clampStr(c.description, 2000) } : {}),
         url: clampStr(c.url || `https://www.youtube.com/channel/${c.id}`, 1000),
-        groupId: c.groupId,
+        groupId: isValidDocId(c.groupId) ? c.groupId : 'general',
         addedAt: clampStr(c.addedAt || new Date().toISOString(), 64),
         ...(typeof c.videoCount === 'number' ? { videoCount: c.videoCount } : {}),
         ownerId: userId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      opCount++;
+      await flushIfNeeded();
     }
 
     for (const v of localVideos.slice(0, 60)) {
@@ -278,15 +320,20 @@ export async function seedInitialDataIfEmpty(
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      opCount++;
+      await flushIfNeeded();
     }
 
-    await batch.commit();
+    if (opCount > 0) {
+      await batch.commit();
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, groupsPath);
   }
 }
 
 export async function createGroupInFirestore(userId: string, group: ChannelGroup): Promise<void> {
+  if (!isValidDocId(group.id)) return;
   const path = `users/${userId}/groups/${group.id}`;
   try {
     await setDoc(doc(db, 'users', userId, 'groups', group.id), {
@@ -307,6 +354,7 @@ export async function renameGroupInFirestore(
   groupId: string,
   newName: string
 ): Promise<void> {
+  if (!isValidDocId(groupId)) return;
   const path = `users/${userId}/groups/${groupId}`;
   try {
     await updateDoc(doc(db, 'users', userId, 'groups', groupId), {
@@ -323,10 +371,12 @@ export async function deleteGroupInFirestore(
   groupId: string,
   channelsInGroup: Channel[]
 ): Promise<void> {
+  if (!isValidDocId(groupId)) return;
   const path = `users/${userId}/groups/${groupId}`;
   try {
+    const validChannels = channelsInGroup.filter((ch) => isValidDocId(ch.id)).slice(0, 450);
     const batch = writeBatch(db);
-    for (const ch of channelsInGroup) {
+    for (const ch of validChannels) {
       batch.update(doc(db, 'users', userId, 'channels', ch.id), {
         groupId: 'general',
         updatedAt: serverTimestamp(),
@@ -380,6 +430,7 @@ export async function changeChannelGroupInFirestore(
   channelId: string,
   newGroupId: string
 ): Promise<void> {
+  if (!isValidDocId(channelId) || !isValidDocId(newGroupId)) return;
   const path = `users/${userId}/channels/${channelId}`;
   try {
     await updateDoc(doc(db, 'users', userId, 'channels', channelId), {
@@ -396,6 +447,7 @@ export async function deleteChannelInFirestore(
   channelId: string,
   videoIdsToDelete: string[]
 ): Promise<void> {
+  if (!isValidDocId(channelId)) return;
   const path = `users/${userId}/channels/${channelId}`;
   try {
     const batch = writeBatch(db);
@@ -458,7 +510,8 @@ export async function saveVideosInFirestore(userId: string, videos: Video[]): Pr
 
 export function subscribeToUserPlaylists(
   userId: string,
-  onData: (playlists: Playlist[]) => void
+  onData: (playlists: Playlist[]) => void,
+  onError?: (error: unknown) => void
 ): Unsubscribe {
   const path = `users/${userId}/playlists`;
   const q = query(collection(db, 'users', userId, 'playlists'), where('ownerId', '==', userId));
@@ -489,7 +542,7 @@ export function subscribeToUserPlaylists(
       onData(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      handleSubscriptionError(error, OperationType.LIST, path, onError);
     }
   );
 }

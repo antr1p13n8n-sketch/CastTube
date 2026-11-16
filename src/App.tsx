@@ -159,12 +159,14 @@ export default function App() {
     groups,
     channels,
     videos,
+    playedVideoIds,
     themePreference,
   });
   latestStateRef.current = {
     groups,
     channels,
     videos,
+    playedVideoIds,
     themePreference,
   };
 
@@ -265,19 +267,29 @@ export default function App() {
     probedAudioIdsRef.current.add(videoId);
 
     let cancelled = false;
-    fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&check=1`, {
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/json',
-        ...buildExtractorHeaders(),
-      },
-    })
+    syncExtractorConfigToServer()
+      .catch(() => {})
+      .then(() => {
+        if (cancelled) return null;
+        return fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&check=1`, {
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/json',
+            ...buildExtractorHeaders(),
+          },
+        });
+      })
       .then(async (res) => {
+        if (!res) return null;
         if (!res.ok) return { available: false, status: 'unavailable' };
         const { data } = await parseJsonSafely<{ available?: boolean; status?: string }>(res);
         return data || { available: false, status: 'unavailable' };
       })
       .then((data) => {
+        if (!data) {
+          probedAudioIdsRef.current.delete(videoId);
+          return;
+        }
         if (!cancelled) {
           const resolvedStatus: NativeAudioStatus = data?.available
             ? 'available'
@@ -492,6 +504,7 @@ export default function App() {
 
       try {
         const fs = await loadFirestoreService();
+        await fs.testFirestoreConnection();
         const {
           groups: curGroups,
           channels: curChannels,
@@ -503,6 +516,9 @@ export default function App() {
         setCloudReadyUid(firebaseUser.uid);
       } catch (err) {
         console.error('Gagal sinkronisasi awal Firebase:', err);
+        setAuthNotice(
+          'Sinkronisasi cloud Firebase gagal terhubung sementara. Data lokal Anda tetap aman.'
+        );
       }
     });
 
@@ -514,27 +530,53 @@ export default function App() {
     let cancelled = false;
     const unsubs: Array<() => void> = [];
 
+    const handleCloudError = () => {
+      setAuthNotice(
+        'Koneksi sinkronisasi cloud terganggu sementara. Perubahan tetap tersimpan secara lokal.'
+      );
+    };
+
     loadFirestoreService()
       .then((fs) => {
         if (cancelled) return;
         unsubs.push(
-          fs.subscribeToUserGroups(user.uid, (cloudGroups) => {
-            if (cloudGroups.length > 0) {
-              setGroups(cloudGroups);
-            }
-          }),
-          fs.subscribeToUserChannels(user.uid, (cloudChannels) => {
-            setChannels(cloudChannels);
-          }),
-          fs.subscribeToUserVideos(user.uid, (cloudVideos) => {
-            setVideos(cloudVideos);
-          }),
-          fs.subscribeToUserPlaylists(user.uid, (cloudPlaylists) => {
-            setPlaylists(cloudPlaylists);
-          }),
-          fs.subscribeToPlayedVideos(user.uid, (cloudPlayedIds) => {
-            setPlayedVideoIds(cloudPlayedIds);
-          })
+          fs.subscribeToUserGroups(
+            user.uid,
+            (cloudGroups) => {
+              if (cloudGroups.length > 0) {
+                setGroups(cloudGroups);
+              }
+            },
+            handleCloudError
+          ),
+          fs.subscribeToUserChannels(
+            user.uid,
+            (cloudChannels) => {
+              setChannels(cloudChannels);
+            },
+            handleCloudError
+          ),
+          fs.subscribeToUserVideos(
+            user.uid,
+            (cloudVideos) => {
+              setVideos(cloudVideos);
+            },
+            handleCloudError
+          ),
+          fs.subscribeToUserPlaylists(
+            user.uid,
+            (cloudPlaylists) => {
+              setPlaylists(cloudPlaylists);
+            },
+            handleCloudError
+          ),
+          fs.subscribeToPlayedVideos(
+            user.uid,
+            (cloudPlayedIds) => {
+              setPlayedVideoIds(cloudPlayedIds);
+            },
+            handleCloudError
+          )
         );
       })
       .catch(console.error);
@@ -805,15 +847,16 @@ export default function App() {
     setVideos((prev) => prev.filter((v) => v.channelId !== channelId));
     setQueue((prev) => prev.filter((v) => v.channelId !== channelId));
     if (deleteSet.size > 0) {
-      setPlayedVideoIds((prev) => {
-        const filtered = prev.filter((id) => !deleteSet.has(id));
-        if (filtered.length !== prev.length && user) {
+      const currentPlayed = latestStateRef.current.playedVideoIds;
+      const filtered = currentPlayed.filter((id) => !deleteSet.has(id));
+      if (filtered.length !== currentPlayed.length) {
+        setPlayedVideoIds(filtered);
+        if (user) {
           loadFirestoreService()
             .then((fs) => fs.updatePlayedVideosInFirestore(user.uid, filtered))
             .catch(console.error);
         }
-        return filtered;
-      });
+      }
     }
     if (selectedChannelId === channelId) {
       setSelectedChannelId(null);
@@ -1218,13 +1261,13 @@ export default function App() {
       }
 
       if (Object.keys(fetchedChannelsMap).length > 0 || countByChannel.size > 0) {
-        setChannels((prev) => {
-          const updatedList: Channel[] = [];
-          const nextChannels = prev.map((ch) => {
+        const updatedList: Channel[] = [];
+        setChannels((prev) =>
+          prev.map((ch) => {
             const fresh = fetchedChannelsMap[ch.id];
             const nextCount = countByChannel.get(ch.id) ?? ch.videoCount;
             if (!fresh && nextCount === ch.videoCount) return ch;
-            const mergedCh: Channel = {
+            return {
               ...ch,
               title: fresh?.title || ch.title,
               handle: fresh?.handle || ch.handle,
@@ -1232,23 +1275,34 @@ export default function App() {
               url: fresh?.url || ch.url,
               videoCount: nextCount,
             };
-            if (
-              mergedCh.title !== ch.title ||
-              mergedCh.avatar !== ch.avatar ||
-              mergedCh.handle !== ch.handle ||
-              mergedCh.videoCount !== ch.videoCount
-            ) {
-              updatedList.push(mergedCh);
-            }
-            return mergedCh;
-          });
-          if (user && updatedList.length > 0) {
-            loadFirestoreService()
-              .then((fs) => Promise.all(updatedList.map((ch) => fs.saveChannelInFirestore(user.uid, ch))))
-              .catch(console.error);
+          })
+        );
+        for (const ch of latestStateRef.current.channels) {
+          const fresh = fetchedChannelsMap[ch.id];
+          const nextCount = countByChannel.get(ch.id) ?? ch.videoCount;
+          if (!fresh && nextCount === ch.videoCount) continue;
+          const mergedCh: Channel = {
+            ...ch,
+            title: fresh?.title || ch.title,
+            handle: fresh?.handle || ch.handle,
+            avatar: fresh?.avatar || ch.avatar,
+            url: fresh?.url || ch.url,
+            videoCount: nextCount,
+          };
+          if (
+            mergedCh.title !== ch.title ||
+            mergedCh.avatar !== ch.avatar ||
+            mergedCh.handle !== ch.handle ||
+            mergedCh.videoCount !== ch.videoCount
+          ) {
+            updatedList.push(mergedCh);
           }
-          return nextChannels;
-        });
+        }
+        if (user && updatedList.length > 0) {
+          loadFirestoreService()
+            .then((fs) => Promise.all(updatedList.map((ch) => fs.saveChannelInFirestore(user.uid, ch))))
+            .catch(console.error);
+        }
       }
 
       if (uniqueFetched.length > 0) {
@@ -1457,37 +1511,35 @@ export default function App() {
 
   const handleTogglePlayed = useCallback(
     (videoId: string) => {
-      setPlayedVideoIds((prev) => {
-        const exists = prev.includes(videoId);
-        const next = exists ? prev.filter((id) => id !== videoId) : [videoId, ...prev];
-        if (user) {
-          loadFirestoreService()
-            .then((fs) => fs.updatePlayedVideosInFirestore(user.uid, next))
-            .catch(console.error);
-        }
-        return next;
-      });
+      const prev = latestStateRef.current.playedVideoIds;
+      const exists = prev.includes(videoId);
+      const next = exists ? prev.filter((id) => id !== videoId) : [videoId, ...prev];
+      setPlayedVideoIds(next);
+      if (user) {
+        loadFirestoreService()
+          .then((fs) => fs.updatePlayedVideosInFirestore(user.uid, next))
+          .catch(console.error);
+      }
     },
     [user]
   );
 
   const handleMarkAsPlayed = useCallback(
     (videoId: string) => {
-      setPlayedVideoIds((prev) => {
-        if (prev.includes(videoId)) return prev;
-        const next = [videoId, ...prev];
-        if (user) {
-          loadFirestoreService()
-            .then((fs) => fs.updatePlayedVideosInFirestore(user.uid, next))
-            .catch(console.error);
-        }
-        return next;
-      });
+      const prev = latestStateRef.current.playedVideoIds;
+      if (prev.includes(videoId)) return;
+      const next = [videoId, ...prev];
+      setPlayedVideoIds(next);
+      if (user) {
+        loadFirestoreService()
+          .then((fs) => fs.updatePlayedVideosInFirestore(user.uid, next))
+          .catch(console.error);
+      }
     },
     [user]
   );
 
-  const handleCreatePlaylist = (name: string, description: string, initialVideoIds: string[]) => {
+  const handleCreatePlaylist = (name: string, description: string, initialVideoIds: string[]): Playlist => {
     const now = new Date().toISOString();
     const newPlaylist: Playlist = {
       id: `pl_${Date.now()}`,
@@ -1503,6 +1555,7 @@ export default function App() {
         .then((fs) => fs.createPlaylistInFirestore(user.uid, newPlaylist))
         .catch(console.error);
     }
+    return newPlaylist;
   };
 
   const handleUpdatePlaylist = (

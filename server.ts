@@ -34,6 +34,25 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '1mb' }));
+  app.use(
+    (
+      err: unknown,
+      req: Request,
+      res: Response,
+      next: express.NextFunction
+    ) => {
+      if (
+        err instanceof SyntaxError &&
+        (err as { status?: number }).status === 400 &&
+        'body' in err &&
+        req.path.startsWith('/api/')
+      ) {
+        res.status(400).json({ error: 'Payload JSON tidak valid' });
+        return;
+      }
+      next(err);
+    }
+  );
   app.use((req, res, next) => {
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('X-Content-Type-Options', 'nosniff');
