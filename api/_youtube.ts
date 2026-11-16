@@ -1,8 +1,6 @@
 import dns from 'node:dns';
-import { JSDOM } from 'jsdom';
-import { BotGuardClient, getChallenge } from 'bgutils-js/botguard';
-import { WebPoMinter } from 'bgutils-js/webpo';
-import { Innertube } from 'youtubei.js';
+import type { WebPoMinter } from 'bgutils-js/webpo';
+import type { Innertube } from 'youtubei.js';
 
 interface OAuth2ClientID {
   client_id: string;
@@ -67,6 +65,14 @@ export interface ChannelData {
   avatar?: string;
   description?: string;
   url: string;
+}
+
+export function safeDecodeURIComponent(str: string): string {
+  try {
+    return decodeURIComponent(str);
+  } catch {
+    return str;
+  }
 }
 
 export function decodeXml(str: string): string {
@@ -574,12 +580,12 @@ export async function resolveYouTubeChannel(
   const bareUrlMatch = cleaned.match(/youtube\.com\/([^/\s?#&]+)/i);
 
   if (handleUrlMatch) {
-    handle = decodeURIComponent(handleUrlMatch[1]);
+    handle = safeDecodeURIComponent(handleUrlMatch[1]);
     targetUrl = `https://www.youtube.com/${encodeURI(handle)}`;
     fallbackSearchHint = handle;
   } else if (customUrlMatch) {
     const kind = customUrlMatch[1].toLowerCase();
-    const name = decodeURIComponent(customUrlMatch[2]);
+    const name = safeDecodeURIComponent(customUrlMatch[2]);
     targetUrl = `https://www.youtube.com/${kind}/${encodeURIComponent(name)}`;
     fallbackSearchHint = name;
     if (kind === 'user') {
@@ -606,7 +612,7 @@ export async function resolveYouTubeChannel(
       bareUrlMatch[1].toLowerCase()
     )
   ) {
-    const slug = decodeURIComponent(bareUrlMatch[1]);
+    const slug = safeDecodeURIComponent(bareUrlMatch[1]);
     targetUrl = `https://www.youtube.com/${encodeURIComponent(slug)}`;
     fallbackSearchHint = slug;
   } else if (!cleaned.includes('/') && !cleaned.includes('.')) {
@@ -1223,6 +1229,11 @@ export function extractAuthFromRequest(
 let cachedInnertubeBase: { yt: Innertube; expiresAt: number } | null = null;
 let pendingInnertubeBasePromise: Promise<Innertube> | null = null;
 
+async function loadInnertubeClass() {
+  const mod = await import('youtubei.js');
+  return mod.Innertube;
+}
+
 function invalidateSharedInnertubeBase(): void {
   cachedInnertubeBase = null;
 }
@@ -1234,7 +1245,8 @@ async function getSharedInnertubeBase(): Promise<Innertube> {
   if (pendingInnertubeBasePromise) {
     return pendingInnertubeBasePromise;
   }
-  pendingInnertubeBasePromise = Innertube.create({ retrieve_player: false })
+  pendingInnertubeBasePromise = loadInnertubeClass()
+    .then((InnertubeCls) => InnertubeCls.create({ retrieve_player: false }))
     .then((yt) => {
       cachedInnertubeBase = { yt, expiresAt: Date.now() + 30 * 60 * 1000 };
       return yt;
@@ -1262,7 +1274,8 @@ async function getCachedInnertubePlayer(options: {
   if (cached && cached.expiresAt > Date.now()) {
     return cached.yt;
   }
-  const yt = await Innertube.create({
+  const InnertubeCls = await loadInnertubeClass();
+  const yt = await InnertubeCls.create({
     cookie: options.cookies || undefined,
     po_token: options.poToken || undefined,
     visitor_data: options.visitorData || undefined,
@@ -1315,7 +1328,8 @@ export async function startYouTubeDeviceAuth(): Promise<{
   interval: number;
   client: YouTubeOAuthClientIdentity;
 }> {
-  const yt = await Innertube.create({ retrieve_player: false });
+  const InnertubeCls = await loadInnertubeClass();
+  const yt = await InnertubeCls.create({ retrieve_player: false });
   const client = await getYouTubeTvClientIdentity();
   const oauth = (
     yt.session as unknown as {
@@ -1327,6 +1341,9 @@ export async function startYouTubeDeviceAuth(): Promise<{
   ).oauth;
   oauth.client_id = client;
   const codeData = await oauth.getDeviceAndUserCode();
+  if (!codeData?.user_code || !codeData?.device_code) {
+    throw new Error('YouTube tidak mengembalikan kode verifikasi perangkat.');
+  }
   return {
     verificationUrl: codeData.verification_url || 'https://www.google.com/device',
     userCode: codeData.user_code,
@@ -1456,6 +1473,12 @@ async function getOrCreateBotGuardSession(): Promise<BotGuardPoSession | null> {
 
   pendingBotGuardPromise = (async () => {
     try {
+      const [{ JSDOM }, { BotGuardClient, getChallenge }, { WebPoMinter }] = await Promise.all([
+        import('jsdom'),
+        import('bgutils-js/botguard'),
+        import('bgutils-js/webpo'),
+      ]);
+
       const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
         url: 'https://www.youtube.com/',
         referrer: 'https://www.youtube.com/',
@@ -2339,76 +2362,90 @@ async function searchChannelsViaInnerTubeHttp(
   onlyChannels: boolean,
   timeoutMs = 4800
 ): Promise<{ ok: boolean; results: ChannelSearchResult[]; error?: Error }> {
-  try {
-    const bodyPayload: Record<string, unknown> = {
-      context: {
-        client: {
-          clientName: 'WEB',
-          clientVersion: '2.20250201.00.00',
-          hl: 'id',
-          gl: 'ID',
-        },
-      },
-      query: searchTerm,
-    };
-    if (onlyChannels) {
-      bodyPayload.params = 'EgIQAg==';
-    }
+  const clients = [
+    {
+      clientName: 'WEB',
+      clientVersion: '2.20250201.00.00',
+      clientHeaderId: '1',
+      origin: 'https://www.youtube.com',
+    },
+    {
+      clientName: 'MWEB',
+      clientVersion: '2.20250201.00.00',
+      clientHeaderId: '2',
+      origin: 'https://m.youtube.com',
+    },
+  ];
 
-    const res = await fetchWithTimeout(
-      'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'Accept-Language': 'id,en-US,en;q=0.9',
-          Origin: 'https://www.youtube.com',
-          Referer: 'https://www.youtube.com/',
-          'X-YouTube-Client-Name': '1',
-          'X-YouTube-Client-Version': '2.20250201.00.00',
+  let lastErr: Error | undefined;
+  for (const cfg of clients) {
+    try {
+      const bodyPayload: Record<string, unknown> = {
+        context: {
+          client: {
+            clientName: cfg.clientName,
+            clientVersion: cfg.clientVersion,
+            hl: 'id',
+            gl: 'ID',
+          },
         },
-        body: JSON.stringify(bodyPayload),
-      },
-      timeoutMs
-    );
-
-    if (!res.ok) {
-      return {
-        ok: false,
-        results: [],
-        error: new Error(`YouTube search merespons status ${res.status}`),
+        query: searchTerm,
       };
-    }
+      if (onlyChannels) {
+        bodyPayload.params = 'EgIQAg==';
+      }
 
-    const data = await safeResponseJson<any>(res);
-    if (!data || data.error) {
-      return {
-        ok: false,
-        results: [],
-        error: new Error(
+      const res = await fetchWithTimeout(
+        'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'Accept-Language': 'id,en-US,en;q=0.9',
+            Origin: cfg.origin,
+            Referer: `${cfg.origin}/`,
+            'X-YouTube-Client-Name': cfg.clientHeaderId,
+            'X-YouTube-Client-Version': cfg.clientVersion,
+          },
+          body: JSON.stringify(bodyPayload),
+        },
+        timeoutMs
+      );
+
+      if (!res.ok) {
+        lastErr = new Error(`YouTube search merespons status ${res.status}`);
+        continue;
+      }
+
+      const data = await safeResponseJson<any>(res);
+      if (!data || data.error) {
+        lastErr = new Error(
           data?.error?.message
             ? String(data.error.message)
             : 'Respons pencarian YouTube tidak valid'
-        ),
-      };
-    }
+        );
+        continue;
+      }
 
-    const found: ChannelSearchResult[] = [];
-    const seen = new Set<string>();
-    collectChannelRenderers(data?.contents ?? data, found, seen);
-    if (!onlyChannels && found.length === 0) {
-      collectAuthorChannelsFromVideos(data?.contents ?? data, found, seen);
-    }
+      const found: ChannelSearchResult[] = [];
+      const seen = new Set<string>();
+      collectChannelRenderers(data?.contents ?? data, found, seen);
+      if (!onlyChannels && found.length === 0) {
+        collectAuthorChannelsFromVideos(data?.contents ?? data, found, seen);
+      }
 
-    return { ok: true, results: found };
-  } catch (err) {
-    return {
-      ok: false,
-      results: [],
-      error: err instanceof Error ? err : new Error('Gagal menghubungi YouTube search'),
-    };
+      return { ok: true, results: found };
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error('Gagal menghubungi YouTube search');
+    }
   }
+
+  return {
+    ok: false,
+    results: [],
+    error: lastErr || new Error('Gagal menghubungi YouTube search'),
+  };
 }
 
 async function searchChannelsViaInnertubeLib(
@@ -2708,7 +2745,7 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
       const customMatch = cleaned.match(/youtube\.com\/(?:c|user)\/([^/\s?#&]+)/i);
       const slug = handleMatch?.[1] || customMatch?.[1];
       if (slug) {
-        searchTerm = decodeURIComponent(slug.replace(/^@/, ''));
+        searchTerm = safeDecodeURIComponent(slug.replace(/^@/, ''));
       }
     }
 

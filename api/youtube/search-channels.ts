@@ -27,6 +27,6 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   } catch (err: unknown) {
     res.setHeader('Cache-Control', 'no-store');
     const message = err instanceof Error ? err.message : 'Gagal mencari channel YouTube';
-    return res.status(500).json({ error: message });
+    return res.status(502).json({ error: message });
   }
 }

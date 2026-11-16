@@ -21,11 +21,11 @@ export function buildHttpErrorMessage(
   if (data?.error && typeof data.error === 'string') return data.error;
   if (data?.message && typeof data.message === 'string') return data.message;
   const trimmed = rawText.trim();
-  if (trimmed.startsWith('<!') || trimmed.startsWith('<html')) {
-    return `${fallbackMessage} (Server mengembalikan halaman HTML / HTTP ${res.status})`;
+  if (trimmed.startsWith('<!') || trimmed.startsWith('<html') || res.status >= 500) {
+    return `${fallbackMessage}. Server sedang sibuk atau koneksi upstream terganggu, silakan coba lagi.`;
   }
   if (trimmed && trimmed.length < 180) {
     return `${fallbackMessage} (${trimmed})`;
   }
-  return `${fallbackMessage} (HTTP ${res.status})`;
+  return `${fallbackMessage} (kode ${res.status})`;
 }

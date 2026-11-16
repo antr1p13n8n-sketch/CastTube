@@ -33,7 +33,7 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '2mb' }));
   app.use(
     (
       err: unknown,
@@ -41,14 +41,20 @@ async function startServer() {
       res: Response,
       next: express.NextFunction
     ) => {
-      if (
-        err instanceof SyntaxError &&
-        (err as { status?: number }).status === 400 &&
-        'body' in err &&
-        req.path.startsWith('/api/')
-      ) {
-        res.status(400).json({ error: 'Payload JSON tidak valid' });
-        return;
+      if (req.path.startsWith('/api/') && err && typeof err === 'object') {
+        const errObj = err as { status?: number; type?: string };
+        if (errObj.type === 'entity.too.large' || errObj.status === 413) {
+          res.status(413).json({ error: 'Ukuran data permintaan terlalu besar' });
+          return;
+        }
+        if (
+          (err instanceof SyntaxError && 'body' in err) ||
+          errObj.status === 400 ||
+          errObj.type === 'entity.parse.failed'
+        ) {
+          res.status(400).json({ error: 'Payload JSON tidak valid' });
+          return;
+        }
       }
       next(err);
     }
@@ -92,7 +98,7 @@ async function startServer() {
     }
     const originalJson = res.json.bind(res);
     res.json = ((body: unknown) => {
-      if (res.headersSent || res.getHeader('Content-Encoding')) {
+      if (res.headersSent || res.getHeader('Content-Encoding') || res.statusCode >= 400) {
         return originalJson(body);
       }
       try {
@@ -165,16 +171,16 @@ async function startServer() {
     } catch (err: unknown) {
       res.setHeader('Cache-Control', 'no-store');
       const message = err instanceof Error ? err.message : 'Gagal mencari channel YouTube';
-      res.status(500).json({ error: message });
+      res.status(502).json({ error: message });
     }
   });
 
   // API: Fetch single channel feed
   app.get('/api/youtube/feed', async (req: Request, res: Response) => {
     try {
-      const channelId = req.query.channelId as string;
-      if (!channelId) {
-        res.status(400).json({ error: 'Parameter channelId diperlukan' });
+      const channelId = typeof req.query.channelId === 'string' ? req.query.channelId.trim() : '';
+      if (!channelId || !/^UC[a-zA-Z0-9_-]{22}$/.test(channelId)) {
+        res.status(400).json({ error: 'Parameter channelId YouTube tidak valid' });
         return;
       }
       const forceRefresh = req.query.force === '1' || req.query.force === 'true';
@@ -186,7 +192,7 @@ async function startServer() {
       res.json(data);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Gagal mengambil feed channel';
-      res.status(500).json({ error: message });
+      res.status(502).json({ error: message });
     }
   });
 
@@ -204,37 +210,48 @@ async function startServer() {
       res.json(payload);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Gagal memproses batch feeds';
-      res.status(500).json({ error: message });
+      res.status(502).json({ error: message });
     }
   });
 
   // API: Audio Extractor Auth & Config (YouTube TV OAuth / Cookies / Custom Extractor)
   app.get('/api/youtube/extractor-auth', (req: Request, res: Response) => {
-    const auth = extractAuthFromRequest(req.headers);
-    const hasEnvCookies = Boolean(normalizeYouTubeCookies(process.env.YOUTUBE_COOKIES));
-    const hasEnvExtractor = Boolean(
-      process.env.COBALT_API_URL?.trim() ||
-        process.env.PIPED_API_URL?.trim() ||
-        process.env.INVIDIOUS_API_URL?.trim()
-    );
-    const mode = auth.oauthTokens
-      ? 'oauth'
-      : auth.cookies
-      ? 'cookies'
-      : auth.extractorUrl
-      ? 'custom_server'
-      : hasEnvCookies || hasEnvExtractor
-      ? 'env'
-      : 'none';
+    try {
+      const auth = extractAuthFromRequest(req.headers);
+      const hasEnvCookies = Boolean(normalizeYouTubeCookies(process.env.YOUTUBE_COOKIES));
+      const hasEnvExtractor = Boolean(
+        process.env.COBALT_API_URL?.trim() ||
+          process.env.PIPED_API_URL?.trim() ||
+          process.env.INVIDIOUS_API_URL?.trim()
+      );
+      const mode = auth.oauthTokens
+        ? 'oauth'
+        : auth.cookies
+        ? 'cookies'
+        : auth.extractorUrl
+        ? 'custom_server'
+        : hasEnvCookies || hasEnvExtractor
+        ? 'env'
+        : 'none';
 
-    res.json({
-      authenticated: mode !== 'none',
-      mode,
-      hasOAuth: Boolean(auth.oauthTokens?.access_token),
-      hasCookies: Boolean(auth.cookies),
-      extractorUrl: auth.extractorUrl || null,
-      hasEnvFallback: hasEnvCookies || hasEnvExtractor,
-    });
+      res.json({
+        authenticated: mode !== 'none',
+        mode,
+        hasOAuth: Boolean(auth.oauthTokens?.access_token),
+        hasCookies: Boolean(auth.cookies),
+        extractorUrl: auth.extractorUrl || null,
+        hasEnvFallback: hasEnvCookies || hasEnvExtractor,
+      });
+    } catch {
+      res.json({
+        authenticated: false,
+        mode: 'none',
+        hasOAuth: false,
+        hasCookies: false,
+        extractorUrl: null,
+        hasEnvFallback: false,
+      });
+    }
   });
 
   app.post('/api/youtube/extractor-auth', async (req: Request, res: Response) => {
@@ -351,7 +368,7 @@ async function startServer() {
       res.status(400).json({ error: 'Aksi extractor-auth tidak dikenal' });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Gagal memproses otorisasi YouTube';
-      res.status(500).json({ error: message });
+      res.status(502).json({ error: message });
     }
   });
 
@@ -365,7 +382,24 @@ async function startServer() {
       }
 
       const authConfig = extractAuthFromRequest(req.headers);
-      const resolution = await resolveAudioStreamInfo(videoId, authConfig);
+      let resolution;
+      try {
+        resolution = await resolveAudioStreamInfo(videoId, authConfig);
+      } catch (resolveErr: unknown) {
+        if (req.query.check === '1') {
+          res.status(200).json({
+            available: false,
+            status: 'unavailable',
+            reason: resolveErr instanceof Error ? resolveErr.message : 'Gagal memeriksa stream',
+          });
+          return;
+        }
+        res.status(502).json({
+          error: 'Gagal menghubungi sumber audio YouTube',
+          status: 'unavailable',
+        });
+        return;
+      }
 
       if (resolution.refreshedOAuth) {
         const secure = req.headers['x-forwarded-proto'] === 'https' || req.secure;
@@ -387,7 +421,7 @@ async function startServer() {
         return;
       }
       let streamInfo = resolution.stream;
-      if (!streamInfo) {
+      if (!streamInfo || !/^https?:\/\//i.test(streamInfo.url)) {
         res.status(404).json({
           error: 'Audio stream tidak tersedia untuk video ini',
           status: resolution.status,
@@ -414,14 +448,21 @@ async function startServer() {
         });
       };
 
-      let upstream = await fetchUpstream(streamInfo);
-      if (upstream.status === 403 || upstream.status === 410) {
-        invalidateAudioStreamCache(videoId);
-        const refreshed = await resolveAudioStreamUrl(videoId, authConfig);
-        if (refreshed) {
-          streamInfo = refreshed;
-          upstream = await fetchUpstream(refreshed);
+      let upstream: globalThis.Response;
+      try {
+        upstream = await fetchUpstream(streamInfo);
+        if (upstream.status === 403 || upstream.status === 410) {
+          invalidateAudioStreamCache(videoId);
+          const refreshed = await resolveAudioStreamUrl(videoId, authConfig);
+          if (refreshed && /^https?:\/\//i.test(refreshed.url)) {
+            streamInfo = refreshed;
+            upstream = await fetchUpstream(refreshed);
+          }
         }
+      } catch (fetchErr: unknown) {
+        if ((fetchErr as { name?: string })?.name === 'AbortError') return;
+        res.status(502).json({ error: 'Gagal menghubungi upstream audio YouTube' });
+        return;
       }
 
       if (!upstream.ok && upstream.status !== 206) {
@@ -429,7 +470,11 @@ async function startServer() {
         return;
       }
 
-      const resolvedMime = upstream.headers.get('content-type') || streamInfo.mimeType;
+      const upstreamType = (upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      const resolvedMime =
+        upstreamType.startsWith('audio/') || upstreamType.startsWith('video/')
+          ? upstreamType
+          : streamInfo.mimeType;
       res.status(upstream.status);
       res.setHeader('Content-Type', resolvedMime);
       res.setHeader('Accept-Ranges', 'bytes');
@@ -449,12 +494,13 @@ async function startServer() {
       if (contentRange) res.setHeader('Content-Range', contentRange);
 
       if (req.method === 'HEAD') {
+        void upstream.body?.cancel().catch(() => {});
         res.end();
         return;
       }
 
       if (!upstream.body) {
-        res.status(502).end();
+        res.status(502).json({ error: 'Stream audio kosong dari upstream' });
         return;
       }
 
@@ -462,12 +508,15 @@ async function startServer() {
       nodeStream.on('error', () => {
         if (!res.writableEnded) res.end();
       });
+      req.on('close', () => {
+        nodeStream.destroy();
+      });
       nodeStream.pipe(res);
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
       const message = err instanceof Error ? err.message : 'Gagal memutar stream audio';
       if (!res.headersSent) {
-        res.status(500).json({ error: message });
+        res.status(502).json({ error: message });
       }
     }
   };
@@ -495,9 +544,17 @@ async function startServer() {
         maxAge: '1h',
       })
     );
-    app.get('*', (_req: Request, res: Response) => {
+  app.get('*', (req: Request, res: Response, next: express.NextFunction) => {
+      if (req.path.startsWith('/api/')) {
+        next();
+        return;
+      }
       res.setHeader('Cache-Control', 'no-cache');
-      res.sendFile(path.join(distDir, 'index.html'));
+      res.sendFile(path.join(distDir, 'index.html'), (err) => {
+        if (err && !res.headersSent) {
+          res.status(404).send('Halaman tidak ditemukan');
+        }
+      });
     });
   } else {
     const vite = await createViteServer({
@@ -552,6 +609,33 @@ export class ErrorOverlay {}
     });
     app.use(vite.middlewares);
   }
+
+  app.use(
+    (
+      err: unknown,
+      req: Request,
+      res: Response,
+      _next: express.NextFunction
+    ) => {
+      if (res.headersSent) return;
+      const errObj = (err && typeof err === 'object' ? err : {}) as {
+        status?: number;
+        statusCode?: number;
+        message?: string;
+      };
+      const status =
+        Number.isInteger(errObj.status) && (errObj.status as number) >= 400 && (errObj.status as number) < 500
+          ? (errObj.status as number)
+          : 502;
+      if (req.path.startsWith('/api/')) {
+        res.status(status).json({
+          error: errObj.message || 'Terjadi gangguan sementara pada layanan server',
+        });
+        return;
+      }
+      res.status(status).type('text/plain').send('Layanan sedang sibuk, silakan muat ulang halaman.');
+    }
+  );
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`CastTube server active on port ${PORT}`);

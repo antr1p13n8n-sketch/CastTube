@@ -12,8 +12,16 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   }
 
   try {
-    const parsedBody =
-      typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+    let parsedBody: Record<string, any> = {};
+    if (typeof req.body === 'string') {
+      try {
+        parsedBody = JSON.parse(req.body || '{}') as Record<string, any>;
+      } catch {
+        return res.status(400).json({ error: 'Payload JSON tidak valid' });
+      }
+    } else if (req.body && typeof req.body === 'object') {
+      parsedBody = req.body as Record<string, any>;
+    }
     const { input } = parsedBody;
     if (!input || typeof input !== 'string') {
       return res.status(400).json({ error: 'Parameter input harus berupa URL atau handle YouTube' });

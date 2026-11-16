@@ -35,31 +35,42 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   const secure = isSecureRequest(req);
 
   if (req.method === 'GET') {
-    const auth = extractAuthFromRequest(req.headers);
-    const hasEnvCookies = Boolean(normalizeYouTubeCookies(process.env.YOUTUBE_COOKIES));
-    const hasEnvExtractor = Boolean(
-      process.env.COBALT_API_URL?.trim() ||
-        process.env.PIPED_API_URL?.trim() ||
-        process.env.INVIDIOUS_API_URL?.trim()
-    );
-    const mode = auth.oauthTokens
-      ? 'oauth'
-      : auth.cookies
-      ? 'cookies'
-      : auth.extractorUrl
-      ? 'custom_server'
-      : hasEnvCookies || hasEnvExtractor
-      ? 'env'
-      : 'none';
+    try {
+      const auth = extractAuthFromRequest(req.headers);
+      const hasEnvCookies = Boolean(normalizeYouTubeCookies(process.env.YOUTUBE_COOKIES));
+      const hasEnvExtractor = Boolean(
+        process.env.COBALT_API_URL?.trim() ||
+          process.env.PIPED_API_URL?.trim() ||
+          process.env.INVIDIOUS_API_URL?.trim()
+      );
+      const mode = auth.oauthTokens
+        ? 'oauth'
+        : auth.cookies
+        ? 'cookies'
+        : auth.extractorUrl
+        ? 'custom_server'
+        : hasEnvCookies || hasEnvExtractor
+        ? 'env'
+        : 'none';
 
-    return res.status(200).json({
-      authenticated: mode !== 'none',
-      mode,
-      hasOAuth: Boolean(auth.oauthTokens?.access_token),
-      hasCookies: Boolean(auth.cookies),
-      extractorUrl: auth.extractorUrl || null,
-      hasEnvFallback: hasEnvCookies || hasEnvExtractor,
-    });
+      return res.status(200).json({
+        authenticated: mode !== 'none',
+        mode,
+        hasOAuth: Boolean(auth.oauthTokens?.access_token),
+        hasCookies: Boolean(auth.cookies),
+        extractorUrl: auth.extractorUrl || null,
+        hasEnvFallback: hasEnvCookies || hasEnvExtractor,
+      });
+    } catch {
+      return res.status(200).json({
+        authenticated: false,
+        mode: 'none',
+        hasOAuth: false,
+        hasCookies: false,
+        extractorUrl: null,
+        hasEnvFallback: false,
+      });
+    }
   }
 
   if (req.method !== 'POST') {
@@ -181,6 +192,6 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     return res.status(400).json({ error: 'Aksi extractor-auth tidak dikenal' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Gagal memproses otorisasi YouTube';
-    return res.status(500).json({ error: message });
+    return res.status(502).json({ error: message });
   }
 }

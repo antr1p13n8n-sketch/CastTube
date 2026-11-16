@@ -13,9 +13,9 @@ export default async function handler(req: VercelReq, res: VercelRes) {
 
   try {
     const rawId = req.query.channelId;
-    const channelId = Array.isArray(rawId) ? rawId[0] : rawId;
-    if (!channelId) {
-      return res.status(400).json({ error: 'Parameter channelId diperlukan' });
+    const channelId = (Array.isArray(rawId) ? rawId[0] : rawId || '').trim();
+    if (!channelId || !/^UC[a-zA-Z0-9_-]{22}$/.test(channelId)) {
+      return res.status(400).json({ error: 'Parameter channelId YouTube tidak valid' });
     }
 
     const rawForce = req.query.force;
@@ -30,6 +30,6 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     return res.status(200).json(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Gagal mengambil feed channel';
-    return res.status(500).json({ error: message });
+    return res.status(502).json({ error: message });
   }
 }

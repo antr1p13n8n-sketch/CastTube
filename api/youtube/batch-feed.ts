@@ -12,8 +12,16 @@ export default async function handler(req: VercelReq, res: VercelRes) {
   }
 
   try {
-    const parsedBody =
-      typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+    let parsedBody: Record<string, any> = {};
+    if (typeof req.body === 'string') {
+      try {
+        parsedBody = JSON.parse(req.body || '{}') as Record<string, any>;
+      } catch {
+        return res.status(400).json({ error: 'Payload JSON tidak valid' });
+      }
+    } else if (req.body && typeof req.body === 'object') {
+      parsedBody = req.body as Record<string, any>;
+    }
     const { channelIds, force } = parsedBody;
     if (!Array.isArray(channelIds)) {
       return res.status(400).json({ error: 'channelIds harus berupa array string' });
@@ -24,6 +32,6 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     return res.status(200).json(payload);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Gagal memproses batch feeds';
-    return res.status(500).json({ error: message });
+    return res.status(502).json({ error: message });
   }
 }

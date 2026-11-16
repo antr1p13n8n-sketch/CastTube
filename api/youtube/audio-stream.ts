@@ -48,7 +48,22 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     };
 
     const authConfig = extractAuthFromRequest(reqAny.headers);
-    const resolution = await resolveAudioStreamInfo(videoId, authConfig);
+    let resolution;
+    try {
+      resolution = await resolveAudioStreamInfo(videoId, authConfig);
+    } catch (resolveErr: unknown) {
+      if (req.query.check === '1') {
+        return res.status(200).json({
+          available: false,
+          status: 'unavailable',
+          reason: resolveErr instanceof Error ? resolveErr.message : 'Gagal memeriksa stream',
+        });
+      }
+      return res.status(502).json({
+        error: 'Gagal menghubungi sumber audio YouTube',
+        status: 'unavailable',
+      });
+    }
 
     if (resolution.refreshedOAuth) {
       const proto = reqAny.headers?.['x-forwarded-proto'];
@@ -70,7 +85,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       });
     }
     let streamInfo = resolution.stream;
-    if (!streamInfo) {
+    if (!streamInfo || !/^https?:\/\//i.test(streamInfo.url)) {
       return res.status(404).json({
         error: 'Audio stream tidak tersedia untuk video ini',
         status: resolution.status,
@@ -99,14 +114,20 @@ export default async function handler(req: VercelReq, res: VercelRes) {
       return fetch(info.url, { headers, redirect: 'follow', signal: controller.signal });
     };
 
-    let upstream = await fetchUpstream(streamInfo);
-    if (upstream.status === 403 || upstream.status === 410) {
-      invalidateAudioStreamCache(videoId);
-      const refreshed = await resolveAudioStreamUrl(videoId, authConfig);
-      if (refreshed) {
-        streamInfo = refreshed;
-        upstream = await fetchUpstream(refreshed);
+    let upstream: globalThis.Response;
+    try {
+      upstream = await fetchUpstream(streamInfo);
+      if (upstream.status === 403 || upstream.status === 410) {
+        invalidateAudioStreamCache(videoId);
+        const refreshed = await resolveAudioStreamUrl(videoId, authConfig);
+        if (refreshed && /^https?:\/\//i.test(refreshed.url)) {
+          streamInfo = refreshed;
+          upstream = await fetchUpstream(refreshed);
+        }
       }
+    } catch (fetchErr: unknown) {
+      if ((fetchErr as { name?: string })?.name === 'AbortError') return;
+      return res.status(502).json({ error: 'Gagal menghubungi upstream audio YouTube' });
     }
 
     if (!upstream.ok && upstream.status !== 206) {
@@ -144,7 +165,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     }
 
     if (!upstream.body) {
-      return res.status(502).end();
+      return res.status(502).json({ error: 'Stream audio kosong dari upstream' });
     }
 
     const nodeStream = Readable.fromWeb(upstream.body as any);
@@ -160,7 +181,7 @@ export default async function handler(req: VercelReq, res: VercelRes) {
     const message = err instanceof Error ? err.message : 'Gagal memutar stream audio';
     const resAny = res as unknown as { headersSent?: boolean };
     if (!resAny.headersSent) {
-      return res.status(500).json({ error: message });
+      return res.status(502).json({ error: message });
     }
   }
 }
