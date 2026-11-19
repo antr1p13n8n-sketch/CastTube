@@ -984,10 +984,13 @@ export default function App() {
     handleSeek(0);
   }, [handleSeek]);
 
+  const openAudioExtractorRef = useRef<() => void>(() => {});
+
   const floatingMiniPlayer = useFloatingMiniPlayer({
     currentVideo,
     isPlaying,
     usingNativeAudio: useNativeAudio,
+    nativeAudioStatus: currentAudioStatus,
     hasNext: queue.length > 0,
     autoPopupOnMinimize: bgAudioSettings.enabled && bgAudioSettings.autoPopupOnMinimize,
     autoClosePopupOnReturn: bgAudioSettings.autoClosePopupOnReturn,
@@ -995,9 +998,22 @@ export default function App() {
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
     onNext: handleNextTrack,
+    onOpenExtractorAuth: () => openAudioExtractorRef.current(),
   });
   const floatingMiniPlayerRef = useRef(floatingMiniPlayer);
   floatingMiniPlayerRef.current = floatingMiniPlayer;
+  const isPopupEmbedActive = floatingMiniPlayer.isPopupEmbedActive;
+
+  const prevPopupEmbedActiveRef = useRef(isPopupEmbedActive);
+  useEffect(() => {
+    if (prevPopupEmbedActiveRef.current && !isPopupEmbedActive) {
+      const snap = getPlaybackClockSnapshot();
+      if (snap.currentTime > 0) {
+        setSeekCommand(snap.currentTime);
+      }
+    }
+    prevPopupEmbedActiveRef.current = isPopupEmbedActive;
+  }, [isPopupEmbedActive]);
 
   const handleToggleQueue = useCallback((video: Video) => {
     setQueue((prev) => {
@@ -2241,7 +2257,8 @@ export default function App() {
 
   const handleYouTubeTimeUpdate = useCallback(
     (cur: number, dur: number) => {
-      if (useNativeAudio || isCheckingNativeAudio || !currentVideoIdRef.current) return;
+      if (useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive || !currentVideoIdRef.current)
+        return;
       const vid = currentVideoIdRef.current;
       setPlaybackClock(vid, cur, dur);
       if (Math.abs(cur - lastSavedProgressTimeRef.current) >= 10) {
@@ -2249,24 +2266,30 @@ export default function App() {
         persistProgress(vid, cur, dur);
       }
     },
-    [persistProgress, useNativeAudio, isCheckingNativeAudio]
+    [persistProgress, useNativeAudio, isCheckingNativeAudio, isPopupEmbedActive]
   );
 
   const handleYouTubeStateChange = useCallback(
     (playing: boolean) => {
-      if (useNativeAudio || isCheckingNativeAudio) return;
+      if (useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive) return;
       setIsPlaying(playing);
     },
-    [useNativeAudio, isCheckingNativeAudio]
+    [useNativeAudio, isCheckingNativeAudio, isPopupEmbedActive]
   );
 
   const handleYouTubeEnded = useCallback(() => {
-    if (useNativeAudio || isCheckingNativeAudio) return;
+    if (useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive) return;
     if (currentVideoIdRef.current) {
       handleMarkAsPlayed(currentVideoIdRef.current);
     }
     handleNextTrack();
-  }, [handleMarkAsPlayed, handleNextTrack, useNativeAudio, isCheckingNativeAudio]);
+  }, [
+    handleMarkAsPlayed,
+    handleNextTrack,
+    useNativeAudio,
+    isCheckingNativeAudio,
+    isPopupEmbedActive,
+  ]);
 
   const handleNativeTimeUpdate = useCallback(
     (cur: number, dur: number) => {
@@ -2532,6 +2555,7 @@ export default function App() {
     setHasOpenedExtractorModal(true);
     setIsExtractorModalOpen(true);
   }, [currentVideo]);
+  openAudioExtractorRef.current = handleOpenAudioExtractorSettings;
   const handleSeekHandled = useCallback(() => setSeekCommand(null), []);
   const handleExpandPlayerTab = useCallback(() => setActiveTab('player'), []);
 
@@ -2714,7 +2738,7 @@ export default function App() {
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : isPlaying && !useNativeAudio && !isCheckingNativeAudio
+                  : isPlaying && !useNativeAudio && !isCheckingNativeAudio && !isPopupEmbedActive
                   ? 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 sm:w-64 aspect-video rounded-2xl overflow-hidden shadow-2xl border border-slate-300 dark:border-slate-700 z-40 bg-black transition-all'
                   : 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 aspect-video pointer-events-none opacity-0 -z-50 overflow-hidden'
               }
@@ -2739,7 +2763,11 @@ export default function App() {
                   hasActivatedYouTube ? (
                     <YouTubePlayer
                       currentVideo={currentVideo}
-                      isPlaying={useNativeAudio || isCheckingNativeAudio ? false : isPlaying}
+                      isPlaying={
+                        useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive
+                          ? false
+                          : isPlaying
+                      }
                       mode={playerMode}
                       isVisible={activeTab === 'player' && playerMode === 'video'}
                       playbackRate={playbackRate}
@@ -2749,7 +2777,12 @@ export default function App() {
                       onTimeUpdate={handleYouTubeTimeUpdate}
                       onStateChange={handleYouTubeStateChange}
                       onEnded={handleYouTubeEnded}
-                      seekCommand={useNativeAudio || isCheckingNativeAudio ? null : seekCommand}
+                      onOpenExtractorAuth={handleOpenAudioExtractorSettings}
+                      seekCommand={
+                        useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive
+                          ? null
+                          : seekCommand
+                      }
                       onSeekHandled={handleSeekHandled}
                     />
                   ) : null

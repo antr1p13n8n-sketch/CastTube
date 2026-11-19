@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { AlertCircle, ExternalLink, RefreshCw } from 'lucide-react';
+import { AlertCircle, ExternalLink, RefreshCw, ShieldCheck, Globe } from 'lucide-react';
 import { PlayerMode, Video } from '../types';
+import { getPlaybackClockSnapshot } from '../utils/playbackClock';
 
 declare global {
   interface Window {
@@ -8,6 +9,8 @@ declare global {
     onYouTubeIframeAPIReady: () => void;
   }
 }
+
+type EmbedHost = 'https://www.youtube-nocookie.com' | 'https://www.youtube.com';
 
 interface YouTubePlayerProps {
   currentVideo: Video | null;
@@ -21,6 +24,7 @@ interface YouTubePlayerProps {
   onStateChange: (isPlaying: boolean) => void;
   onEnded: () => void;
   onError?: (err: any) => void;
+  onOpenExtractorAuth?: () => void;
   seekCommand: number | null;
   onSeekHandled: () => void;
   initialSeekSeconds?: number;
@@ -37,10 +41,12 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   onStateChange,
   onEnded,
   onError,
+  onOpenExtractorAuth,
   seekCommand,
   onSeekHandled,
   initialSeekSeconds = 0,
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<any>(null);
   const isReadyRef = useRef<boolean>(false);
   const timeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -55,12 +61,16 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const playbackRateRef = useRef<number>(playbackRate);
   const loadedVideoIdRef = useRef<string | null>(currentVideo?.id || null);
   const skipNextPlayVideoRef = useRef<string | null>(null);
+  const autoFallbackTriedRef = useRef<boolean>(false);
   const onTimeUpdateRef = useRef(onTimeUpdate);
   const onStateChangeRef = useRef(onStateChange);
   const onEndedRef = useRef(onEnded);
   const onErrorRef = useRef(onError);
   const onSeekHandledRef = useRef(onSeekHandled);
   const [playerErrorCode, setPlayerErrorCode] = useState<string | number | null>(null);
+  const [embedHost, setEmbedHost] = useState<EmbedHost>('https://www.youtube-nocookie.com');
+  const embedHostRef = useRef<EmbedHost>(embedHost);
+  embedHostRef.current = embedHost;
 
   initialSeekSecondsRef.current = initialSeekSeconds;
   isPlayingRef.current = isPlaying;
@@ -103,18 +113,32 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     }
   }, []);
 
-  // Initialize YT Player API
+  // Initialize YT Player API (re-creates cleanly when embedHost switches between nocookie and standard)
   useEffect(() => {
+    let cancelled = false;
+
     const initPlayer = () => {
-      if (!window.YT || !window.YT.Player || playerRef.current) return;
+      if (cancelled || !window.YT || !window.YT.Player || playerRef.current || !containerRef.current) {
+        return;
+      }
+
+      containerRef.current.innerHTML = '';
+      const targetEl = document.createElement('div');
+      targetEl.className = 'w-full h-full';
+      containerRef.current.appendChild(targetEl);
 
       const initialVid = currentVideoRef.current;
       loadedVideoIdRef.current = initialVid ? initialVid.id : null;
+      const clockSnap = getPlaybackClockSnapshot();
+      const resumeSec =
+        initialVid && clockSnap.videoId === initialVid.id && clockSnap.currentTime > 0
+          ? Math.floor(clockSnap.currentTime)
+          : Math.floor(initialSeekSecondsRef.current || 0);
 
-      playerRef.current = new window.YT.Player('yt-embedded-instance', {
+      playerRef.current = new window.YT.Player(targetEl, {
         height: '100%',
         width: '100%',
-        host: 'https://www.youtube-nocookie.com',
+        host: embedHost,
         videoId: initialVid ? initialVid.id : '',
         playerVars: {
           autoplay: 0,
@@ -125,7 +149,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           iv_load_policy: 3,
           fs: 1,
           enablejsapi: 1,
-          start: initialSeekSecondsRef.current > 0 ? Math.floor(initialSeekSecondsRef.current) : 0,
+          start: resumeSec,
           origin: window.location.origin,
         },
         events: {
@@ -231,8 +255,19 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             }
           },
           onError: (event: any) => {
-            console.warn('YouTube Player error code:', event.data);
-            setPlayerErrorCode(event.data ?? 'UNKNOWN');
+            const code = event.data ?? 'UNKNOWN';
+            console.warn('YouTube Player error code:', code, 'host:', embedHostRef.current);
+            if (
+              (code === 101 || code === 150 || code === 153 || code === 5 || code === 'API_BLOCKED') &&
+              embedHostRef.current === 'https://www.youtube-nocookie.com' &&
+              !autoFallbackTriedRef.current
+            ) {
+              autoFallbackTriedRef.current = true;
+              setPlayerErrorCode(null);
+              setEmbedHost('https://www.youtube.com');
+              return;
+            }
+            setPlayerErrorCode(code);
             onErrorRef.current?.(event.data);
           },
         },
@@ -265,6 +300,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     }
 
     return () => {
+      cancelled = true;
       stopTimePolling();
       if (verifyPauseTimerRef.current) {
         clearTimeout(verifyPauseTimerRef.current);
@@ -277,12 +313,16 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         // ignore
       }
       playerRef.current = null;
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
     };
-  }, []);
+  }, [embedHost, startTimePolling, stopTimePolling]);
 
   // Handle video changes
   useEffect(() => {
     setPlayerErrorCode(null);
+    autoFallbackTriedRef.current = false;
     if (!playerRef.current || !isReadyRef.current || !currentVideo) return;
     try {
       const currentUrl = playerRef.current.getVideoUrl ? playerRef.current.getVideoUrl() : '';
@@ -449,9 +489,18 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     }
   };
 
+  const handleToggleEmbedHost = () => {
+    setPlayerErrorCode(null);
+    setEmbedHost((prev) =>
+      prev === 'https://www.youtube-nocookie.com'
+        ? 'https://www.youtube.com'
+        : 'https://www.youtube-nocookie.com'
+    );
+  };
+
   const errorMessage =
-    playerErrorCode === 101 || playerErrorCode === 150
-      ? 'Pemilik video menonaktifkan pemutaran embed di luar YouTube.'
+    playerErrorCode === 101 || playerErrorCode === 150 || playerErrorCode === 153
+      ? 'Pemilik video membatasi pemutaran embed langsung di luar YouTube.'
       : playerErrorCode === 100
       ? 'Video tidak ditemukan atau telah dihapus/diprivasikan.'
       : playerErrorCode === 'API_BLOCKED'
@@ -466,7 +515,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           : 'w-full h-full relative bg-black aspect-video overflow-hidden'
       }
     >
-      <div id="yt-embedded-instance" className="w-full h-full" />
+      <div ref={containerRef} className="w-full h-full" />
       {playerErrorCode !== null && currentVideo && isVisible && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 bg-slate-950/92 text-center text-white space-y-3">
           <AlertCircle className="w-8 h-8 text-red-500" />
@@ -475,6 +524,28 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             <p className="text-xs text-slate-300 leading-relaxed">{errorMessage}</p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            {onOpenExtractorAuth && (
+              <button
+                type="button"
+                onClick={onOpenExtractorAuth}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white transition-colors cursor-pointer"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Putar via Audio Latar (Bypass Embed)</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleToggleEmbedHost}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-800 hover:bg-slate-700 text-white transition-colors cursor-pointer"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>
+                {embedHost === 'https://www.youtube-nocookie.com'
+                  ? 'Coba Host Standar'
+                  : 'Coba Mode Privasi'}
+              </span>
+            </button>
             {playerErrorCode !== 101 && playerErrorCode !== 150 && (
               <button
                 type="button"
@@ -482,7 +553,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-800 hover:bg-slate-700 text-white transition-colors cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>Coba Muat Ulang</span>
+                <span>Muat Ulang</span>
               </button>
             )}
             <a

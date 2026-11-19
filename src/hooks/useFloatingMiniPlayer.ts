@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Video } from '../types';
+import { NativeAudioStatus, Video } from '../types';
 import { formatTime } from '../utils/format';
-import { getPlaybackClockSnapshot, subscribePlaybackClock } from '../utils/playbackClock';
+import {
+  getPlaybackClockSnapshot,
+  setPlaybackClock,
+  subscribePlaybackClock,
+} from '../utils/playbackClock';
 
 interface DocumentPictureInPictureAPI {
   requestWindow: (options?: { width?: number; height?: number }) => Promise<Window>;
@@ -12,6 +16,7 @@ interface UseFloatingMiniPlayerOptions {
   currentVideo: Video | null;
   isPlaying: boolean;
   usingNativeAudio: boolean;
+  nativeAudioStatus?: NativeAudioStatus;
   hasNext: boolean;
   autoPopupOnMinimize?: boolean;
   autoClosePopupOnReturn?: boolean;
@@ -19,6 +24,7 @@ interface UseFloatingMiniPlayerOptions {
   onSkipBack: (seconds?: number) => void;
   onSkipForward: (seconds?: number) => void;
   onNext: () => void;
+  onOpenExtractorAuth?: () => void;
 }
 
 export interface OpenFloatingPopupOptions {
@@ -35,10 +41,10 @@ function renderCanvasCard(
   video: Video | null,
   isPlaying: boolean,
   usingNativeAudio: boolean,
+  nativeAudioStatus: NativeAudioStatus,
   currentTime: number,
   duration: number
 ) {
-  // Rich dark background
   const grad = ctx.createLinearGradient(0, 0, width, height);
   grad.addColorStop(0, '#0f172a');
   grad.addColorStop(0.55, '#1e293b');
@@ -46,14 +52,19 @@ function renderCanvasCard(
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, width, height);
 
-  // Subtle decorative glow
-  const glow = ctx.createRadialGradient(width * 0.85, height * 0.2, 10, width * 0.85, height * 0.2, 180);
+  const glow = ctx.createRadialGradient(
+    width * 0.85,
+    height * 0.2,
+    10,
+    width * 0.85,
+    height * 0.2,
+    180
+  );
   glow.addColorStop(0, 'rgba(220, 38, 38, 0.35)');
   glow.addColorStop(1, 'rgba(220, 38, 38, 0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, width, height);
 
-  // Top brand + mode badge
   ctx.fillStyle = '#ef4444';
   ctx.beginPath();
   ctx.roundRect(24, 22, 12, 12, 6);
@@ -64,15 +75,18 @@ function renderCanvasCard(
   ctx.fillText('CastTube', 44, 33);
 
   ctx.fillStyle = usingNativeAudio ? '#34d399' : '#fbbf24';
-  ctx.font = '600 13px system-ui, -apple-system, sans-serif';
-  const statusLabel = isPlaying
-    ? usingNativeAudio
+  ctx.font = '600 12px system-ui, -apple-system, sans-serif';
+  const statusLabel = usingNativeAudio
+    ? isPlaying
       ? 'Audio Latar Aktif'
-      : 'Pemutaran Aktif'
-    : 'Dijeda';
+      : 'Dijeda'
+    : nativeAudioStatus === 'login_required'
+    ? 'Perlu Akun TV / Cookie'
+    : nativeAudioStatus === 'live_stream'
+    ? 'Siaran Live'
+    : 'Pemutar YouTube';
   ctx.fillText(statusLabel, width - ctx.measureText(statusLabel).width - 24, 33);
 
-  // Title (wrap max 2 lines)
   const title = video?.title || 'Tidak ada pemutaran';
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 20px system-ui, -apple-system, sans-serif';
@@ -102,12 +116,10 @@ function renderCanvasCard(
     ctx.fillText(line, 24, 92 + idx * 28);
   });
 
-  // Channel title
   ctx.fillStyle = '#cbd5e1';
   ctx.font = '500 15px system-ui, -apple-system, sans-serif';
   ctx.fillText(video?.channelTitle || 'CastTube Audio', 24, 158);
 
-  // Equalizer indicator when playing
   const baseEqY = 205;
   const phase = Date.now() / 160;
   for (let b = 0; b < 5; b++) {
@@ -118,13 +130,11 @@ function renderCanvasCard(
     ctx.fill();
   }
 
-  // Time readout
   ctx.fillStyle = '#94a3b8';
   ctx.font = '600 13px ui-monospace, SFMono-Regular, Menlo, monospace';
   const timeText = `${formatTime(currentTime)} / ${formatTime(duration)}`;
   ctx.fillText(timeText, width - ctx.measureText(timeText).width - 24, 204);
 
-  // Progress bar
   const barY = 226;
   const barW = width - 48;
   ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
@@ -145,6 +155,7 @@ export function useFloatingMiniPlayer({
   currentVideo,
   isPlaying,
   usingNativeAudio,
+  nativeAudioStatus = 'checking',
   hasNext,
   autoPopupOnMinimize = true,
   autoClosePopupOnReturn = true,
@@ -152,11 +163,13 @@ export function useFloatingMiniPlayer({
   onSkipBack,
   onSkipForward,
   onNext,
+  onOpenExtractorAuth,
 }: UseFloatingMiniPlayerOptions) {
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<FloatingPopupMode>(null);
   const [error, setError] = useState<string | null>(null);
   const [supportsAutoPip, setSupportsAutoPip] = useState(false);
+  const [pipEmbedHost, setPipEmbedHost] = useState<'nocookie' | 'standard'>('nocookie');
 
   const pipWindowRef = useRef<Window | null>(null);
   const pipVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -166,30 +179,37 @@ export function useFloatingMiniPlayer({
   isOpenRef.current = isOpen;
   const wasHiddenSinceOpenRef = useRef(false);
   const lastAutoTriggerAtRef = useRef(0);
+  const loadedEmbedKeyRef = useRef<string | null>(null);
 
   const propsRef = useRef({
     currentVideo,
     isPlaying,
     usingNativeAudio,
+    nativeAudioStatus,
     hasNext,
     autoPopupOnMinimize,
     autoClosePopupOnReturn,
+    pipEmbedHost,
     onPlayPause,
     onSkipBack,
     onSkipForward,
     onNext,
+    onOpenExtractorAuth,
   });
   propsRef.current = {
     currentVideo,
     isPlaying,
     usingNativeAudio,
+    nativeAudioStatus,
     hasNext,
     autoPopupOnMinimize,
     autoClosePopupOnReturn,
+    pipEmbedHost,
     onPlayPause,
     onSkipBack,
     onSkipForward,
     onNext,
+    onOpenExtractorAuth,
   };
 
   const supportsDocumentPip =
@@ -200,6 +220,10 @@ export function useFloatingMiniPlayer({
     typeof HTMLVideoElement !== 'undefined' &&
     'requestPictureInPicture' in HTMLVideoElement.prototype;
   const isSupported = supportsDocumentPip || supportsVideoPip;
+
+  const isPopupEmbedActive = Boolean(
+    isOpen && mode === 'document' && !usingNativeAudio && currentVideo
+  );
 
   const cleanupResources = useCallback(() => {
     if (clockUnsubRef.current) {
@@ -218,6 +242,7 @@ export function useFloatingMiniPlayer({
       }
     }
     pipWindowRef.current = null;
+    loadedEmbedKeyRef.current = null;
 
     if (typeof document !== 'undefined' && document.pictureInPictureElement) {
       try {
@@ -242,8 +267,24 @@ export function useFloatingMiniPlayer({
 
   const renderDocumentPipContents = useCallback((win: Window) => {
     const doc = win.document;
-    const { currentVideo: vid, isPlaying: playing, usingNativeAudio: native, hasNext: nextAvail } =
-      propsRef.current;
+    const {
+      currentVideo: vid,
+      isPlaying: playing,
+      usingNativeAudio: native,
+      nativeAudioStatus: status,
+      hasNext: nextAvail,
+      pipEmbedHost: hostMode,
+    } = propsRef.current;
+
+    const useEmbed = Boolean(vid && !native);
+    const headerRow = doc.getElementById('ct-pip-top');
+    const embedWrap = doc.getElementById('ct-pip-embed-wrap');
+    const embedFrame = doc.getElementById('ct-pip-iframe') as HTMLIFrameElement | null;
+    const progressWrap = doc.getElementById('ct-pip-progress-wrap');
+    const audioControls = doc.getElementById('ct-pip-audio-controls');
+    const embedControls = doc.getElementById('ct-pip-embed-controls');
+    const hostBtn = doc.getElementById('ct-pip-host-btn');
+    const authBtn = doc.getElementById('ct-pip-auth-btn');
 
     const titleEl = doc.getElementById('ct-pip-title');
     const channelEl = doc.getElementById('ct-pip-channel');
@@ -251,6 +292,7 @@ export function useFloatingMiniPlayer({
     const statusEl = doc.getElementById('ct-pip-status');
     const playBtn = doc.getElementById('ct-pip-play');
     const nextBtn = doc.getElementById('ct-pip-next') as HTMLButtonElement | null;
+    const embedNextBtn = doc.getElementById('ct-pip-embed-next') as HTMLButtonElement | null;
 
     if (titleEl) titleEl.textContent = vid?.title || 'Tidak ada video aktif';
     if (channelEl) channelEl.textContent = vid?.channelTitle || 'CastTube';
@@ -259,8 +301,10 @@ export function useFloatingMiniPlayer({
       thumbEl.alt = vid.title;
     }
     if (statusEl) {
-      statusEl.textContent = native ? 'Audio Latar Aktif' : 'Popup Mengambang';
-      statusEl.style.color = native ? '#34d399' : '#fbbf24';
+      statusEl.textContent = native
+        ? 'Audio Latar Aktif'
+        : 'Pemutar YouTube Mengambang (Bypass Pembatasan)';
+      statusEl.style.color = native ? '#34d399' : '#38bdf8';
     }
     if (playBtn) {
       playBtn.textContent = playing ? 'Jeda' : 'Putar';
@@ -269,6 +313,52 @@ export function useFloatingMiniPlayer({
     if (nextBtn) {
       nextBtn.disabled = !nextAvail;
       nextBtn.style.opacity = nextAvail ? '1' : '0.4';
+    }
+    if (embedNextBtn) {
+      embedNextBtn.disabled = !nextAvail;
+      embedNextBtn.style.opacity = nextAvail ? '1' : '0.4';
+    }
+
+    if (embedWrap && embedFrame) {
+      if (useEmbed && vid) {
+        if (headerRow) headerRow.style.display = 'none';
+        if (progressWrap) progressWrap.style.display = 'none';
+        if (audioControls) audioControls.style.display = 'none';
+        if (embedControls) embedControls.style.display = 'flex';
+        embedWrap.style.display = 'block';
+
+        const snap = getPlaybackClockSnapshot();
+        const startSec = snap.videoId === vid.id && snap.currentTime > 1 ? Math.floor(snap.currentTime) : 0;
+        const hostBase =
+          hostMode === 'standard'
+            ? 'https://www.youtube.com'
+            : 'https://www.youtube-nocookie.com';
+        const embedKey = `${vid.id}::${hostMode}`;
+        if (loadedEmbedKeyRef.current !== embedKey) {
+          loadedEmbedKeyRef.current = embedKey;
+          embedFrame.src = `${hostBase}/embed/${encodeURIComponent(
+            vid.id
+          )}?autoplay=1&playsinline=1&rel=0&modestbranding=1&enablejsapi=1&start=${startSec}&origin=${encodeURIComponent(
+            window.location.origin
+          )}`;
+        }
+        if (hostBtn) {
+          hostBtn.textContent = hostMode === 'nocookie' ? 'Host Standar' : 'Host Privasi';
+        }
+        if (authBtn) {
+          authBtn.style.display = status === 'live_stream' ? 'none' : 'inline-flex';
+        }
+      } else {
+        embedWrap.style.display = 'none';
+        if (embedControls) embedControls.style.display = 'none';
+        if (headerRow) headerRow.style.display = 'flex';
+        if (progressWrap) progressWrap.style.display = 'block';
+        if (audioControls) audioControls.style.display = 'flex';
+        if (embedFrame.src) {
+          loadedEmbedKeyRef.current = null;
+          embedFrame.src = 'about:blank';
+        }
+      }
     }
 
     const snap = getPlaybackClockSnapshot();
@@ -290,7 +380,17 @@ export function useFloatingMiniPlayer({
     if (mode === 'document' && pipWindowRef.current && !pipWindowRef.current.closed) {
       renderDocumentPipContents(pipWindowRef.current);
     }
-  }, [mode, currentVideo?.id, currentVideo?.title, isPlaying, usingNativeAudio, hasNext, renderDocumentPipContents]);
+  }, [
+    mode,
+    currentVideo?.id,
+    currentVideo?.title,
+    isPlaying,
+    usingNativeAudio,
+    nativeAudioStatus,
+    hasNext,
+    pipEmbedHost,
+    renderDocumentPipContents,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -298,200 +398,285 @@ export function useFloatingMiniPlayer({
     };
   }, [cleanupResources]);
 
-  const openPopup = useCallback(async (options?: OpenFloatingPopupOptions): Promise<boolean> => {
-    const silent = Boolean(options?.silent);
-    if (!silent) setError(null);
-    if (options?.videoOverride) {
-      propsRef.current.currentVideo = options.videoOverride;
-    }
-    if (!propsRef.current.currentVideo) {
-      if (!silent) {
-        setError('Putar video atau podcast terlebih dahulu sebelum membuka popup mengambang.');
+  const openPopup = useCallback(
+    async (options?: OpenFloatingPopupOptions): Promise<boolean> => {
+      const silent = Boolean(options?.silent);
+      if (!silent) setError(null);
+      if (options?.videoOverride) {
+        propsRef.current.currentVideo = options.videoOverride;
       }
-      return false;
-    }
-
-    // 1. Desktop Document Picture-in-Picture (interactive rich floating mini window)
-    if (supportsDocumentPip) {
-      try {
-        if (pipWindowRef.current && !pipWindowRef.current.closed) {
-          if (!silent) pipWindowRef.current.focus();
-          renderDocumentPipContents(pipWindowRef.current);
-          return true;
+      if (!propsRef.current.currentVideo) {
+        if (!silent) {
+          setError('Putar video atau podcast terlebih dahulu sebelum membuka popup mengambang.');
         }
-        cleanupResources();
+        return false;
+      }
 
-        const api = (window as unknown as { documentPictureInPicture: DocumentPictureInPictureAPI })
-          .documentPictureInPicture;
-        const pipWin = await api.requestWindow({ width: 390, height: 224 });
-        pipWindowRef.current = pipWin;
-
-        const doc = pipWin.document;
-        doc.title = 'CastTube · Pemutar Mengambang';
-        const style = doc.createElement('style');
-        style.textContent = `
-          * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-          body {
-            background: #0f172a; color: #f8fafc; padding: 14px; display: flex;
-            flex-direction: column; justify-content: space-between; height: 100vh; overflow: hidden;
+      // 1. Desktop Document Picture-in-Picture (interactive controller OR live YouTube embed when restricted)
+      if (supportsDocumentPip) {
+        try {
+          if (pipWindowRef.current && !pipWindowRef.current.closed) {
+            if (!silent) pipWindowRef.current.focus();
+            renderDocumentPipContents(pipWindowRef.current);
+            return true;
           }
-          .top { display: flex; gap: 12px; align-items: center; }
-          .thumb { width: 72px; height: 54px; border-radius: 10px; object-fit: cover; background: #1e293b; flex-shrink: 0; }
-          .meta { min-width: 0; flex: 1; }
-          .status { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
-          .title { font-size: 13px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-          .channel { font-size: 11px; color: #94a3b8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-          .progress-wrap { margin-top: 10px; }
-          .bar { width: 100%; height: 5px; border-radius: 999px; background: #1e293b; overflow: hidden; }
-          .bar-fill { height: 100%; width: 0%; background: #dc2626; transition: width 0.2s linear; }
-          .time { margin-top: 5px; font-size: 11px; color: #94a3b8; font-family: ui-monospace, monospace; display: flex; justify-content: space-between; }
-          .controls { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 10px; }
-          button {
-            border: 0; border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 700;
-            cursor: pointer; background: #1e293b; color: #e2e8f0; transition: background 0.15s;
-          }
-          button:hover { background: #334155; }
-          button.primary { background: #dc2626; color: #fff; flex: 1; }
-          button.primary:hover { background: #b91c1c; }
-          button:disabled { cursor: not-allowed; }
-        `;
-        doc.head.appendChild(style);
-
-        doc.body.innerHTML = `
-          <div class="top">
-            <img id="ct-pip-thumb" class="thumb" referrerpolicy="no-referrer" alt="" />
-            <div class="meta">
-              <div id="ct-pip-status" class="status"></div>
-              <div id="ct-pip-title" class="title"></div>
-              <div id="ct-pip-channel" class="channel"></div>
-            </div>
-          </div>
-          <div class="progress-wrap">
-            <div class="bar"><div id="ct-pip-bar-fill" class="bar-fill"></div></div>
-            <div class="time">
-              <span id="ct-pip-time">0:00 / 0:00</span>
-              <span>Tetap aktif saat minimize</span>
-            </div>
-          </div>
-          <div class="controls">
-            <button id="ct-pip-back" type="button">-15d</button>
-            <button id="ct-pip-play" class="primary" type="button">Putar</button>
-            <button id="ct-pip-fwd" type="button">+30d</button>
-            <button id="ct-pip-next" type="button">Lanjut</button>
-          </div>
-        `;
-
-        doc.getElementById('ct-pip-back')?.addEventListener('click', () => propsRef.current.onSkipBack(15));
-        doc.getElementById('ct-pip-play')?.addEventListener('click', () => propsRef.current.onPlayPause());
-        doc.getElementById('ct-pip-fwd')?.addEventListener('click', () => propsRef.current.onSkipForward(30));
-        doc.getElementById('ct-pip-next')?.addEventListener('click', () => propsRef.current.onNext());
-
-        renderDocumentPipContents(pipWin);
-        clockUnsubRef.current = subscribePlaybackClock(() => {
-          const snap = getPlaybackClockSnapshot();
-          const timeEl = doc.getElementById('ct-pip-time');
-          const barFillEl = doc.getElementById('ct-pip-bar-fill');
-          if (timeEl) {
-            timeEl.textContent = `${formatTime(snap.currentTime)} / ${formatTime(snap.duration)}`;
-          }
-          if (barFillEl) {
-            const pct =
-              snap.duration > 0
-                ? Math.min(100, Math.max(0, (snap.currentTime / snap.duration) * 100))
-                : 0;
-            barFillEl.style.width = `${pct}%`;
-          }
-        });
-
-        pipWin.addEventListener('pagehide', () => {
           cleanupResources();
-        });
 
-        setIsOpen(true);
-        setMode('document');
-        wasHiddenSinceOpenRef.current = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-        return true;
-      } catch (err) {
-        cleanupResources();
-        // Fall through to video PiP if Document PiP was rejected
-        if (!supportsVideoPip) {
+          const needsEmbed = !propsRef.current.usingNativeAudio;
+          const api = (window as unknown as { documentPictureInPicture: DocumentPictureInPictureAPI })
+            .documentPictureInPicture;
+          const pipWin = await api.requestWindow({
+            width: 396,
+            height: needsEmbed ? 310 : 224,
+          });
+          pipWindowRef.current = pipWin;
+          loadedEmbedKeyRef.current = null;
+
+          const doc = pipWin.document;
+          doc.title = 'CastTube · Pemutar Mengambang';
+          const style = doc.createElement('style');
+          style.textContent = `
+            * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+            body {
+              background: #0f172a; color: #f8fafc; padding: 12px; display: flex;
+              flex-direction: column; justify-content: space-between; height: 100vh; overflow: hidden; gap: 10px;
+            }
+            .top { display: flex; gap: 12px; align-items: center; }
+            .thumb { width: 72px; height: 54px; border-radius: 10px; object-fit: cover; background: #1e293b; flex-shrink: 0; }
+            .meta { min-width: 0; flex: 1; }
+            .status { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+            .title { font-size: 13px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+            .channel { font-size: 11px; color: #94a3b8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .embed-wrap {
+              display: none; position: relative; width: 100%; flex: 1; min-height: 180px;
+              border-radius: 12px; overflow: hidden; background: #000; border: 1px solid #1e293b;
+            }
+            .embed-wrap iframe { width: 100%; height: 100%; border: 0; }
+            .progress-wrap { margin-top: 4px; }
+            .bar { width: 100%; height: 5px; border-radius: 999px; background: #1e293b; overflow: hidden; }
+            .bar-fill { height: 100%; width: 0%; background: #dc2626; transition: width 0.2s linear; }
+            .time { margin-top: 5px; font-size: 11px; color: #94a3b8; font-family: ui-monospace, monospace; display: flex; justify-content: space-between; }
+            .controls { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+            .embed-controls { display: none; align-items: center; justify-content: space-between; gap: 6px; }
+            button {
+              border: 0; border-radius: 10px; padding: 8px 10px; font-size: 11px; font-weight: 700;
+              cursor: pointer; background: #1e293b; color: #e2e8f0; transition: background 0.15s; white-space: nowrap;
+            }
+            button:hover { background: #334155; }
+            button.primary { background: #dc2626; color: #fff; flex: 1; }
+            button.primary:hover { background: #b91c1c; }
+            button.amber { background: #d97706; color: #fff; }
+            button.amber:hover { background: #b45309; }
+            button:disabled { cursor: not-allowed; }
+          `;
+          doc.head.appendChild(style);
+
+          doc.body.innerHTML = `
+            <div id="ct-pip-top" class="top">
+              <img id="ct-pip-thumb" class="thumb" referrerpolicy="no-referrer" alt="" />
+              <div class="meta">
+                <div id="ct-pip-status" class="status"></div>
+                <div id="ct-pip-title" class="title"></div>
+                <div id="ct-pip-channel" class="channel"></div>
+              </div>
+            </div>
+            <div id="ct-pip-embed-wrap" class="embed-wrap">
+              <iframe
+                id="ct-pip-iframe"
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen; web-share"
+                referrerpolicy="strict-origin-when-cross-origin"
+                allowfullscreen
+              ></iframe>
+            </div>
+            <div id="ct-pip-progress-wrap" class="progress-wrap">
+              <div class="bar"><div id="ct-pip-bar-fill" class="bar-fill"></div></div>
+              <div class="time">
+                <span id="ct-pip-time">0:00 / 0:00</span>
+                <span>Tetap aktif saat minimize</span>
+              </div>
+            </div>
+            <div id="ct-pip-audio-controls" class="controls">
+              <button id="ct-pip-back" type="button">-15d</button>
+              <button id="ct-pip-play" class="primary" type="button">Putar</button>
+              <button id="ct-pip-fwd" type="button">+30d</button>
+              <button id="ct-pip-next" type="button">Lanjut</button>
+            </div>
+            <div id="ct-pip-embed-controls" class="embed-controls">
+              <button id="ct-pip-host-btn" type="button">Host Standar</button>
+              <button id="ct-pip-auth-btn" class="amber" type="button">Atasi Pembatasan</button>
+              <button id="ct-pip-embed-next" type="button">Lanjut</button>
+            </div>
+          `;
+
+          doc.getElementById('ct-pip-back')?.addEventListener('click', () => propsRef.current.onSkipBack(15));
+          doc.getElementById('ct-pip-play')?.addEventListener('click', () => propsRef.current.onPlayPause());
+          doc.getElementById('ct-pip-fwd')?.addEventListener('click', () => propsRef.current.onSkipForward(30));
+          doc.getElementById('ct-pip-next')?.addEventListener('click', () => propsRef.current.onNext());
+          doc.getElementById('ct-pip-embed-next')?.addEventListener('click', () => propsRef.current.onNext());
+          doc.getElementById('ct-pip-host-btn')?.addEventListener('click', () => {
+            setPipEmbedHost((prev) => (prev === 'nocookie' ? 'standard' : 'nocookie'));
+          });
+          doc.getElementById('ct-pip-auth-btn')?.addEventListener('click', () => {
+            try {
+              window.focus();
+            } catch {
+              // ignore
+            }
+            propsRef.current.onOpenExtractorAuth?.();
+          });
+
+          const iframeEl = doc.getElementById('ct-pip-iframe') as HTMLIFrameElement | null;
+          iframeEl?.addEventListener('load', () => {
+            try {
+              iframeEl.contentWindow?.postMessage(
+                JSON.stringify({ event: 'listening', id: 1 }),
+                '*'
+              );
+            } catch {
+              // ignore
+            }
+          });
+
+          const handlePipMessage = (ev: MessageEvent) => {
+            if (
+              typeof ev.origin === 'string' &&
+              !ev.origin.includes('youtube.com') &&
+              !ev.origin.includes('youtube-nocookie.com')
+            ) {
+              return;
+            }
+            try {
+              const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+              if (payload?.event === 'infoDelivery' && payload?.info) {
+                const vid = propsRef.current.currentVideo;
+                const cur = typeof payload.info.currentTime === 'number' ? payload.info.currentTime : undefined;
+                const dur = typeof payload.info.duration === 'number' ? payload.info.duration : undefined;
+                if (vid && (cur !== undefined || dur !== undefined)) {
+                  setPlaybackClock(vid.id, cur ?? getPlaybackClockSnapshot().currentTime, dur);
+                }
+                if (payload.info.playerState === 0) {
+                  propsRef.current.onNext();
+                }
+              } else if (payload?.event === 'onError' && (payload?.info === 101 || payload?.info === 150 || payload?.info === 153)) {
+                setPipEmbedHost((prev) => (prev === 'nocookie' ? 'standard' : prev));
+              }
+            } catch {
+              // ignore non-JSON postMessage
+            }
+          };
+          pipWin.addEventListener('message', handlePipMessage);
+
+          renderDocumentPipContents(pipWin);
+          clockUnsubRef.current = subscribePlaybackClock(() => {
+            const snap = getPlaybackClockSnapshot();
+            const timeEl = doc.getElementById('ct-pip-time');
+            const barFillEl = doc.getElementById('ct-pip-bar-fill');
+            if (timeEl) {
+              timeEl.textContent = `${formatTime(snap.currentTime)} / ${formatTime(snap.duration)}`;
+            }
+            if (barFillEl) {
+              const pct =
+                snap.duration > 0
+                  ? Math.min(100, Math.max(0, (snap.currentTime / snap.duration) * 100))
+                  : 0;
+              barFillEl.style.width = `${pct}%`;
+            }
+          });
+
+          pipWin.addEventListener('pagehide', () => {
+            pipWin.removeEventListener('message', handlePipMessage);
+            cleanupResources();
+          });
+
+          setIsOpen(true);
+          setMode('document');
+          wasHiddenSinceOpenRef.current =
+            typeof document !== 'undefined' && document.visibilityState === 'hidden';
+          return true;
+        } catch (err) {
+          cleanupResources();
+          if (!supportsVideoPip) {
+            if (!silent) {
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : 'Browser memblokir jendela popup Picture-in-Picture.'
+              );
+            }
+            return false;
+          }
+        }
+      }
+
+      // 2. Mobile / Chrome Video Picture-in-Picture fallback via untainted offscreen canvas stream
+      if (supportsVideoPip) {
+        try {
+          cleanupResources();
+          const canvas = document.createElement('canvas');
+          canvas.width = 480;
+          canvas.height = 270;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Canvas tidak didukung di browser ini.');
+
+          const drawNow = () => {
+            const snap = getPlaybackClockSnapshot();
+            renderCanvasCard(
+              ctx,
+              canvas.width,
+              canvas.height,
+              propsRef.current.currentVideo,
+              propsRef.current.isPlaying,
+              propsRef.current.usingNativeAudio,
+              propsRef.current.nativeAudioStatus,
+              snap.currentTime,
+              snap.duration
+            );
+          };
+          drawNow();
+
+          const stream = canvas.captureStream(4);
+          const videoEl = document.createElement('video');
+          videoEl.muted = true;
+          videoEl.playsInline = true;
+          videoEl.autoplay = true;
+          videoEl.srcObject = stream;
+          videoEl.className = 'fixed opacity-0 pointer-events-none w-px h-px -z-50';
+          document.body.appendChild(videoEl);
+          pipVideoRef.current = videoEl;
+
+          await videoEl.play();
+          await videoEl.requestPictureInPicture();
+
+          canvasTimerRef.current = setInterval(drawNow, 500);
+          videoEl.addEventListener('leavepictureinpicture', () => {
+            cleanupResources();
+          });
+
+          setIsOpen(true);
+          setMode('video');
+          wasHiddenSinceOpenRef.current =
+            typeof document !== 'undefined' && document.visibilityState === 'hidden';
+          return true;
+        } catch (err) {
+          cleanupResources();
           if (!silent) {
             setError(
               err instanceof Error
                 ? err.message
-                : 'Browser memblokir jendela popup Picture-in-Picture.'
+                : 'Mode Picture-in-Picture belum didukung atau diblokir oleh browser ini.'
             );
           }
           return false;
         }
       }
-    }
 
-    // 2. Mobile / Chrome Video Picture-in-Picture fallback via untainted offscreen canvas stream
-    if (supportsVideoPip) {
-      try {
-        cleanupResources();
-        const canvas = document.createElement('canvas');
-        canvas.width = 480;
-        canvas.height = 270;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('Canvas tidak didukung di browser ini.');
-
-        const drawNow = () => {
-          const snap = getPlaybackClockSnapshot();
-          renderCanvasCard(
-            ctx,
-            canvas.width,
-            canvas.height,
-            propsRef.current.currentVideo,
-            propsRef.current.isPlaying,
-            propsRef.current.usingNativeAudio,
-            snap.currentTime,
-            snap.duration
-          );
-        };
-        drawNow();
-
-        const stream = canvas.captureStream(4);
-        const videoEl = document.createElement('video');
-        videoEl.muted = true;
-        videoEl.playsInline = true;
-        videoEl.autoplay = true;
-        videoEl.srcObject = stream;
-        videoEl.className = 'fixed opacity-0 pointer-events-none w-px h-px -z-50';
-        document.body.appendChild(videoEl);
-        pipVideoRef.current = videoEl;
-
-        await videoEl.play();
-        await videoEl.requestPictureInPicture();
-
-        canvasTimerRef.current = setInterval(drawNow, 500);
-        videoEl.addEventListener('leavepictureinpicture', () => {
-          cleanupResources();
-        });
-
-        setIsOpen(true);
-        setMode('video');
-        wasHiddenSinceOpenRef.current = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-        return true;
-      } catch (err) {
-        cleanupResources();
-        if (!silent) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : 'Mode Picture-in-Picture belum didukung atau diblokir oleh browser ini.'
-          );
-        }
-        return false;
+      if (!silent) {
+        setError('Browser ini belum mendukung jendela popup mengambang (Picture-in-Picture).');
       }
-    }
-
-    if (!silent) {
-      setError('Browser ini belum mendukung jendela popup mengambang (Picture-in-Picture).');
-    }
-    return false;
-  }, [cleanupResources, renderDocumentPipContents, supportsDocumentPip, supportsVideoPip]);
+      return false;
+    },
+    [cleanupResources, renderDocumentPipContents, supportsDocumentPip, supportsVideoPip]
+  );
 
   const closePopup = useCallback(() => {
     cleanupResources();
@@ -601,6 +786,7 @@ export function useFloatingMiniPlayer({
     isSupported,
     supportsAutoPip,
     isOpen,
+    isPopupEmbedActive,
     mode,
     error,
     openPopup,

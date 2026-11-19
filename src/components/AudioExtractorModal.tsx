@@ -154,7 +154,10 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
             setDeviceInfo(null);
             setFeedback({
               type: 'success',
-              message: 'Akun YouTube berhasil terhubung! Melanjutkan unduhan...',
+              message:
+                intent === 'playback'
+                  ? 'Akun YouTube berhasil terhubung! Mengaktifkan audio latar & popup...'
+                  : 'Akun YouTube berhasil terhubung! Melanjutkan unduhan...',
             });
             if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
             actionTimerRef.current = setTimeout(() => {
@@ -303,6 +306,8 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
         type: 'success',
         message: data?.verification?.available
           ? 'Server ekstraktor aktif dan berhasil mengurai audio!'
+          : intent === 'playback'
+          ? 'URL server ekstraktor tersimpan. Mengaktifkan ulang audio latar...'
           : 'URL server ekstraktor tersimpan. Mencoba mengunduh ulang...',
       });
       if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
@@ -372,10 +377,10 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                 </div>
                 <div className="min-w-0">
                   <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-                    Atasi Pembatasan Download Audio YouTube
+                    Atasi Pembatasan YouTube
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-                    Server cloud dibatasi YouTube (anti-bot). Hubungkan sesi sekali saja agar unduhan & audio latar belakang lancar.
+                    Hubungkan sesi sekali saja agar Audio Latar, Popup di HP/Layar Terkunci, video yang memblokir embed, dan unduhan tetap lancar.
                   </p>
                 </div>
               </div>
@@ -390,13 +395,18 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-5">
+              {/* Benefits Note */}
+              <div className="px-3.5 py-2.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                Membuka jalur audio langsung saat server cloud kena cek anti-bot, melewati blokir embed (Error 101/150), serta mengaktifkan kontrol popup &amp; notifikasi layar terkunci di HP.
+              </div>
+
               {/* Pending Video Notice */}
               {pendingVideo && (
                 <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/70">
                   <Download className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      {intent === 'playback' ? 'Audio Latar Belakang' : 'Menunggu Unduhan'}
+                      {intent === 'playback' ? 'Audio Latar & Popup' : 'Menunggu Unduhan'}
                     </div>
                     <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
                       {pendingVideo.title}

@@ -169,7 +169,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                           ? 'Memeriksa Jalur Audio Latar Belakang...'
                           : nativeAudioStatus === 'live_stream'
                           ? 'Siaran Live Terdeteksi'
-                          : 'Perlu Verifikasi Stream YouTube Sekali Saja'}
+                          : 'Pembatasan Bot YouTube Terdeteksi'}
                       </div>
                       <p className="mt-0.5 opacity-90">
                         {usingNativeAudio
@@ -178,7 +178,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                           ? 'Menghubungkan jalur audio latar untuk "' + currentVideo.title + '".'
                           : nativeAudioStatus === 'live_stream'
                           ? 'Siaran langsung memakai pemutar YouTube. Buka Popup Mengambang (PiP) di bawah agar tetap aktif saat diminimize.'
-                          : 'YouTube membatasi ekstraksi audio langsung dari server cloud. Hubungkan Akun TV atau Cookie YouTube sekali saja agar audio native berjalan mulus di latar belakang.'}
+                          : 'YouTube membatasi server cloud, namun Popup Mengambang (PiP) di Chrome/Edge Desktop otomatis memakai pemutar YouTube langsung agar tetap aktif saat diminimize. Untuk HP, layar terkunci, atau video yang diblokir embed, hubungkan Akun TV / Cookie YouTube di bawah.'}
                       </p>
                     </div>
                   </div>
@@ -195,7 +195,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                         className="w-full py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                       >
                         <KeyRound className="w-3.5 h-3.5" />
-                        <span>Hubungkan Akun TV / Cookie YouTube</span>
+                        <span>Atasi Pembatasan (Akun TV / Cookie)</span>
                       </button>
                     )}
                 </div>
