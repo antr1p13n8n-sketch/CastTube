@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Unlink,
   Download,
+  Sparkles,
 } from 'lucide-react';
 import { AudioExtractorConfig, Video } from '../types';
 import {
@@ -21,6 +22,8 @@ import {
   saveExtractorConfig,
   clearExtractorConfig,
   normalizeClientCookies,
+  ensureAutoYouTubeCookies,
+  isAutoGuestCookies,
 } from '../utils/extractorConfig';
 import { parseJsonSafely, buildHttpErrorMessage } from '../utils/safeJson';
 
@@ -60,6 +63,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
   const [extractorUrlInput, setExtractorUrlInput] = useState('');
 
   const [isSaving, setIsSaving] = useState(false);
+  const [isAutoSettingCookie, setIsAutoSettingCookie] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null
   );
@@ -265,6 +269,53 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
     }
   };
 
+  const handleAutoSetupCookie = async () => {
+    setIsAutoSettingCookie(true);
+    setFeedback(null);
+    try {
+      const testVideoId = pendingVideo?.id || 'hdMszZ2ah5Q';
+      const result = await ensureAutoYouTubeCookies({
+        force: true,
+        verify: true,
+        testVideoId,
+      });
+      if (!result.config.cookies) {
+        throw new Error('Gagal membuat cookie sesi YouTube otomatis.');
+      }
+      setConfig(result.config);
+      setCookiesInput(result.config.cookies);
+
+      if (result.verification && !result.verification.available) {
+        setFeedback({
+          type: 'success',
+          message:
+            result.verification.status === 'login_required'
+              ? 'Cookie tamu otomatis terpasang untuk popup! Video khusus ini memerlukan Login Akun TV atau tempel cookie akun YouTube.'
+              : 'Cookie otomatis terpasang & mode popup siap digunakan!',
+        });
+        onResolved(result.config, null);
+        return;
+      }
+
+      setFeedback({
+        type: 'success',
+        message: 'Cookie YouTube otomatis aktif & terverifikasi! Mengaktifkan popup...',
+      });
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => {
+        onResolved(result.config, pendingVideo);
+        onClose();
+      }, 650);
+    } catch (err: unknown) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal menyetel cookie otomatis.',
+      });
+    } finally {
+      setIsAutoSettingCookie(false);
+    }
+  };
+
   const handleSaveServerUrl = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanUrl = extractorUrlInput.trim().replace(/\/+$/, '');
@@ -424,7 +475,10 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                       Aktif:{' '}
                       {[
                         config.oauthTokens?.access_token && 'Akun YouTube (OAuth)',
-                        config.cookies && 'Cookie YouTube',
+                        config.cookies &&
+                          (isAutoGuestCookies(config.cookies)
+                            ? 'Cookie Otomatis (Sesi YouTube)'
+                            : 'Cookie Akun YouTube'),
                         config.extractorUrl && 'Server Ekstraktor',
                       ]
                         .filter(Boolean)
@@ -557,42 +611,76 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                 </div>
               )}
 
-              {/* Tab 2: Cookie Paste */}
+              {/* Tab 2: Cookie Auto & Paste */}
               {activeTab === 'cookies' && (
-                <form onSubmit={handleSaveCookies} className="space-y-3">
-                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                    Jika OAuth TV masih dibatasi atau Anda memakai akun khusus, tempel isi file{' '}
-                    <code className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px]">
-                      cookies.txt
-                    </code>{' '}
-                    (Netscape) atau header{' '}
-                    <code className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px]">
-                      Cookie
-                    </code>{' '}
-                    dari youtube.com yang sudah login.
-                  </p>
-                  <textarea
-                    value={cookiesInput}
-                    onChange={(e) => setCookiesInput(e.target.value)}
-                    rows={5}
-                    placeholder="Tempel isi cookies.txt atau string SAPISID=...; SID=...; HSID=... di sini"
-                    className="w-full rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-3 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500/40"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isSaving}
-                    className="w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60 cursor-pointer"
-                  >
-                    {isSaving ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Memverifikasi Cookie...</span>
-                      </>
-                    ) : (
-                      <span>Simpan & Uji Cookie</span>
-                    )}
-                  </button>
-                </form>
+                <div className="space-y-4">
+                  <div className="p-3.5 rounded-2xl bg-red-50/80 dark:bg-red-950/25 border border-red-200/80 dark:border-red-900/50 space-y-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <Sparkles className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                      <div className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
+                        <div className="font-bold text-slate-900 dark:text-white">
+                          Set Cookie Otomatis (Tanpa Login)
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-300 mt-0.5">
+                          Ambil cookie sesi &amp; izin YouTube secara otomatis dan aktifkan popup mengambang saat mulai putar atau minimize.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleAutoSetupCookie()}
+                      disabled={isAutoSettingCookie || isSaving}
+                      className="w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60 cursor-pointer shadow-sm"
+                    >
+                      {isAutoSettingCookie ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Mengambil Cookie Otomatis...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          <span>Set Cookie Otomatis Sekarang</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleSaveCookies} className="space-y-3">
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                      Opsional untuk video terkunci akun: tempel isi file{' '}
+                      <code className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px]">
+                        cookies.txt
+                      </code>{' '}
+                      (Netscape) atau header{' '}
+                      <code className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px]">
+                        Cookie
+                      </code>{' '}
+                      dari youtube.com yang sudah login.
+                    </p>
+                    <textarea
+                      value={cookiesInput}
+                      onChange={(e) => setCookiesInput(e.target.value)}
+                      rows={4}
+                      placeholder="Tempel isi cookies.txt atau string SAPISID=...; SID=...; HSID=... di sini"
+                      className="w-full rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-3 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isSaving || isAutoSettingCookie}
+                      className="w-full py-2.5 px-4 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60 cursor-pointer"
+                    >
+                      {isSaving ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Memverifikasi Cookie...</span>
+                        </>
+                      ) : (
+                        <span>Simpan &amp; Uji Cookie Manual</span>
+                      )}
+                    </button>
+                  </form>
+                </div>
               )}
 
               {/* Tab 3: Custom Server API (Cobalt / Piped / Invidious) */}

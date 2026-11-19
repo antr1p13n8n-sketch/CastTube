@@ -1400,6 +1400,147 @@ export function parseCookiesHeaderMap(cookieHeader: string | undefined): Record<
   return out;
 }
 
+export function isLoggedInYouTubeCookies(cookieHeader: string | undefined): boolean {
+  if (!cookieHeader) return false;
+  return /(?:^|;\s*)(SAPISID|SID|__Secure-1PSID|__Secure-3PSID)=/i.test(cookieHeader);
+}
+
+function splitRawSetCookieHeader(headerVal: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inExpires = false;
+  for (let i = 0; i < headerVal.length; i++) {
+    const ch = headerVal[i];
+    const slice = headerVal.slice(i, i + 8).toLowerCase();
+    if (slice === 'expires=') {
+      inExpires = true;
+    }
+    if (ch === ',' && !inExpires) {
+      const next = headerVal.slice(i + 1).trimStart();
+      if (/^[a-zA-Z0-9_-]+=/.test(next)) {
+        if (current.trim()) parts.push(current.trim());
+        current = '';
+        continue;
+      }
+    }
+    if (ch === ';' && inExpires) {
+      inExpires = false;
+    }
+    current += ch;
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+function collectSetCookiesFromResponse(
+  res: globalThis.Response,
+  target: Map<string, string>
+): void {
+  const headersAny = res.headers as unknown as { getSetCookie?: () => string[] };
+  const rawList: string[] =
+    typeof headersAny.getSetCookie === 'function'
+      ? headersAny.getSetCookie()
+      : res.headers.get('set-cookie')
+      ? splitRawSetCookieHeader(res.headers.get('set-cookie') || '')
+      : [];
+
+  for (const raw of rawList) {
+    const firstPart = raw.split(';')[0]?.trim();
+    if (!firstPart) continue;
+    const eqIdx = firstPart.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const name = firstPart.slice(0, eqIdx).trim();
+    const val = firstPart.slice(eqIdx + 1).trim();
+    if (!name || !val || val === '""' || val.toLowerCase() === 'deleted') continue;
+    target.set(name, val);
+  }
+}
+
+export async function generateAutoYouTubeCookies(): Promise<{
+  cookies: string;
+  visitorData?: string;
+}> {
+  const cookieMap = new Map<string, string>();
+  let visitorData = '';
+
+  const seedDefaults = () => {
+    if (!cookieMap.has('SOCS')) {
+      cookieMap.set('SOCS', 'CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg');
+    }
+    if (!cookieMap.has('CONSENT')) {
+      cookieMap.set('CONSENT', 'YES+cb.20210328-17-p0.en+FX+667');
+    }
+    if (!cookieMap.has('PREF')) {
+      cookieMap.set('PREF', 'tz=Asia.Jakarta&hl=id');
+    }
+  };
+
+  seedDefaults();
+
+  const candidateUrls = [
+    'https://www.youtube.com/embed/hdMszZ2ah5Q',
+    'https://www.youtube.com/',
+  ];
+
+  await Promise.all(
+    candidateUrls.map(async (url) => {
+      try {
+        const res = await fetchWithTimeout(
+          url,
+          {
+            headers: {
+              'User-Agent': DEFAULT_BROWSER_UA,
+              Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+              Cookie:
+                'SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg; CONSENT=YES+cb.20210328-17-p0.en+FX+667; PREF=tz=Asia.Jakarta&hl=id',
+            },
+          },
+          4500
+        );
+        collectSetCookiesFromResponse(res, cookieMap);
+        if (!visitorData && res.ok) {
+          const text = await res.text();
+          const match = text.match(/"visitorData"\s*:\s*"([^"]+)"/);
+          if (match?.[1]) {
+            visitorData = match[1];
+          }
+        }
+      } catch {
+        // non-fatal, fallback defaults remain
+      }
+    })
+  );
+
+  if (!visitorData) {
+    try {
+      const yt = await Promise.race([
+        getSharedInnertubeBase(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+      ]);
+      if (yt?.session?.context?.client?.visitorData) {
+        visitorData = yt.session.context.client.visitorData;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  seedDefaults();
+  if (!cookieMap.has('VISITOR_INFO1_LIVE') && visitorData) {
+    const cleanVisitor = visitorData.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 22);
+    if (cleanVisitor) {
+      cookieMap.set('VISITOR_INFO1_LIVE', cleanVisitor);
+    }
+  }
+
+  const orderedPairs = Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`);
+  return {
+    cookies: normalizeYouTubeCookies(orderedPairs.join('; ')),
+    visitorData: visitorData || undefined,
+  };
+}
+
 export function encodeExtractorCookieValue(config: ExtractorAuthConfig): string {
   return Buffer.from(JSON.stringify(config), 'utf8').toString('base64url');
 }
@@ -1426,7 +1567,7 @@ export function buildExtractorSetCookieHeader(
   config: ExtractorAuthConfig | null,
   isSecure = false
 ): string {
-  const baseAttrs = `Path=/api/youtube; HttpOnly; SameSite=Lax${isSecure ? '; Secure' : ''}`;
+  const baseAttrs = `Path=/api/youtube; HttpOnly; ${isSecure ? 'SameSite=None; Secure' : 'SameSite=Lax'}`;
   if (!config || (!config.oauthTokens && !config.cookies && !config.extractorUrl)) {
     return `${EXTRACTOR_COOKIE_NAME}=; Max-Age=0; ${baseAttrs}`;
   }
@@ -2046,17 +2187,18 @@ async function resolveViaYouTubeJs(
   }
 
   try {
+    const hasLoggedInCookies = isLoggedInYouTubeCookies(options.cookies);
     const yt = await getCachedInnertubePlayer({
       oauthTokens: activeOAuth,
       cookies: options.cookies,
       poToken: options.poToken,
       visitorData: options.visitorData,
-      generateSessionLocally: !activeOAuth && !options.cookies,
+      generateSessionLocally: !activeOAuth && !hasLoggedInCookies,
     });
 
     const clientsToTry: Array<'TV' | 'ANDROID_VR' | 'IOS' | 'MWEB' | 'WEB'> = activeOAuth
       ? ['TV', 'ANDROID_VR', 'IOS', 'WEB']
-      : options.cookies
+      : hasLoggedInCookies
       ? ['MWEB', 'WEB', 'TV', 'IOS', 'ANDROID_VR']
       : ['MWEB', 'ANDROID_VR', 'IOS', 'WEB'];
 

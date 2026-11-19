@@ -569,25 +569,29 @@ export function saveLastFeedSyncAt(timestampMs: number = Date.now()) {
   }
 }
 
+const AUTO_COOKIE_POPUP_MIGRATION_KEY = 'casttube_auto_cookie_popup_v1';
+
 export const DEFAULT_BG_AUDIO_SETTINGS: BackgroundAudioSettings = {
   enabled: true,
   autoSwitchOnMinimize: true,
   autoResumeOnReopen: true,
   keepScreenAwake: false,
   autoPopupOnMinimize: true,
-  autoPopupOnPlay: false,
+  autoPopupOnPlay: true,
   autoClosePopupOnReturn: true,
-  autoPromptActivation: true,
+  autoPromptActivation: false,
   promptDismissed: false,
 };
 
 export function loadBackgroundAudioSettings(): BackgroundAudioSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.BG_AUDIO);
+    const hasMigrated = localStorage.getItem(AUTO_COOKIE_POPUP_MIGRATION_KEY) === '1';
+
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
-        return {
+        const loaded: BackgroundAudioSettings = {
           enabled: parsed.enabled !== false,
           autoSwitchOnMinimize: parsed.autoSwitchOnMinimize !== false,
           autoResumeOnReopen: parsed.autoResumeOnReopen !== false,
@@ -599,7 +603,24 @@ export function loadBackgroundAudioSettings(): BackgroundAudioSettings {
           promptDismissed: Boolean(parsed.promptDismissed),
           activatedAt: typeof parsed.activatedAt === 'string' ? parsed.activatedAt : undefined,
         };
+        if (!hasMigrated) {
+          const upgraded: BackgroundAudioSettings = {
+            ...loaded,
+            enabled: true,
+            autoPopupOnMinimize: true,
+            autoPopupOnPlay: true,
+            autoClosePopupOnReturn: true,
+            autoPromptActivation: false,
+          };
+          localStorage.setItem(AUTO_COOKIE_POPUP_MIGRATION_KEY, '1');
+          localStorage.setItem(STORAGE_KEYS.BG_AUDIO, JSON.stringify(upgraded));
+          return upgraded;
+        }
+        return loaded;
       }
+    }
+    if (!hasMigrated) {
+      localStorage.setItem(AUTO_COOKIE_POPUP_MIGRATION_KEY, '1');
     }
   } catch {
     // ignore

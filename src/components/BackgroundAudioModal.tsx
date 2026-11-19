@@ -14,8 +14,15 @@ import {
   SlidersHorizontal,
   Sparkles,
   Minimize2,
+  Cookie,
 } from 'lucide-react';
 import { BackgroundAudioSettings, NativeAudioStatus, Video } from '../types';
+import {
+  loadExtractorConfig,
+  ensureAutoYouTubeCookies,
+  isAutoGuestCookies,
+  isLoggedInYouTubeCookies,
+} from '../utils/extractorConfig';
 
 interface BackgroundAudioModalProps {
   isOpen: boolean;
@@ -32,6 +39,7 @@ interface BackgroundAudioModalProps {
   floatingError: string | null;
   onToggleFloatingPopup: () => Promise<boolean>;
   onOpenExtractorAuth: () => void;
+  onAutoCookieReady?: () => void;
 }
 
 export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
@@ -49,9 +57,13 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
   floatingError,
   onToggleFloatingPopup,
   onOpenExtractorAuth,
+  onAutoCookieReady,
 }) => {
   const [draft, setDraft] = useState<BackgroundAudioSettings>(settings);
   const [isTogglingPip, setIsTogglingPip] = useState(false);
+  const [isSettingCookie, setIsSettingCookie] = useState(false);
+  const [cookieStatus, setCookieStatus] = useState<'none' | 'auto' | 'account'>('none');
+  const [cookieNote, setCookieNote] = useState<string | null>(null);
 
   const supportsWakeLock = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
 
@@ -61,8 +73,46 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
         ...settings,
         enabled: true,
       });
+      const cfg = loadExtractorConfig();
+      if (isLoggedInYouTubeCookies(cfg.cookies)) {
+        setCookieStatus('account');
+      } else if (isAutoGuestCookies(cfg.cookies)) {
+        setCookieStatus('auto');
+      } else {
+        setCookieStatus('none');
+      }
+      setCookieNote(null);
     }
   }, [isOpen, settings]);
+
+  const handleAutoCookieAndPopup = async () => {
+    setIsSettingCookie(true);
+    setCookieNote(null);
+    try {
+      const res = await ensureAutoYouTubeCookies({
+        force: true,
+        verify: Boolean(currentVideo?.id),
+        testVideoId: currentVideo?.id,
+      });
+      if (!res.config.cookies) {
+        setCookieNote('Gagal mengambil cookie YouTube. Periksa koneksi lalu coba lagi.');
+        return;
+      }
+      setCookieStatus(isLoggedInYouTubeCookies(res.config.cookies) ? 'account' : 'auto');
+      setDraft((prev) => ({
+        ...prev,
+        enabled: true,
+        autoPopupOnMinimize: true,
+        autoPopupOnPlay: true,
+        autoClosePopupOnReturn: true,
+        autoPromptActivation: false,
+      }));
+      setCookieNote('Cookie YouTube otomatis terpasang & Setting Otomatis Popup aktif.');
+      onAutoCookieReady?.();
+    } finally {
+      setIsSettingCookie(false);
+    }
+  };
 
   const handleTogglePip = async () => {
     setIsTogglingPip(true);
@@ -200,6 +250,50 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                     )}
                 </div>
               )}
+
+              {/* Section 0: Cookie YouTube Otomatis */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/70 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Cookie className="w-4 h-4 text-red-500 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white">
+                        Cookie YouTube Otomatis
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {cookieStatus === 'account'
+                          ? 'Cookie akun YouTube aktif'
+                          : cookieStatus === 'auto'
+                          ? 'Cookie sesi otomatis aktif untuk pemutar & popup'
+                          : 'Belum disetel — klik untuk atur otomatis'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleAutoCookieAndPopup()}
+                    disabled={isSettingCookie}
+                    className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors disabled:opacity-60 cursor-pointer"
+                  >
+                    {isSettingCookie ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Memproses...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>{cookieStatus === 'none' ? 'Set Cookie Otomatis' : 'Perbarui Cookie'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                {cookieNote && (
+                  <div className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                    {cookieNote}
+                  </div>
+                )}
+              </div>
 
               {/* Section 1: Setting Otomatis Popup */}
               <div className="space-y-2.5">

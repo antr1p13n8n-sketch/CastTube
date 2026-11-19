@@ -318,7 +318,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
   isSubscribingChannel = false,
   onSubscribeChannel,
 }) => {
-  const [visualizerStyle, setVisualizerStyle] = useState<VisualizerStyle>('bars');
+  const [visualizerStyle, setVisualizerStyle] = useState<VisualizerStyle>('wave');
   const [showQueue, setShowQueue] = useState(false);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
   const [isHoveringArt, setIsHoveringArt] = useState(false);
