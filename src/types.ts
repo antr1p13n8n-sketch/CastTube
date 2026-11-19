@@ -105,6 +105,10 @@ export interface BackgroundAudioSettings {
   autoSwitchOnMinimize: boolean;
   autoResumeOnReopen: boolean;
   keepScreenAwake: boolean;
+  autoPopupOnMinimize: boolean;
+  autoPopupOnPlay: boolean;
+  autoClosePopupOnReturn: boolean;
+  autoPromptActivation: boolean;
   promptDismissed: boolean;
   activatedAt?: string;
 }

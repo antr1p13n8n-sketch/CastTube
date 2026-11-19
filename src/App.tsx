@@ -896,13 +896,22 @@ export default function App() {
     []
   );
 
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+
   const handlePlayPause = useCallback(() => {
-    setIsPlaying((prev) => {
-      if (!prev) {
-        nativeAudioRef.current?.unlock();
+    const willPlay = !isPlayingRef.current;
+    if (willPlay) {
+      nativeAudioRef.current?.unlock();
+      if (
+        bgAudioSettingsRef.current.enabled &&
+        bgAudioSettingsRef.current.autoPopupOnPlay &&
+        !floatingMiniPlayerRef.current.isOpen
+      ) {
+        void floatingMiniPlayerRef.current.openPopup({ silent: true });
       }
-      return !prev;
-    });
+    }
+    setIsPlaying(willPlay);
   }, []);
 
   const handleSeek = useCallback((seconds: number) => {
@@ -936,11 +945,17 @@ export default function App() {
       setActiveTab('player');
       if (
         mode === 'audio' &&
+        bgAudioSettingsRef.current.autoPromptActivation &&
         !bgAudioSettingsRef.current.activatedAt &&
         !bgAudioSettingsRef.current.promptDismissed
       ) {
         setHasOpenedBgAudioModal(true);
         setIsBgAudioModalOpen(true);
+      } else if (
+        bgAudioSettingsRef.current.enabled &&
+        bgAudioSettingsRef.current.autoPopupOnPlay
+      ) {
+        void floatingMiniPlayerRef.current.openPopup({ silent: true, videoOverride: video });
       }
     },
     [selectVideoForPlayback]
@@ -974,11 +989,15 @@ export default function App() {
     isPlaying,
     usingNativeAudio: useNativeAudio,
     hasNext: queue.length > 0,
+    autoPopupOnMinimize: bgAudioSettings.enabled && bgAudioSettings.autoPopupOnMinimize,
+    autoClosePopupOnReturn: bgAudioSettings.autoClosePopupOnReturn,
     onPlayPause: handlePlayPause,
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
     onNext: handleNextTrack,
   });
+  const floatingMiniPlayerRef = useRef(floatingMiniPlayer);
+  floatingMiniPlayerRef.current = floatingMiniPlayer;
 
   const handleToggleQueue = useCallback((video: Video) => {
     setQueue((prev) => {
@@ -2173,6 +2192,17 @@ export default function App() {
     selectVideoForPlayback(first, mode, true);
     setActiveTab('player');
     saveLastVideoId(first.id);
+    if (
+      mode === 'audio' &&
+      bgAudioSettingsRef.current.autoPromptActivation &&
+      !bgAudioSettingsRef.current.activatedAt &&
+      !bgAudioSettingsRef.current.promptDismissed
+    ) {
+      setHasOpenedBgAudioModal(true);
+      setIsBgAudioModalOpen(true);
+    } else if (bgAudioSettingsRef.current.enabled && bgAudioSettingsRef.current.autoPopupOnPlay) {
+      void floatingMiniPlayerRef.current.openPopup({ silent: true, videoOverride: first });
+    }
   };
 
   // Background audio & Media Session API (keeps audio playing when minimized or screen-locked)
@@ -2409,9 +2439,18 @@ export default function App() {
       nativeAudioRef.current?.unlock();
       setBgAudioSettings(next);
       setPendingReopenResume(null);
-      showBgAudioNotice('Audio latar belakang aktif. Suara tetap berjalan saat app diminimize.');
+      if (
+        next.enabled &&
+        next.autoPopupOnPlay &&
+        currentVideo &&
+        isPlayingRef.current &&
+        !floatingMiniPlayerRef.current.isOpen
+      ) {
+        void floatingMiniPlayerRef.current.openPopup({ silent: true });
+      }
+      showBgAudioNotice('Setting otomatis popup & audio latar belakang aktif.');
     },
-    [showBgAudioNotice]
+    [showBgAudioNotice, currentVideo]
   );
 
   const handleDismissBgAudio = useCallback((next: BackgroundAudioSettings) => {
@@ -2430,9 +2469,20 @@ export default function App() {
     setPlayerMode((prev) => {
       if (prev === 'video') {
         nativeAudioRef.current?.unlock();
-        if (!bgAudioSettingsRef.current.activatedAt && !bgAudioSettingsRef.current.promptDismissed) {
+        if (
+          bgAudioSettingsRef.current.autoPromptActivation &&
+          !bgAudioSettingsRef.current.activatedAt &&
+          !bgAudioSettingsRef.current.promptDismissed
+        ) {
           setHasOpenedBgAudioModal(true);
           setIsBgAudioModalOpen(true);
+        } else if (
+          bgAudioSettingsRef.current.enabled &&
+          bgAudioSettingsRef.current.autoPopupOnPlay &&
+          isPlayingRef.current &&
+          !floatingMiniPlayerRef.current.isOpen
+        ) {
+          void floatingMiniPlayerRef.current.openPopup({ silent: true });
         }
       }
       return prev === 'video' ? 'audio' : 'video';
@@ -2447,9 +2497,20 @@ export default function App() {
     autoSwitchedToAudioRef.current = false;
     nativeAudioRef.current?.unlock();
     setPlayerMode('audio');
-    if (!bgAudioSettingsRef.current.activatedAt && !bgAudioSettingsRef.current.promptDismissed) {
+    if (
+      bgAudioSettingsRef.current.autoPromptActivation &&
+      !bgAudioSettingsRef.current.activatedAt &&
+      !bgAudioSettingsRef.current.promptDismissed
+    ) {
       setHasOpenedBgAudioModal(true);
       setIsBgAudioModalOpen(true);
+    } else if (
+      bgAudioSettingsRef.current.enabled &&
+      bgAudioSettingsRef.current.autoPopupOnPlay &&
+      isPlayingRef.current &&
+      !floatingMiniPlayerRef.current.isOpen
+    ) {
+      void floatingMiniPlayerRef.current.openPopup({ silent: true });
     }
   }, []);
   const handleExpandPiP = useCallback(() => {
@@ -2584,6 +2645,8 @@ export default function App() {
         authLoading={authLoading}
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
+        onOpenBackgroundAudioPopup={handleOpenBackgroundAudioPopup}
+        backgroundAudioEnabled={bgAudioSettings.enabled}
       />
 
       {/* Offline & Background Sync Status Banner */}
@@ -3406,6 +3469,7 @@ export default function App() {
             nativeAudioStatus={currentAudioStatus}
             usingNativeAudio={useNativeAudio}
             isFloatingSupported={floatingMiniPlayer.isSupported}
+            supportsAutoPip={floatingMiniPlayer.supportsAutoPip}
             isFloatingOpen={floatingMiniPlayer.isOpen}
             floatingError={floatingMiniPlayer.error}
             onToggleFloatingPopup={floatingMiniPlayer.togglePopup}

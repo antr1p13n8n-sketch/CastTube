@@ -13,10 +13,17 @@ interface UseFloatingMiniPlayerOptions {
   isPlaying: boolean;
   usingNativeAudio: boolean;
   hasNext: boolean;
+  autoPopupOnMinimize?: boolean;
+  autoClosePopupOnReturn?: boolean;
   onPlayPause: () => void;
   onSkipBack: (seconds?: number) => void;
   onSkipForward: (seconds?: number) => void;
   onNext: () => void;
+}
+
+export interface OpenFloatingPopupOptions {
+  silent?: boolean;
+  videoOverride?: Video;
 }
 
 export type FloatingPopupMode = 'document' | 'video' | null;
@@ -139,6 +146,8 @@ export function useFloatingMiniPlayer({
   isPlaying,
   usingNativeAudio,
   hasNext,
+  autoPopupOnMinimize = true,
+  autoClosePopupOnReturn = true,
   onPlayPause,
   onSkipBack,
   onSkipForward,
@@ -147,17 +156,24 @@ export function useFloatingMiniPlayer({
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<FloatingPopupMode>(null);
   const [error, setError] = useState<string | null>(null);
+  const [supportsAutoPip, setSupportsAutoPip] = useState(false);
 
   const pipWindowRef = useRef<Window | null>(null);
   const pipVideoRef = useRef<HTMLVideoElement | null>(null);
   const canvasTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const clockUnsubRef = useRef<(() => void) | null>(null);
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+  const wasHiddenSinceOpenRef = useRef(false);
+  const lastAutoTriggerAtRef = useRef(0);
 
   const propsRef = useRef({
     currentVideo,
     isPlaying,
     usingNativeAudio,
     hasNext,
+    autoPopupOnMinimize,
+    autoClosePopupOnReturn,
     onPlayPause,
     onSkipBack,
     onSkipForward,
@@ -168,6 +184,8 @@ export function useFloatingMiniPlayer({
     isPlaying,
     usingNativeAudio,
     hasNext,
+    autoPopupOnMinimize,
+    autoClosePopupOnReturn,
     onPlayPause,
     onSkipBack,
     onSkipForward,
@@ -219,6 +237,7 @@ export function useFloatingMiniPlayer({
     }
     setIsOpen(false);
     setMode(null);
+    wasHiddenSinceOpenRef.current = false;
   }, []);
 
   const renderDocumentPipContents = useCallback((win: Window) => {
@@ -279,10 +298,16 @@ export function useFloatingMiniPlayer({
     };
   }, [cleanupResources]);
 
-  const openPopup = useCallback(async (): Promise<boolean> => {
-    setError(null);
+  const openPopup = useCallback(async (options?: OpenFloatingPopupOptions): Promise<boolean> => {
+    const silent = Boolean(options?.silent);
+    if (!silent) setError(null);
+    if (options?.videoOverride) {
+      propsRef.current.currentVideo = options.videoOverride;
+    }
     if (!propsRef.current.currentVideo) {
-      setError('Putar video atau podcast terlebih dahulu sebelum membuka popup mengambang.');
+      if (!silent) {
+        setError('Putar video atau podcast terlebih dahulu sebelum membuka popup mengambang.');
+      }
       return false;
     }
 
@@ -290,7 +315,8 @@ export function useFloatingMiniPlayer({
     if (supportsDocumentPip) {
       try {
         if (pipWindowRef.current && !pipWindowRef.current.closed) {
-          pipWindowRef.current.focus();
+          if (!silent) pipWindowRef.current.focus();
+          renderDocumentPipContents(pipWindowRef.current);
           return true;
         }
         cleanupResources();
@@ -383,16 +409,19 @@ export function useFloatingMiniPlayer({
 
         setIsOpen(true);
         setMode('document');
+        wasHiddenSinceOpenRef.current = typeof document !== 'undefined' && document.visibilityState === 'hidden';
         return true;
       } catch (err) {
         cleanupResources();
         // Fall through to video PiP if Document PiP was rejected
         if (!supportsVideoPip) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : 'Browser memblokir jendela popup Picture-in-Picture.'
-          );
+          if (!silent) {
+            setError(
+              err instanceof Error
+                ? err.message
+                : 'Browser memblokir jendela popup Picture-in-Picture.'
+            );
+          }
           return false;
         }
       }
@@ -443,19 +472,24 @@ export function useFloatingMiniPlayer({
 
         setIsOpen(true);
         setMode('video');
+        wasHiddenSinceOpenRef.current = typeof document !== 'undefined' && document.visibilityState === 'hidden';
         return true;
       } catch (err) {
         cleanupResources();
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Mode Picture-in-Picture belum didukung atau diblokir oleh browser ini.'
-        );
+        if (!silent) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Mode Picture-in-Picture belum didukung atau diblokir oleh browser ini.'
+          );
+        }
         return false;
       }
     }
 
-    setError('Browser ini belum mendukung jendela popup mengambang (Picture-in-Picture).');
+    if (!silent) {
+      setError('Browser ini belum mendukung jendela popup mengambang (Picture-in-Picture).');
+    }
     return false;
   }, [cleanupResources, renderDocumentPipContents, supportsDocumentPip, supportsVideoPip]);
 
@@ -471,8 +505,101 @@ export function useFloatingMiniPlayer({
     return openPopup();
   }, [isOpen, closePopup, openPopup]);
 
+  // Register Chrome Automatic Picture-in-Picture (`enterpictureinpicture`) when enabled
+  useEffect(() => {
+    if (
+      typeof navigator === 'undefined' ||
+      !('mediaSession' in navigator) ||
+      !isSupported
+    ) {
+      setSupportsAutoPip(false);
+      return;
+    }
+
+    const mediaSession = navigator.mediaSession as MediaSession & {
+      setActionHandler: (action: string, handler: (() => void) | null) => void;
+    };
+
+    if (!autoPopupOnMinimize || !currentVideo || !isPlaying) {
+      try {
+        mediaSession.setActionHandler('enterpictureinpicture', null);
+      } catch {
+        // ignore if unsupported
+      }
+      return;
+    }
+
+    try {
+      mediaSession.setActionHandler('enterpictureinpicture', () => {
+        lastAutoTriggerAtRef.current = Date.now();
+        void openPopup({ silent: true });
+      });
+      setSupportsAutoPip(true);
+    } catch {
+      setSupportsAutoPip(false);
+    }
+
+    return () => {
+      try {
+        mediaSession.setActionHandler('enterpictureinpicture', null);
+      } catch {
+        // ignore
+      }
+    };
+  }, [autoPopupOnMinimize, currentVideo?.id, isPlaying, isSupported, openPopup]);
+
+  // Auto-open fallback on minimize (if browser allows) and auto-close on return
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (isOpenRef.current) {
+          wasHiddenSinceOpenRef.current = true;
+          return;
+        }
+        if (
+          propsRef.current.autoPopupOnMinimize &&
+          propsRef.current.isPlaying &&
+          propsRef.current.currentVideo &&
+          isSupported
+        ) {
+          fallbackTimer = setTimeout(() => {
+            if (
+              document.visibilityState === 'hidden' &&
+              !isOpenRef.current &&
+              Date.now() - lastAutoTriggerAtRef.current > 400
+            ) {
+              void openPopup({ silent: true });
+            }
+          }, 90);
+        }
+      } else {
+        if (fallbackTimer) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+        if (
+          propsRef.current.autoClosePopupOnReturn &&
+          isOpenRef.current &&
+          wasHiddenSinceOpenRef.current
+        ) {
+          cleanupResources();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [isSupported, openPopup, cleanupResources]);
+
   return {
     isSupported,
+    supportsAutoPip,
     isOpen,
     mode,
     error,

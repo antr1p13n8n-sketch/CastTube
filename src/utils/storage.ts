@@ -538,6 +538,10 @@ export const DEFAULT_BG_AUDIO_SETTINGS: BackgroundAudioSettings = {
   autoSwitchOnMinimize: true,
   autoResumeOnReopen: true,
   keepScreenAwake: false,
+  autoPopupOnMinimize: true,
+  autoPopupOnPlay: false,
+  autoClosePopupOnReturn: true,
+  autoPromptActivation: true,
   promptDismissed: false,
 };
 
@@ -552,6 +556,10 @@ export function loadBackgroundAudioSettings(): BackgroundAudioSettings {
           autoSwitchOnMinimize: parsed.autoSwitchOnMinimize !== false,
           autoResumeOnReopen: parsed.autoResumeOnReopen !== false,
           keepScreenAwake: Boolean(parsed.keepScreenAwake),
+          autoPopupOnMinimize: parsed.autoPopupOnMinimize !== false,
+          autoPopupOnPlay: Boolean(parsed.autoPopupOnPlay),
+          autoClosePopupOnReturn: parsed.autoClosePopupOnReturn !== false,
+          autoPromptActivation: parsed.autoPromptActivation !== false,
           promptDismissed: Boolean(parsed.promptDismissed),
           activatedAt: typeof parsed.activatedAt === 'string' ? parsed.activatedAt : undefined,
         };

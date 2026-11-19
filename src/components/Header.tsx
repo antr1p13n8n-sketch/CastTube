@@ -12,6 +12,7 @@ import {
   LogOut,
   Cloud,
   ListMusic,
+  PictureInPicture2,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { ThemeMode, PlayerMode } from '../types';
@@ -35,6 +36,8 @@ interface HeaderProps {
   authLoading: boolean;
   onSignIn: () => void;
   onSignOut: () => void;
+  onOpenBackgroundAudioPopup?: () => void;
+  backgroundAudioEnabled?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = React.memo(({
@@ -52,6 +55,8 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   authLoading,
   onSignIn,
   onSignOut,
+  onOpenBackgroundAudioPopup,
+  backgroundAudioEnabled = false,
 }) => {
   return (
     <header className="sticky top-0 z-30 w-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors duration-200">
@@ -148,6 +153,23 @@ export const Header: React.FC<HeaderProps> = React.memo(({
 
         {/* Zone 3: Actions + Theme Selector + Auth */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          {onOpenBackgroundAudioPopup && (
+            <button
+              type="button"
+              onClick={onOpenBackgroundAudioPopup}
+              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                backgroundAudioEnabled
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+              title="Setting Otomatis Popup & Audio Latar Belakang"
+              aria-label="Setting Otomatis Popup & Audio Latar Belakang"
+            >
+              <PictureInPicture2 className="w-3.5 h-3.5 text-red-500" />
+              <span className="hidden lg:inline">Popup Otomatis</span>
+            </button>
+          )}
+
           <PWAInstallButton />
 
           {/* Firebase Cloud Sync Auth Button */}
@@ -327,6 +349,17 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           <ListMusic className="w-3.5 h-3.5 text-red-500" />
           <span>Playlist{playlistCount > 0 ? ` (${playlistCount})` : ''}</span>
         </motion.button>
+
+        {onOpenBackgroundAudioPopup && (
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={onOpenBackgroundAudioPopup}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <PictureInPicture2 className="w-3.5 h-3.5 text-red-500" />
+            <span>Popup</span>
+          </motion.button>
+        )}
       </nav>
     </header>
   );
