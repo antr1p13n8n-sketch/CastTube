@@ -22,6 +22,7 @@ import {
   Loader2,
   Check,
   PictureInPicture2,
+  X,
 } from 'lucide-react';
 import { NativeAudioStatus, Video, VisualizerStyle } from '../types';
 import { formatTime, formatRelativeTime, formatBytes } from '../utils/format';
@@ -99,22 +100,168 @@ const PodcastScrubber: React.FC<{
   );
 });
 
-const SleepTimerLabel: React.FC<{ expiresAt: number | null }> = React.memo(({ expiresAt }) => {
-  const [, setTick] = useState(0);
+function useSleepTimerCountdown(expiresAt: number | null, totalMinutes: number | null) {
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!expiresAt) return;
-    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [expiresAt]);
 
-  if (!expiresAt) return <span>Waktu Tidur</span>;
-  const remainingMs = expiresAt - Date.now();
-  if (remainingMs <= 0) return <span>Tidur: 00:00</span>;
-  const totalSecs = Math.floor(remainingMs / 1000);
-  const m = Math.floor(totalSecs / 60);
-  const s = totalSecs % 60;
-  return <span>Tidur: {m}:{s.toString().padStart(2, '0')}</span>;
+  if (!expiresAt) {
+    return {
+      isActive: false,
+      formattedRemaining: '00:00',
+      progressPercent: 0,
+    };
+  }
+
+  const remainingMs = Math.max(0, expiresAt - now);
+  const totalMinutesResolved = totalMinutes && totalMinutes > 0 ? totalMinutes : 15;
+  const totalMs = totalMinutesResolved * 60 * 1000;
+  const totalSecs = Math.min(totalMinutesResolved * 60, Math.ceil(remainingMs / 1000));
+  const progressPercent = Math.min(100, Math.max(0, (remainingMs / totalMs) * 100));
+
+  return {
+    isActive: true,
+    formattedRemaining: formatTime(totalSecs),
+    progressPercent,
+  };
+}
+
+const SleepTimerLabel: React.FC<{
+  expiresAt: number | null;
+  totalMinutes: number | null;
+}> = React.memo(({ expiresAt, totalMinutes }) => {
+  const { isActive, formattedRemaining } = useSleepTimerCountdown(expiresAt, totalMinutes);
+  if (!isActive) return <span>Waktu Tidur</span>;
+  return <span className="font-mono tabular-nums">Tidur: {formattedRemaining}</span>;
+});
+
+const SleepTimerOverlayCard: React.FC<{
+  expiresAt: number | null;
+  totalMinutes: number | null;
+  onCancel: () => void;
+}> = React.memo(({ expiresAt, totalMinutes, onCancel }) => {
+  const { isActive, formattedRemaining, progressPercent } = useSleepTimerCountdown(
+    expiresAt,
+    totalMinutes
+  );
+
+  return (
+    <AnimatePresence>
+      {isActive && (
+        <motion.div
+          key="sleep-timer-artwork-overlay"
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-2.5 left-2.5 right-2.5 z-20 rounded-xl bg-black/70 backdrop-blur-md border border-amber-400/35 px-2.5 py-2 text-white shadow-lg"
+          role="status"
+          aria-live="off"
+        >
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <div className="flex items-center gap-1.5 min-w-0 font-semibold text-amber-300">
+              <Moon className="w-3.5 h-3.5 shrink-0 animate-pulse" />
+              <span className="truncate">Waktu Tidur</span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="font-mono font-bold tabular-nums text-white">
+                {formattedRemaining}
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCancel();
+                }}
+                className="p-0.5 rounded-md text-white/70 hover:text-white hover:bg-white/15 transition-colors cursor-pointer"
+                title="Nonaktifkan waktu tidur"
+                aria-label="Nonaktifkan waktu tidur"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="mt-1.5 h-1.5 w-full rounded-full bg-white/15 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-[width] duration-700 ease-linear"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+});
+
+const SleepTimerProgressStrip: React.FC<{
+  expiresAt: number | null;
+  totalMinutes: number | null;
+  onCancel: () => void;
+}> = React.memo(({ expiresAt, totalMinutes, onCancel }) => {
+  const { isActive, formattedRemaining, progressPercent } = useSleepTimerCountdown(
+    expiresAt,
+    totalMinutes
+  );
+
+  return (
+    <AnimatePresence>
+      {isActive && (
+        <motion.div
+          key="sleep-timer-progress-strip"
+          initial={{ opacity: 0, height: 0, marginTop: 0 }}
+          animate={{ opacity: 1, height: 'auto', marginTop: 12 }}
+          exit={{ opacity: 0, height: 0, marginTop: 0 }}
+          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          className="overflow-hidden"
+        >
+          <div className="p-3 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 space-y-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 min-w-0">
+                <Moon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span className="font-semibold truncate">Tidur otomatis dalam</span>
+                {totalMinutes && (
+                  <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80 shrink-0">
+                    ({totalMinutes} mnt)
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-mono font-bold tabular-nums text-amber-800 dark:text-amber-200">
+                  {formattedRemaining}
+                </span>
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-amber-800 dark:text-amber-200 bg-amber-200/70 dark:bg-amber-900/50 hover:bg-amber-300/80 dark:hover:bg-amber-800/70 transition-colors cursor-pointer"
+                >
+                  Matikan
+                </button>
+              </div>
+            </div>
+            <div
+              className="h-1.5 w-full rounded-full bg-amber-200/80 dark:bg-amber-900/60 overflow-hidden"
+              role="progressbar"
+              aria-label="Sisa waktu tidur"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progressPercent)}
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-[width] duration-700 ease-linear"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 });
 
 export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
@@ -411,6 +558,13 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             {/* Dark vinyl overlay */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
+            {/* Sleep Timer Countdown & Progress Bar Overlay */}
+            <SleepTimerOverlayCard
+              expiresAt={sleepTimerExpiresAt}
+              totalMinutes={sleepTimerMinutes}
+              onCancel={() => onSetSleepTimer(null)}
+            />
+
             {/* Play/Pause overlay icon on desktop hover */}
             <div
               className={`absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-opacity duration-200 ${
@@ -624,7 +778,10 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                   title="Pengatur Waktu Tidur"
                 >
                   <Moon className="w-3.5 h-3.5" />
-                  <SleepTimerLabel expiresAt={sleepTimerExpiresAt} />
+                  <SleepTimerLabel
+                    expiresAt={sleepTimerExpiresAt}
+                    totalMinutes={sleepTimerMinutes}
+                  />
                 </motion.button>
 
                 <AnimatePresence>
@@ -686,6 +843,13 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
               </div>
             </div>
           </div>
+
+          {/* Sleep Timer Visual Countdown & Progress Bar */}
+          <SleepTimerProgressStrip
+            expiresAt={sleepTimerExpiresAt}
+            totalMinutes={sleepTimerMinutes}
+            onCancel={() => onSetSleepTimer(null)}
+          />
         </div>
       </div>
 
