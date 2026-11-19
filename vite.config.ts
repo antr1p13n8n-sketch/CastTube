@@ -53,7 +53,7 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
-              urlPattern: /\/api\/youtube\/(search-channels|resolve|extractor-auth|audio-stream).*/i,
+              urlPattern: /\/api\/youtube\/(search-channels|search-videos|resolve|extractor-auth|audio-stream).*/i,
               handler: 'NetworkOnly',
             },
             {

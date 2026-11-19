@@ -186,6 +186,7 @@ const STORAGE_KEYS = {
   FAVORITES: 'casttube_favorites_v1',
   PROGRESS: 'casttube_playback_progress_v1',
   LAST_VIDEO: 'casttube_last_video_v1',
+  LAST_VIDEO_DATA: 'casttube_last_video_data_v1',
   PENDING_SYNC: 'casttube_pending_sync_v1',
   PLAYER_SESSION: 'casttube_player_session_v1',
   PLAYLISTS: 'casttube_playlists_v1',
@@ -350,6 +351,7 @@ export function saveFavorites(favs: string[]) {
 }
 
 let inMemoryProgressMap: Record<string, PlaybackProgress> | null = null;
+const MAX_PROGRESS_ENTRIES = 300;
 
 export function loadPlaybackProgressMap(): Record<string, PlaybackProgress> {
   if (inMemoryProgressMap) return inMemoryProgressMap;
@@ -376,7 +378,7 @@ export function saveVideoPlaybackProgress(
 ): Record<string, PlaybackProgress> {
   const current = loadPlaybackProgressMap();
   if (videoId && currentTime >= 0) {
-    const updated: Record<string, PlaybackProgress> = {
+    let updated: Record<string, PlaybackProgress> = {
       ...current,
       [videoId]: {
         videoId,
@@ -385,6 +387,13 @@ export function saveVideoPlaybackProgress(
         updatedAt: new Date().toISOString(),
       },
     };
+    const keys = Object.keys(updated);
+    if (keys.length > MAX_PROGRESS_ENTRIES) {
+      const sortedEntries = Object.entries(updated)
+        .sort((a, b) => (Date.parse(b[1]?.updatedAt || '') || 0) - (Date.parse(a[1]?.updatedAt || '') || 0))
+        .slice(0, MAX_PROGRESS_ENTRIES);
+      updated = Object.fromEntries(sortedEntries);
+    }
     inMemoryProgressMap = updated;
     try {
       localStorage.setItem(STORAGE_KEYS.PROGRESS, JSON.stringify(updated));
@@ -410,6 +419,33 @@ export function saveLastVideoId(videoId: string | null) {
       localStorage.setItem(STORAGE_KEYS.LAST_VIDEO, videoId);
     } else {
       localStorage.removeItem(STORAGE_KEYS.LAST_VIDEO);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function loadLastVideo(): Video | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.LAST_VIDEO_DATA);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.id === 'string' && typeof parsed.title === 'string') {
+        return parsed as Video;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function saveLastVideo(video: Video | null) {
+  try {
+    if (video) {
+      localStorage.setItem(STORAGE_KEYS.LAST_VIDEO_DATA, JSON.stringify(video));
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.LAST_VIDEO_DATA);
     }
   } catch {
     // ignore

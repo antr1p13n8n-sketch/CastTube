@@ -59,6 +59,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
     const [retryAttempt, setRetryAttempt] = useState(0);
     const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const switchGuardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const stallWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isSwitchingSrcRef = useRef(false);
     const appliedInitialSeekForIdRef = useRef<string | null>(null);
     const latestPosRef = useRef<number>(initialSeekSeconds || 0);
@@ -152,33 +153,59 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
       },
     }));
 
-    const applyInitialSetup = useCallback((audio: HTMLAudioElement) => {
-      const vidId = videoIdRef.current;
-      const targetResume =
-        latestPosRef.current > 0 ? latestPosRef.current : initialSeekSecondsRef.current;
-      if (
-        vidId &&
-        appliedInitialSeekForIdRef.current !== vidId &&
-        targetResume > 0 &&
-        Number.isFinite(targetResume)
-      ) {
-        try {
-          if (audio.readyState >= 1) {
-            appliedInitialSeekForIdRef.current = vidId;
-            audio.currentTime = targetResume;
-          }
-        } catch {
-          // ignore
-        }
-      }
-      audio.muted = isMutedRef.current;
-      audio.volume = Math.max(0, Math.min(1, volumeRef.current / 100));
+    const applyPreservesPitch = useCallback((audio: HTMLAudioElement) => {
       try {
-        audio.playbackRate = playbackRateRef.current;
+        const pitchAudio = audio as HTMLAudioElement & {
+          preservesPitch?: boolean;
+          webkitPreservesPitch?: boolean;
+          mozPreservesPitch?: boolean;
+        };
+        if ('preservesPitch' in pitchAudio) pitchAudio.preservesPitch = true;
+        if ('webkitPreservesPitch' in pitchAudio) pitchAudio.webkitPreservesPitch = true;
+        if ('mozPreservesPitch' in pitchAudio) pitchAudio.mozPreservesPitch = true;
       } catch {
         // ignore
       }
     }, []);
+
+    const clearStallWatchdog = useCallback(() => {
+      if (stallWatchdogRef.current) {
+        clearTimeout(stallWatchdogRef.current);
+        stallWatchdogRef.current = null;
+      }
+    }, []);
+
+    const applyInitialSetup = useCallback(
+      (audio: HTMLAudioElement) => {
+        const vidId = videoIdRef.current;
+        const targetResume =
+          latestPosRef.current > 0 ? latestPosRef.current : initialSeekSecondsRef.current;
+        if (
+          vidId &&
+          appliedInitialSeekForIdRef.current !== vidId &&
+          targetResume > 0 &&
+          Number.isFinite(targetResume)
+        ) {
+          try {
+            if (audio.readyState >= 1) {
+              appliedInitialSeekForIdRef.current = vidId;
+              audio.currentTime = targetResume;
+            }
+          } catch {
+            // ignore
+          }
+        }
+        audio.muted = isMutedRef.current;
+        audio.volume = Math.max(0, Math.min(1, volumeRef.current / 100));
+        applyPreservesPitch(audio);
+        try {
+          audio.playbackRate = playbackRateRef.current;
+        } catch {
+          // ignore
+        }
+      },
+      [applyPreservesPitch]
+    );
 
     const handleStreamFailure = useCallback(() => {
       if (!activeRef.current || !videoIdRef.current) return;
@@ -224,16 +251,37 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
         });
     }, []);
 
+    const armStallWatchdog = useCallback(() => {
+      clearStallWatchdog();
+      if (!activeRef.current || !isPlayingRef.current) return;
+      stallWatchdogRef.current = setTimeout(() => {
+        stallWatchdogRef.current = null;
+        const audio = audioRef.current;
+        if (
+          audio &&
+          activeRef.current &&
+          isPlayingRef.current &&
+          !isSwitchingSrcRef.current &&
+          !audio.ended &&
+          !audio.paused &&
+          audio.readyState < 3
+        ) {
+          handleStreamFailure();
+        }
+      }, 12000);
+    }, [clearStallWatchdog, handleStreamFailure]);
+
     // Reset track-specific state when video changes
     useEffect(() => {
       setRetryAttempt(0);
       appliedInitialSeekForIdRef.current = null;
       latestPosRef.current = initialSeekSeconds || 0;
+      clearStallWatchdog();
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
-    }, [currentVideo?.id]);
+    }, [currentVideo?.id, clearStallWatchdog]);
 
     // Protect isPlaying against spurious browser `pause` events fired while swapping `src`
     useEffect(() => {
@@ -312,16 +360,17 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
       audio.volume = Math.max(0, Math.min(1, volume / 100));
     }, [volume, isMuted]);
 
-    // Sync playback rate
+    // Sync playback rate & pitch preservation
     useEffect(() => {
       const audio = audioRef.current;
       if (!audio) return;
+      applyPreservesPitch(audio);
       try {
         audio.playbackRate = playbackRate;
       } catch {
         // ignore unsupported rate
       }
-    }, [playbackRate]);
+    }, [playbackRate, applyPreservesPitch]);
 
     // Handle seek commands when active
     useEffect(() => {
@@ -359,10 +408,11 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
     // Cleanup timers on unmount
     useEffect(() => {
       return () => {
+        clearStallWatchdog();
         if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
         if (switchGuardTimerRef.current) clearTimeout(switchGuardTimerRef.current);
       };
-    }, []);
+    }, [clearStallWatchdog]);
 
     return (
       <audio
@@ -399,10 +449,22 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
         }}
         onPlaying={() => {
           isSwitchingSrcRef.current = false;
+          clearStallWatchdog();
           if (!activeRef.current) return;
           onStateChangeRef.current(true);
         }}
+        onWaiting={() => {
+          if (activeRef.current && isPlayingRef.current) {
+            armStallWatchdog();
+          }
+        }}
+        onStalled={() => {
+          if (activeRef.current && isPlayingRef.current) {
+            armStallWatchdog();
+          }
+        }}
         onTimeUpdate={(e) => {
+          clearStallWatchdog();
           if (!activeRef.current) return;
           const audio = e.currentTarget;
           const cur = audio.currentTime || 0;
@@ -412,21 +474,27 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
         }}
         onPlay={() => {
           isSwitchingSrcRef.current = false;
+          clearStallWatchdog();
           if (!activeRef.current) return;
           onStateChangeRef.current(true);
         }}
         onPause={(e) => {
+          clearStallWatchdog();
           if (!activeRef.current || isSwitchingSrcRef.current) return;
           if (!e.currentTarget.ended) {
             onStateChangeRef.current(false);
           }
         }}
         onEnded={() => {
+          clearStallWatchdog();
           if (!activeRef.current) return;
           isSwitchingSrcRef.current = true;
           onEndedRef.current();
         }}
-        onError={handleStreamFailure}
+        onError={() => {
+          clearStallWatchdog();
+          handleStreamFailure();
+        }}
         className="fixed opacity-0 pointer-events-none w-1 h-1 -z-50"
       />
     );

@@ -25,6 +25,7 @@ interface UseFloatingMiniPlayerOptions {
   onSkipForward: (seconds?: number) => void;
   onNext: () => void;
   onOpenExtractorAuth?: () => void;
+  onEmbedStateChange?: (playing: boolean) => void;
 }
 
 export interface OpenFloatingPopupOptions {
@@ -164,6 +165,7 @@ export function useFloatingMiniPlayer({
   onSkipForward,
   onNext,
   onOpenExtractorAuth,
+  onEmbedStateChange,
 }: UseFloatingMiniPlayerOptions) {
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<FloatingPopupMode>(null);
@@ -180,6 +182,10 @@ export function useFloatingMiniPlayer({
   const wasHiddenSinceOpenRef = useRef(false);
   const lastAutoTriggerAtRef = useRef(0);
   const loadedEmbedKeyRef = useRef<string | null>(null);
+  const iframeReportedStateRef = useRef<{ videoId: string | null; playing: boolean | null }>({
+    videoId: null,
+    playing: null,
+  });
 
   const propsRef = useRef({
     currentVideo,
@@ -195,6 +201,7 @@ export function useFloatingMiniPlayer({
     onSkipForward,
     onNext,
     onOpenExtractorAuth,
+    onEmbedStateChange,
   });
   propsRef.current = {
     currentVideo,
@@ -210,6 +217,7 @@ export function useFloatingMiniPlayer({
     onSkipForward,
     onNext,
     onOpenExtractorAuth,
+    onEmbedStateChange,
   };
 
   const supportsDocumentPip =
@@ -336,11 +344,29 @@ export function useFloatingMiniPlayer({
         const embedKey = `${vid.id}::${hostMode}`;
         if (loadedEmbedKeyRef.current !== embedKey) {
           loadedEmbedKeyRef.current = embedKey;
+          iframeReportedStateRef.current = { videoId: vid.id, playing: playing };
           embedFrame.src = `${hostBase}/embed/${encodeURIComponent(
             vid.id
-          )}?autoplay=1&playsinline=1&rel=0&modestbranding=1&enablejsapi=1&start=${startSec}&origin=${encodeURIComponent(
+          )}?autoplay=${playing ? '1' : '0'}&playsinline=1&rel=0&modestbranding=1&enablejsapi=1&start=${startSec}&origin=${encodeURIComponent(
             window.location.origin
           )}`;
+        } else if (
+          iframeReportedStateRef.current.videoId === vid.id &&
+          iframeReportedStateRef.current.playing !== playing
+        ) {
+          iframeReportedStateRef.current.playing = playing;
+          try {
+            embedFrame.contentWindow?.postMessage(
+              JSON.stringify({
+                event: 'command',
+                func: playing ? 'playVideo' : 'pauseVideo',
+                args: [],
+              }),
+              '*'
+            );
+          } catch {
+            // ignore postMessage failure
+          }
         }
         if (hostBtn) {
           hostBtn.textContent = hostMode === 'nocookie' ? 'Host Standar' : 'Host Privasi';
@@ -356,6 +382,7 @@ export function useFloatingMiniPlayer({
         if (audioControls) audioControls.style.display = 'flex';
         if (embedFrame.src) {
           loadedEmbedKeyRef.current = null;
+          iframeReportedStateRef.current = { videoId: null, playing: null };
           embedFrame.src = 'about:blank';
         }
       }
@@ -554,7 +581,34 @@ export function useFloatingMiniPlayer({
                 if (vid && (cur !== undefined || dur !== undefined)) {
                   setPlaybackClock(vid.id, cur ?? getPlaybackClockSnapshot().currentTime, dur);
                 }
-                if (payload.info.playerState === 0) {
+                if (typeof payload.info.playerState === 'number') {
+                  if (payload.info.playerState === 1) {
+                    iframeReportedStateRef.current = { videoId: vid?.id || null, playing: true };
+                    if (!propsRef.current.isPlaying) {
+                      propsRef.current.onEmbedStateChange?.(true);
+                    }
+                  } else if (payload.info.playerState === 2) {
+                    iframeReportedStateRef.current = { videoId: vid?.id || null, playing: false };
+                    if (propsRef.current.isPlaying) {
+                      propsRef.current.onEmbedStateChange?.(false);
+                    }
+                  } else if (payload.info.playerState === 0) {
+                    propsRef.current.onNext();
+                  }
+                }
+              } else if (payload?.event === 'onStateChange' && typeof payload?.info === 'number') {
+                const vid = propsRef.current.currentVideo;
+                if (payload.info === 1) {
+                  iframeReportedStateRef.current = { videoId: vid?.id || null, playing: true };
+                  if (!propsRef.current.isPlaying) {
+                    propsRef.current.onEmbedStateChange?.(true);
+                  }
+                } else if (payload.info === 2) {
+                  iframeReportedStateRef.current = { videoId: vid?.id || null, playing: false };
+                  if (propsRef.current.isPlaying) {
+                    propsRef.current.onEmbedStateChange?.(false);
+                  }
+                } else if (payload.info === 0) {
                   propsRef.current.onNext();
                 }
               } else if (payload?.event === 'onError' && (payload?.info === 101 || payload?.info === 150 || payload?.info === 153)) {

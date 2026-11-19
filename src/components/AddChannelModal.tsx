@@ -712,6 +712,10 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 setActiveTab('video');
                 setFeedback(null);
                 setSearchError(null);
+                const trimmed = searchQuery.trim();
+                if (trimmed.length >= 2 && lastExecutedKeyRef.current !== `video:${trimmed}` && videoResults.length === 0) {
+                  void executeYouTubeSearch(trimmed, 'video');
+                }
               }}
               className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                 activeTab === 'video'
@@ -735,6 +739,10 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 setActiveTab('search');
                 setFeedback(null);
                 setSearchError(null);
+                const trimmed = searchQuery.trim();
+                if (trimmed.length >= 2 && lastExecutedKeyRef.current !== `search:${trimmed}` && searchResults.length === 0) {
+                  void executeYouTubeSearch(trimmed, 'search');
+                }
               }}
               className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                 activeTab === 'search'
@@ -976,6 +984,32 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                     <div>
                       Tidak ada video ditemukan untuk "{searchQuery}". Coba kata kunci judul lain atau tempel link video YouTube.
                     </div>
+                    {searchQuery.trim() && (
+                      <div className="flex flex-wrap items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('search');
+                            void executeYouTubeSearch(searchQuery.trim(), 'search');
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors"
+                        >
+                          <Search className="w-3.5 h-3.5" />
+                          <span>Cari sebagai Channel</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInputText(searchQuery.trim());
+                            setActiveTab('paste');
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors"
+                        >
+                          <Clipboard className="w-3.5 h-3.5" />
+                          <span>Tempel Link</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2.5">
@@ -1157,17 +1191,30 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                     Tidak ada channel ditemukan untuk "{searchQuery}". Coba kata kunci, URL channel, atau @handle lain.
                   </div>
                   {searchQuery.trim() && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setInputText(searchQuery.trim());
-                        setActiveTab('paste');
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors"
-                    >
-                      <Clipboard className="w-3.5 h-3.5" />
-                      <span>Coba Tambah Langsung "{searchQuery.trim()}"</span>
-                    </button>
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('video');
+                          void executeYouTubeSearch(searchQuery.trim(), 'video');
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 cursor-pointer transition-colors"
+                      >
+                        <Film className="w-3.5 h-3.5" />
+                        <span>Cari Judul Video "{searchQuery.trim()}"</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInputText(searchQuery.trim());
+                          setActiveTab('paste');
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors"
+                      >
+                        <Clipboard className="w-3.5 h-3.5" />
+                        <span>Coba Tambah Langsung</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               ) : (

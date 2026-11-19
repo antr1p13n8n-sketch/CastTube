@@ -62,6 +62,8 @@ import {
   saveVideoPlaybackProgress,
   loadLastVideoId,
   saveLastVideoId,
+  loadLastVideo,
+  saveLastVideo,
   loadPendingSyncQueue,
   savePendingSyncQueue,
   loadPlayerSessionState,
@@ -140,10 +142,13 @@ export default function App() {
     const bootVideos = loadVideos();
     const bootProgress = loadPlaybackProgressMap();
     const bootLastId = loadLastVideoId();
+    const bootLastVideoData = loadLastVideo();
     const bootSession = loadPlayerSessionState();
     const bootBgAudio = loadBackgroundAudioSettings();
     const bootVideo =
       (bootLastId ? bootVideos.find((item) => item.id === bootLastId) : undefined) ||
+      (bootLastId && bootLastVideoData?.id === bootLastId ? bootLastVideoData : undefined) ||
+      bootLastVideoData ||
       (bootVideos.length > 0 ? bootVideos[0] : null);
     const initialTime = bootVideo ? bootProgress[bootVideo.id]?.currentTime || 0 : 0;
     const initialDuration = bootVideo ? bootProgress[bootVideo.id]?.duration || 0 : 0;
@@ -296,6 +301,10 @@ export default function App() {
   const autoSwitchedToAudioRef = useRef<boolean>(false);
   const probedAudioIdsRef = useRef<Set<string>>(new Set());
   const [hasActivatedYouTube, setHasActivatedYouTube] = useState<boolean>(false);
+  const [subscribingChannelId, setSubscribingChannelId] = useState<string | null>(null);
+  const trackHistoryRef = useRef<Video[]>([]);
+  const currentVideoRef = useRef<Video | null>(currentVideo);
+  currentVideoRef.current = currentVideo;
 
   const currentAudioStatus: NativeAudioStatus = currentVideo
     ? audioStatusMap[currentVideo.id] || 'checking'
@@ -897,7 +906,22 @@ export default function App() {
 
   // 4. Playback Controls
   const selectVideoForPlayback = useCallback(
-    (video: Video, mode?: PlayerMode, autoPlay = true) => {
+    (
+      video: Video,
+      mode?: PlayerMode,
+      autoPlay = true,
+      options?: { recordHistory?: boolean }
+    ) => {
+      const prev = currentVideoRef.current;
+      if (options?.recordHistory !== false && prev && prev.id !== video.id) {
+        const nextHist = trackHistoryRef.current.filter((item) => item.id !== prev.id);
+        nextHist.push(prev);
+        if (nextHist.length > 25) {
+          nextHist.splice(0, nextHist.length - 25);
+        }
+        trackHistoryRef.current = nextHist;
+      }
+
       const saved = playbackProgressMapRef.current[video.id];
       const resumeTime = saved?.currentTime && saved.currentTime > 0 ? saved.currentTime : 0;
       const savedDur = saved?.duration && saved.duration > 0 ? saved.duration : 0;
@@ -997,10 +1021,22 @@ export default function App() {
   }, [selectVideoForPlayback]);
 
   const handlePrevTrack = useCallback(() => {
+    const snap = getPlaybackClockSnapshot();
+    if (snap.currentTime <= 5 && trackHistoryRef.current.length > 0) {
+      const prevVideo = trackHistoryRef.current[trackHistoryRef.current.length - 1];
+      trackHistoryRef.current = trackHistoryRef.current.slice(0, -1);
+      if (prevVideo) {
+        selectVideoForPlayback(prevVideo, undefined, true, { recordHistory: false });
+        return;
+      }
+    }
     handleSeek(0);
-  }, [handleSeek]);
+  }, [handleSeek, selectVideoForPlayback]);
 
   const openAudioExtractorRef = useRef<() => void>(() => {});
+  const handlePopupEmbedStateChange = useCallback((playing: boolean) => {
+    setIsPlaying(playing);
+  }, []);
 
   const floatingMiniPlayer = useFloatingMiniPlayer({
     currentVideo,
@@ -1015,6 +1051,7 @@ export default function App() {
     onSkipForward: handleSkipForward,
     onNext: handleNextTrack,
     onOpenExtractorAuth: () => openAudioExtractorRef.current(),
+    onEmbedStateChange: handlePopupEmbedStateChange,
   });
   const floatingMiniPlayerRef = useRef(floatingMiniPlayer);
   floatingMiniPlayerRef.current = floatingMiniPlayer;
@@ -1046,14 +1083,36 @@ export default function App() {
     setQueue((prev) => prev.filter((v) => v.id !== videoId));
   }, []);
 
+  const handleMoveQueueItem = useCallback((index: number, direction: -1 | 1) => {
+    setQueue((prev) => {
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+  }, []);
+
   const handleClearQueue = useCallback(() => {
     setQueue([]);
   }, []);
 
-  const handleAddToPlaylistCard = useCallback((video: Video) => {
-    setVideoToAddToPlaylist(video);
-    setIsPlaylistModalOpen(true);
-  }, []);
+  const handleAddToPlaylistCard = useCallback(
+    (video: Video) => {
+      if (!latestStateRef.current.videos.some((v) => v.id === video.id)) {
+        setVideos((prev) => (prev.some((v) => v.id === video.id) ? prev : [video, ...prev]));
+        if (user) {
+          loadFirestoreService()
+            .then((fs) => fs.saveVideosInFirestore(user.uid, [video]))
+            .catch(console.error);
+        }
+      }
+      setVideoToAddToPlaylist(video);
+      setIsPlaylistModalOpen(true);
+    },
+    [user]
+  );
 
   // 5. Group Management (Create, Rename, Delete)
   const handleAddGroup = (name: string) => {
@@ -1168,10 +1227,11 @@ export default function App() {
     savePendingSyncQueue(pendingSyncQueue);
   }, [pendingSyncQueue]);
 
-  // Persist last active video ID
+  // Persist last active video ID & object fallback
   useEffect(() => {
     saveLastVideoId(currentVideo?.id || null);
-  }, [currentVideo?.id]);
+    saveLastVideo(currentVideo || null);
+  }, [currentVideo]);
 
   // Save playback progress helper
   const persistProgress = useCallback(
@@ -2473,6 +2533,36 @@ export default function App() {
     setIsBgAudioModalOpen(true);
   }, []);
 
+  const handleQuickSubscribeFromPlayer = useCallback(
+    async (video: Video) => {
+      if (!video.channelId || subscribingChannelId) return;
+      if (latestStateRef.current.channels.some((c) => c.id === video.channelId)) return;
+      const targetGroup = activeGroupId !== 'all' ? activeGroupId : 'general';
+      setSubscribingChannelId(video.channelId);
+      try {
+        const result = await syncHandlersRef.current.handleAddChannels(
+          [video.channelId],
+          targetGroup,
+          {
+            [video.channelId]: {
+              id: video.channelId,
+              title: video.channelTitle,
+              url: `https://www.youtube.com/channel/${video.channelId}`,
+            },
+          }
+        );
+        if (result.success > 0) {
+          showBgAudioNotice(`Channel "${video.channelTitle}" berhasil ditambahkan ke langganan.`);
+        } else {
+          showBgAudioNotice(result.lastError || `Gagal menambahkan "${video.channelTitle}".`);
+        }
+      } finally {
+        setSubscribingChannelId(null);
+      }
+    },
+    [activeGroupId, showBgAudioNotice, subscribingChannelId]
+  );
+
   const handleActivateBgAudio = useCallback(
     (next: BackgroundAudioSettings) => {
       nativeAudioRef.current?.unlock();
@@ -2745,7 +2835,14 @@ export default function App() {
                 onSetSleepTimer={handleSetSleepTimer}
                 onPlayQueueItem={handlePlayAudioQueueItem}
                 onRemoveFromQueue={handleRemoveFromQueue}
+                onMoveQueueItem={handleMoveQueueItem}
                 onClearQueue={handleClearQueue}
+                onAddToPlaylist={handleAddToPlaylistCard}
+                isPlayed={playedIdSet.has(currentVideo.id)}
+                onTogglePlayed={handleTogglePlayed}
+                isChannelSubscribed={existingChannelIds.includes(currentVideo.channelId)}
+                isSubscribingChannel={subscribingChannelId === currentVideo.channelId}
+                onSubscribeChannel={handleQuickSubscribeFromPlayer}
               />
             </motion.div>
 
@@ -2767,6 +2864,7 @@ export default function App() {
                 onSwitchToAudio={handleSwitchToAudioMode}
                 onPlayVideo={handlePlayVideoQueueItem}
                 onRemoveFromQueue={handleRemoveFromQueue}
+                onMoveQueueItem={handleMoveQueueItem}
                 onClearQueue={handleClearQueue}
                 downloadState={audioDownloads[currentVideo.id]}
                 onDownloadAudio={handleDownloadAudio}
@@ -2775,6 +2873,12 @@ export default function App() {
                 isFloatingSupported={floatingMiniPlayer.isSupported}
                 isFloatingOpen={floatingMiniPlayer.isOpen}
                 onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
+                onAddToPlaylist={handleAddToPlaylistCard}
+                isPlayed={playedIdSet.has(currentVideo.id)}
+                onTogglePlayed={handleTogglePlayed}
+                isChannelSubscribed={existingChannelIds.includes(currentVideo.channelId)}
+                isSubscribingChannel={subscribingChannelId === currentVideo.channelId}
+                onSubscribeChannel={handleQuickSubscribeFromPlayer}
                 playerSlot={
                   hasActivatedYouTube ? (
                     <YouTubePlayer

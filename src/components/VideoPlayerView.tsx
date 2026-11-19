@@ -13,6 +13,11 @@ import {
   Loader2,
   PictureInPicture2,
   Radio,
+  ListPlus,
+  CheckCircle2,
+  Plus,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { Video } from '../types';
 import { formatRelativeTime, formatBytes } from '../utils/format';
@@ -24,6 +29,7 @@ interface VideoPlayerViewProps {
   onSwitchToAudio: () => void;
   onPlayVideo: (video: Video) => void;
   onRemoveFromQueue: (videoId: string) => void;
+  onMoveQueueItem?: (index: number, direction: -1 | 1) => void;
   onClearQueue?: () => void;
   playerSlot?: React.ReactNode;
   isMiniPiP?: boolean;
@@ -35,6 +41,12 @@ interface VideoPlayerViewProps {
   isFloatingSupported?: boolean;
   isFloatingOpen?: boolean;
   onToggleFloatingPopup?: () => void;
+  onAddToPlaylist?: (video: Video) => void;
+  isPlayed?: boolean;
+  onTogglePlayed?: (videoId: string) => void;
+  isChannelSubscribed?: boolean;
+  isSubscribingChannel?: boolean;
+  onSubscribeChannel?: (video: Video) => void;
 }
 
 export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
@@ -43,6 +55,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
   onSwitchToAudio,
   onPlayVideo,
   onRemoveFromQueue,
+  onMoveQueueItem,
   onClearQueue,
   playerSlot,
   isMiniPiP = false,
@@ -54,6 +67,12 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
   isFloatingSupported = false,
   isFloatingOpen = false,
   onToggleFloatingPopup,
+  onAddToPlaylist,
+  isPlayed = false,
+  onTogglePlayed,
+  isChannelSubscribed = true,
+  isSubscribingChannel = false,
+  onSubscribeChannel,
 }) => {
   const [descExpanded, setDescExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -193,8 +212,26 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-100 dark:border-slate-800/80">
               <div className="flex items-center gap-3">
                 <div>
-                  <div className="text-sm font-bold text-slate-900 dark:text-white">
-                    {currentVideo.channelTitle}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-bold text-slate-900 dark:text-white">
+                      {currentVideo.channelTitle}
+                    </span>
+                    {!isChannelSubscribed && onSubscribeChannel && currentVideo.channelId && (
+                      <button
+                        type="button"
+                        disabled={isSubscribingChannel}
+                        onClick={() => onSubscribeChannel(currentVideo)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200/80 dark:border-red-800/60 hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-50 transition-colors cursor-pointer"
+                        title="Tambahkan channel ini ke langganan Anda"
+                      >
+                        {isSubscribingChannel ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Plus className="w-3 h-3" />
+                        )}
+                        <span>Ikuti Channel</span>
+                      </button>
+                    )}
                   </div>
                   <div className="text-xs text-slate-500">
                     {formatRelativeTime(currentVideo.publishedAt)}
@@ -204,6 +241,34 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {onAddToPlaylist && (
+                  <button
+                    type="button"
+                    onClick={() => onAddToPlaylist(currentVideo)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                    title="Simpan ke Playlist"
+                  >
+                    <ListPlus className="w-3.5 h-3.5 text-red-500" />
+                    <span>Playlist</span>
+                  </button>
+                )}
+
+                {onTogglePlayed && (
+                  <button
+                    type="button"
+                    onClick={() => onTogglePlayed(currentVideo.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                      isPlayed
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                        : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                    title={isPlayed ? 'Sudah Diputar' : 'Tandai Sudah Diputar'}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">{isPlayed ? 'Sudah Diputar' : 'Tandai Diputar'}</span>
+                  </button>
+                )}
+
                 {onDownloadAudio && (
                   <button
                     onClick={() => onDownloadAudio(currentVideo)}
@@ -346,14 +411,40 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => onRemoveFromQueue(item.id)}
-                    className="text-sm text-slate-400 hover:text-red-500 p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg cursor-pointer shrink-0"
-                    title="Hapus dari antrean"
-                    aria-label="Hapus dari antrean"
-                  >
-                    ×
-                  </button>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    {onMoveQueueItem && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onMoveQueueItem(idx, -1)}
+                          disabled={idx === 0}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30 cursor-pointer"
+                          title="Naikkan urutan"
+                          aria-label="Naikkan urutan"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onMoveQueueItem(idx, 1)}
+                          disabled={idx === queue.length - 1}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30 cursor-pointer"
+                          title="Turunkan urutan"
+                          aria-label="Turunkan urutan"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => onRemoveFromQueue(item.id)}
+                      className="text-sm text-slate-400 hover:text-red-500 p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg cursor-pointer"
+                      title="Hapus dari antrean"
+                      aria-label="Hapus dari antrean"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
               ))
             )}

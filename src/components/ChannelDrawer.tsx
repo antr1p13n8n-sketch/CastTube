@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ExternalLink, Trash2, Youtube, Folder } from 'lucide-react';
+import { X, ExternalLink, Trash2, Youtube, Folder, Search } from 'lucide-react';
 import { Channel, ChannelGroup } from '../types';
 
 interface ChannelDrawerProps {
@@ -23,10 +23,25 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
   onSelectChannelFilter,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = React.useState<string>('');
 
   React.useEffect(() => {
-    if (!isOpen) setConfirmDeleteId(null);
+    if (!isOpen) {
+      setConfirmDeleteId(null);
+      setFilterQuery('');
+    }
   }, [isOpen]);
+
+  const filteredChannels = React.useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return channels;
+    return channels.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        (c.handle && c.handle.toLowerCase().includes(q)) ||
+        c.id.toLowerCase().includes(q)
+    );
+  }, [channels, filterQuery]);
 
   return (
     <AnimatePresence>
@@ -72,14 +87,44 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
           </button>
         </div>
 
+        {/* Filter box when user has > 4 channels */}
+        {channels.length > 4 && (
+          <div className="pt-3 pb-1 shrink-0">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+                placeholder="Cari channel langganan..."
+                className="w-full pl-8 pr-8 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
+              />
+              {filterQuery && (
+                <button
+                  type="button"
+                  onClick={() => setFilterQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                  aria-label="Hapus filter channel"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Content list */}
         <div className="flex-1 overflow-y-auto py-4 space-y-3 pr-1">
           {channels.length === 0 ? (
             <div className="py-12 text-center text-xs text-slate-400">
               Belum ada channel yang ditambahkan. Gunakan tombol "Tambah Channel" untuk menambahkan.
             </div>
+          ) : filteredChannels.length === 0 ? (
+            <div className="py-12 text-center text-xs text-slate-400">
+              Tidak ada channel yang cocok dengan "{filterQuery}".
+            </div>
           ) : (
-            channels.map((channel, idx) => {
+            filteredChannels.map((channel, idx) => {
               const isConfirming = confirmDeleteId === channel.id;
 
               return (
