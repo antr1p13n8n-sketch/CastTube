@@ -25,6 +25,7 @@ import {
   YouTubeOAuthTokens,
   YouTubeOAuthClientIdentity,
   searchYouTubeChannels,
+  searchYouTubeVideos,
 } from './api/_youtube';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -172,6 +173,25 @@ async function startServer() {
     } catch (err: unknown) {
       res.setHeader('Cache-Control', 'no-store');
       const message = err instanceof Error ? err.message : 'Gagal mencari channel YouTube';
+      res.status(502).json({ error: message });
+    }
+  });
+
+  // API: Search YouTube videos by title / keyword
+  app.get('/api/youtube/search-videos', async (req: Request, res: Response) => {
+    try {
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      if (!q) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(400).json({ error: 'Parameter pencarian judul video q diperlukan' });
+        return;
+      }
+      const videos = await searchYouTubeVideos(q);
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      res.json({ videos });
+    } catch (err: unknown) {
+      res.setHeader('Cache-Control', 'no-store');
+      const message = err instanceof Error ? err.message : 'Gagal mencari video di YouTube';
       res.status(502).json({ error: message });
     }
   });

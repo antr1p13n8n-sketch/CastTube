@@ -1,0 +1,32 @@
+import { searchYouTubeVideos, VercelReq, VercelRes } from '../_youtube.js';
+
+export default async function handler(req: VercelReq, res: VercelRes) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    const rawQ = req.query.q;
+    const q = (Array.isArray(rawQ) ? rawQ[0] : rawQ || '').trim();
+    if (!q) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(400).json({ error: 'Parameter pencarian judul video q diperlukan' });
+    }
+
+    const videos = await searchYouTubeVideos(q);
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    return res.status(200).json({ videos });
+  } catch (err: unknown) {
+    res.setHeader('Cache-Control', 'no-store');
+    const message = err instanceof Error ? err.message : 'Gagal mencari video di YouTube';
+    return res.status(502).json({ error: message });
+  }
+}

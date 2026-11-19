@@ -81,6 +81,13 @@ export interface YouTubeChannelSearchResult {
   url: string;
 }
 
+export interface YouTubeVideoSearchResult extends Video {
+  channelAvatar?: string;
+  channelHandle?: string;
+  channelUrl?: string;
+  publishedText?: string;
+}
+
 export interface YouTubeOAuthTokens {
   access_token: string;
   refresh_token: string;

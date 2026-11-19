@@ -2415,13 +2415,27 @@ export interface ChannelSearchResult {
   url: string;
 }
 
+export interface VideoSearchResult extends VideoItem {
+  channelAvatar?: string;
+  channelHandle?: string;
+  channelUrl?: string;
+  publishedText?: string;
+}
+
 const VALID_CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
+const VALID_VIDEO_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
 
 const channelSearchCache = new Map<
   string,
   { results: ChannelSearchResult[]; expiresAt: number }
 >();
 const pendingChannelSearches = new Map<string, Promise<ChannelSearchResult[]>>();
+
+const videoSearchCache = new Map<
+  string,
+  { results: VideoSearchResult[]; expiresAt: number }
+>();
+const pendingVideoSearches = new Map<string, Promise<VideoSearchResult[]>>();
 
 function extractYtText(val: any): string | undefined {
   if (!val) return undefined;
@@ -3142,4 +3156,693 @@ export async function searchYouTubeChannels(queryText: string): Promise<ChannelS
   pendingChannelSearches.set(cacheKey, promise);
   return promise;
 }
+
+function normalizeThumbnailUrl(rawUrl: string | undefined, videoId: string): string {
+  const clean = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+  if (!clean) return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  if (clean.startsWith('//')) return `https:${clean}`;
+  if (clean.startsWith('/')) return `https://www.youtube.com${clean}`;
+  return clean;
+}
+
+function extractDirectVideoIdFromInput(input: string): string | null {
+  const trimmed = input.trim();
+  if (VALID_VIDEO_ID_RE.test(trimmed)) return trimmed;
+  const watchMatch = trimmed.match(/[?&]v=([a-zA-Z0-9_-]{11})(?:[&#\s]|$)/);
+  if (watchMatch?.[1]) return watchMatch[1];
+  const shortMatch = trimmed.match(/youtu\.be\/([a-zA-Z0-9_-]{11})(?:[/?#\s]|$)/i);
+  if (shortMatch?.[1]) return shortMatch[1];
+  const pathMatch = trimmed.match(/youtube\.com\/(?:shorts|live|embed)\/([a-zA-Z0-9_-]{11})(?:[/?#\s]|$)/i);
+  if (pathMatch?.[1]) return pathMatch[1];
+  return null;
+}
+
+function collectVideoRenderers(
+  node: any,
+  results: VideoSearchResult[],
+  seenIds: Set<string>,
+  idxRef: { current: number },
+  depth = 0
+): void {
+  if (!node || typeof node !== 'object' || depth > 18 || results.length >= 24) return;
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      if (results.length >= 24) break;
+      collectVideoRenderers(item, results, seenIds, idxRef, depth + 1);
+    }
+    return;
+  }
+
+  const vr = node.videoRenderer || node.compactVideoRenderer || node.gridVideoRenderer;
+  if (vr && typeof vr === 'object') {
+    const videoId = String(vr.videoId || vr.navigationEndpoint?.watchEndpoint?.videoId || '').trim();
+    if (VALID_VIDEO_ID_RE.test(videoId) && !seenIds.has(videoId)) {
+      seenIds.add(videoId);
+      const idx = idxRef.current++;
+      const title = extractYtText(vr.title) || 'Untitled Video';
+      const thumbs = vr.thumbnail?.thumbnails;
+      const rawThumb =
+        Array.isArray(thumbs) && thumbs.length > 0
+          ? String(thumbs[thumbs.length - 1]?.url || '')
+          : '';
+
+      const ownerRun =
+        vr.ownerText?.runs?.[0] ||
+        vr.longBylineText?.runs?.[0] ||
+        vr.shortBylineText?.runs?.[0];
+      const browseEp =
+        ownerRun?.navigationEndpoint?.browseEndpoint ||
+        vr.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.navigationEndpoint
+          ?.browseEndpoint;
+      const rawChannelId = String(browseEp?.browseId || '').trim();
+      const channelId = isValidYouTubeChannelId(rawChannelId) ? rawChannelId : '';
+      const canonicalBaseUrl: string | undefined = browseEp?.canonicalBaseUrl;
+      const channelHandle =
+        canonicalBaseUrl && canonicalBaseUrl.startsWith('/@')
+          ? canonicalBaseUrl.slice(1)
+          : undefined;
+      const channelUrl = canonicalBaseUrl
+        ? `https://www.youtube.com${canonicalBaseUrl}`
+        : channelId
+        ? `https://www.youtube.com/channel/${channelId}`
+        : undefined;
+      const channelTitle =
+        (typeof ownerRun?.text === 'string' && ownerRun.text.trim()) ||
+        extractYtText(vr.ownerText || vr.longBylineText || vr.shortBylineText) ||
+        'YouTube';
+      const avatarThumbs =
+        vr.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail
+          ?.thumbnails;
+      const rawAvatar =
+        Array.isArray(avatarThumbs) && avatarThumbs.length > 0
+          ? String(avatarThumbs[avatarThumbs.length - 1]?.url || '')
+          : '';
+
+      const publishedText = extractYtText(vr.publishedTimeText);
+      const viewsText = extractYtText(vr.shortViewCountText || vr.viewCountText);
+      const descText =
+        extractYtText(vr.detailedMetadataSnippets?.[0]?.snippetText || vr.descriptionSnippet) || '';
+
+      let duration = normalizeVideoDuration(extractYtText(vr.lengthText));
+      if (!duration && Array.isArray(vr.thumbnailOverlays)) {
+        for (const ov of vr.thumbnailOverlays) {
+          const ts = ov?.thumbnailOverlayTimeStatusRenderer;
+          const badgeTxt = extractYtText(ts?.text);
+          if (badgeTxt) {
+            duration = ts?.style === 'LIVE' ? 'LIVE' : normalizeVideoDuration(badgeTxt);
+            break;
+          }
+        }
+      }
+
+      results.push({
+        id: videoId,
+        title,
+        publishedAt: relativeTimeToIso(publishedText, idx),
+        ...(publishedText ? { publishedText } : {}),
+        thumbnail: normalizeThumbnailUrl(rawThumb, videoId),
+        channelId,
+        channelTitle,
+        ...(channelAvatarOrFallback(rawAvatar, channelId)),
+        ...(channelHandle ? { channelHandle } : {}),
+        ...(channelUrl ? { channelUrl } : {}),
+        description: descText,
+        ...(viewsText ? { views: viewsText } : {}),
+        ...(duration ? { duration } : {}),
+      });
+    }
+    return;
+  }
+
+  const lockup = node.lockupViewModel;
+  if (lockup && typeof lockup === 'object') {
+    const videoId = String(
+      lockup.contentId || lockup.rendererContext?.commandContext?.onTap?.innertubeCommand?.watchEndpoint?.videoId || ''
+    ).trim();
+    if (VALID_VIDEO_ID_RE.test(videoId) && !seenIds.has(videoId)) {
+      seenIds.add(videoId);
+      const idx = idxRef.current++;
+      const title = lockup.metadata?.lockupMetadataViewModel?.title?.content || 'Untitled Video';
+      const sources = lockup.contentImage?.thumbnailViewModel?.image?.sources || [];
+      const rawThumb =
+        Array.isArray(sources) && sources.length > 0
+          ? String(sources[sources.length - 1]?.url || '')
+          : '';
+      const rows =
+        lockup.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel
+          ?.metadataRows || [];
+      const row0Parts = rows[0]?.metadataParts || [];
+      const row1Parts = rows[1]?.metadataParts || [];
+      const channelTitle = String(row0Parts[0]?.text?.content || 'YouTube').trim();
+      const viewsText = row1Parts[0]?.text?.content
+        ? String(row1Parts[0].text.content).trim()
+        : undefined;
+      const publishedText = row1Parts[1]?.text?.content
+        ? String(row1Parts[1].text.content).trim()
+        : undefined;
+      const duration = extractLockupDuration(lockup);
+
+      const channelEp =
+        lockup.metadata?.lockupMetadataViewModel?.image?.decoratedAvatarViewModel?.rendererContext
+          ?.commandContext?.onTap?.innertubeCommand?.browseEndpoint;
+      const rawChannelId = String(channelEp?.browseId || '').trim();
+      const channelId = isValidYouTubeChannelId(rawChannelId) ? rawChannelId : '';
+      const avatarSources =
+        lockup.metadata?.lockupMetadataViewModel?.image?.decoratedAvatarViewModel?.avatar
+          ?.avatarViewModel?.image?.sources || [];
+      const rawAvatar =
+        Array.isArray(avatarSources) && avatarSources.length > 0
+          ? String(avatarSources[avatarSources.length - 1]?.url || '')
+          : '';
+
+      results.push({
+        id: videoId,
+        title,
+        publishedAt: relativeTimeToIso(publishedText, idx),
+        ...(publishedText ? { publishedText } : {}),
+        thumbnail: normalizeThumbnailUrl(rawThumb, videoId),
+        channelId,
+        channelTitle,
+        ...(channelAvatarOrFallback(rawAvatar, channelId)),
+        description: '',
+        ...(viewsText ? { views: viewsText } : {}),
+        ...(duration ? { duration } : {}),
+      });
+    }
+    return;
+  }
+
+  for (const key of Object.keys(node)) {
+    if (results.length >= 24) break;
+    const val = node[key];
+    if (val && typeof val === 'object') {
+      collectVideoRenderers(val, results, seenIds, idxRef, depth + 1);
+    }
+  }
+}
+
+function channelAvatarOrFallback(
+  rawAvatar: string,
+  channelId: string
+): { channelAvatar?: string } {
+  if (rawAvatar) {
+    return { channelAvatar: normalizeYtAvatar(rawAvatar, channelId || 'yt') };
+  }
+  if (channelId) {
+    return { channelAvatar: `https://avatar.vercel.sh/${channelId}?size=96` };
+  }
+  return {};
+}
+
+async function searchVideosViaInnerTubeHttp(
+  searchTerm: string,
+  timeoutMs = 5000
+): Promise<{ ok: boolean; results: VideoSearchResult[]; error?: Error }> {
+  const clients = [
+    {
+      clientName: 'WEB',
+      clientVersion: '2.20250201.00.00',
+      clientHeaderId: '1',
+      origin: 'https://www.youtube.com',
+    },
+    {
+      clientName: 'MWEB',
+      clientVersion: '2.20250201.00.00',
+      clientHeaderId: '2',
+      origin: 'https://m.youtube.com',
+    },
+  ];
+
+  let lastErr: Error | undefined;
+  for (const cfg of clients) {
+    try {
+      const res = await fetchWithTimeout(
+        'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'Accept-Language': 'id,en-US,en;q=0.9',
+            Origin: cfg.origin,
+            Referer: `${cfg.origin}/`,
+            'X-YouTube-Client-Name': cfg.clientHeaderId,
+            'X-YouTube-Client-Version': cfg.clientVersion,
+          },
+          body: JSON.stringify({
+            context: {
+              client: {
+                clientName: cfg.clientName,
+                clientVersion: cfg.clientVersion,
+                hl: 'id',
+                gl: 'ID',
+              },
+            },
+            query: searchTerm,
+            params: 'EgIQAQ==',
+          }),
+        },
+        timeoutMs
+      );
+
+      if (!res.ok) {
+        lastErr = new Error(`YouTube video search merespons status ${res.status}`);
+        continue;
+      }
+
+      const data = await safeResponseJson<any>(res);
+      if (!data || data.error) {
+        lastErr = new Error(
+          data?.error?.message
+            ? String(data.error.message)
+            : 'Respons pencarian video YouTube tidak valid'
+        );
+        continue;
+      }
+
+      const found: VideoSearchResult[] = [];
+      const seen = new Set<string>();
+      collectVideoRenderers(data?.contents ?? data, found, seen, { current: 0 });
+      return { ok: true, results: found };
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error('Gagal menghubungi pencarian video YouTube');
+    }
+  }
+
+  return {
+    ok: false,
+    results: [],
+    error: lastErr || new Error('Gagal menghubungi pencarian video YouTube'),
+  };
+}
+
+async function searchVideosViaInnertubeLib(
+  searchTerm: string,
+  timeoutMs = 5000
+): Promise<{ ok: boolean; results: VideoSearchResult[]; error?: Error }> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const yt = await getSharedInnertubeBase();
+    const search = await Promise.race([
+      yt.search(searchTerm, { type: 'video' }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Batas waktu pencarian video Innertube tercapai')),
+          timeoutMs
+        );
+      }),
+    ]);
+
+    const ytResults = Array.isArray((search as any)?.results) ? (search as any).results : [];
+    const found: VideoSearchResult[] = [];
+    const seen = new Set<string>();
+
+    for (let i = 0; i < ytResults.length && found.length < 24; i++) {
+      const item = ytResults[i];
+      const videoId = String(item?.video_id || item?.id || '').trim();
+      if (!VALID_VIDEO_ID_RE.test(videoId) || seen.has(videoId)) continue;
+      seen.add(videoId);
+
+      const title = String(item?.title?.text || item?.title?.toString?.() || 'Untitled Video').trim();
+      const rawChannelId = String(item?.author?.id || '').trim();
+      const channelId = isValidYouTubeChannelId(rawChannelId) ? rawChannelId : '';
+      const channelTitle = String(item?.author?.name || 'YouTube').trim();
+      const authorThumb = Array.isArray(item?.author?.thumbnails)
+        ? String(item.author.thumbnails[0]?.url || '')
+        : '';
+      const thumbs = Array.isArray(item?.thumbnails) ? item.thumbnails : [];
+      const rawThumb = thumbs.length > 0 ? String(thumbs[0]?.url || '') : '';
+      const publishedText = item?.published?.text ? String(item.published.text).trim() : undefined;
+      const views =
+        item?.short_view_count?.text || item?.view_count?.text
+          ? String(item?.short_view_count?.text || item?.view_count?.text).trim()
+          : undefined;
+      const duration = normalizeVideoDuration(
+        item?.duration?.text ? String(item.duration.text) : undefined
+      );
+      const description = item?.description_snippet?.text
+        ? String(item.description_snippet.text).trim()
+        : '';
+
+      found.push({
+        id: videoId,
+        title,
+        publishedAt: relativeTimeToIso(publishedText, i),
+        ...(publishedText ? { publishedText } : {}),
+        thumbnail: normalizeThumbnailUrl(rawThumb, videoId),
+        channelId,
+        channelTitle,
+        ...channelAvatarOrFallback(authorThumb, channelId),
+        description,
+        ...(views ? { views } : {}),
+        ...(duration ? { duration } : {}),
+      });
+    }
+
+    return { ok: true, results: found };
+  } catch (err) {
+    invalidateSharedInnertubeBase();
+    return {
+      ok: false,
+      results: [],
+      error: err instanceof Error ? err : new Error('Gagal mencari video via Innertube'),
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function searchVideosViaHtmlPage(
+  searchTerm: string,
+  timeoutMs = 5500
+): Promise<{ ok: boolean; results: VideoSearchResult[]; error?: Error }> {
+  try {
+    const htmlRes = await fetchWithTimeout(
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(searchTerm)}&sp=EgIQAQ%3D%3D`,
+      {},
+      timeoutMs
+    );
+    if (!htmlRes.ok) {
+      return {
+        ok: false,
+        results: [],
+        error: new Error(`Halaman pencarian video YouTube merespons ${htmlRes.status}`),
+      };
+    }
+    const html = await htmlRes.text();
+    const data = extractYtInitialDataJson(html);
+    if (!data) {
+      return {
+        ok: false,
+        results: [],
+        error: new Error('Data hasil pencarian video YouTube tidak ditemukan'),
+      };
+    }
+    const found: VideoSearchResult[] = [];
+    const seen = new Set<string>();
+    collectVideoRenderers(data?.contents ?? data, found, seen, { current: 0 });
+    return { ok: true, results: found };
+  } catch (err) {
+    return {
+      ok: false,
+      results: [],
+      error: err instanceof Error ? err : new Error('Gagal membuka halaman pencarian video YouTube'),
+    };
+  }
+}
+
+async function searchVideosViaExternalMirror(searchTerm: string): Promise<VideoSearchResult[]> {
+  const pipedBase = process.env.PIPED_API_URL?.trim().replace(/\/+$/, '');
+  const invidiousBase = process.env.INVIDIOUS_API_URL?.trim().replace(/\/+$/, '');
+  if (!pipedBase && !invidiousBase) return [];
+
+  const attempts: Promise<VideoSearchResult[]>[] = [];
+  if (invidiousBase) {
+    attempts.push(
+      (async () => {
+        const res = await fetchWithTimeout(
+          `${invidiousBase}/api/v1/search?q=${encodeURIComponent(searchTerm)}&type=video`,
+          { headers: { Accept: 'application/json' } },
+          4500
+        );
+        if (!res.ok) return [];
+        const items = await safeResponseJson<any[]>(res);
+        if (!Array.isArray(items)) return [];
+        const out: VideoSearchResult[] = [];
+        for (let i = 0; i < items.length && out.length < 20; i++) {
+          const it = items[i];
+          const vid = String(it?.videoId || '').trim();
+          if (!VALID_VIDEO_ID_RE.test(vid)) continue;
+          const cid = isValidYouTubeChannelId(it?.authorId) ? String(it.authorId).trim() : '';
+          const thumbs = Array.isArray(it?.videoThumbnails) ? it.videoThumbnails : [];
+          const rawThumb = thumbs.length > 0 ? String(thumbs[0]?.url || '') : '';
+          const publishedText = it?.publishedText ? String(it.publishedText) : undefined;
+          const lenSec = typeof it?.lengthSeconds === 'number' ? it.lengthSeconds : 0;
+          const duration =
+            lenSec > 0
+              ? `${Math.floor(lenSec / 60)}:${String(lenSec % 60).padStart(2, '0')}`
+              : it?.liveNow
+              ? 'LIVE'
+              : undefined;
+          out.push({
+            id: vid,
+            title: String(it?.title || 'Untitled Video'),
+            publishedAt:
+              typeof it?.published === 'number' && it.published > 0
+                ? new Date(it.published * 1000).toISOString()
+                : relativeTimeToIso(publishedText, i),
+            ...(publishedText ? { publishedText } : {}),
+            thumbnail: normalizeThumbnailUrl(rawThumb, vid),
+            channelId: cid,
+            channelTitle: String(it?.author || 'YouTube'),
+            description: String(it?.description || ''),
+            ...(typeof it?.viewCount === 'number'
+              ? { views: `${it.viewCount.toLocaleString('id-ID')} x ditonton` }
+              : {}),
+            ...(duration ? { duration } : {}),
+          });
+        }
+        return out;
+      })()
+    );
+  }
+
+  if (pipedBase) {
+    attempts.push(
+      (async () => {
+        const res = await fetchWithTimeout(
+          `${pipedBase}/search?q=${encodeURIComponent(searchTerm)}&filter=videos`,
+          { headers: { Accept: 'application/json' } },
+          4500
+        );
+        if (!res.ok) return [];
+        const data = await safeResponseJson<{ items?: any[] }>(res);
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const out: VideoSearchResult[] = [];
+        for (let i = 0; i < items.length && out.length < 20; i++) {
+          const it = items[i];
+          const vidMatch = String(it?.url || '').match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+          const vid = vidMatch?.[1] || '';
+          if (!VALID_VIDEO_ID_RE.test(vid)) continue;
+          const chMatch = String(it?.uploaderUrl || '').match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+          const cid = chMatch?.[1] || '';
+          const publishedText = it?.uploadedDate ? String(it.uploadedDate) : undefined;
+          const lenSec = typeof it?.duration === 'number' ? it.duration : 0;
+          const duration =
+            lenSec > 0
+              ? `${Math.floor(lenSec / 60)}:${String(lenSec % 60).padStart(2, '0')}`
+              : undefined;
+          out.push({
+            id: vid,
+            title: String(it?.title || 'Untitled Video'),
+            publishedAt:
+              typeof it?.uploaded === 'number' && it.uploaded > 0
+                ? new Date(it.uploaded).toISOString()
+                : relativeTimeToIso(publishedText, i),
+            ...(publishedText ? { publishedText } : {}),
+            thumbnail: normalizeThumbnailUrl(it?.thumbnail, vid),
+            channelId: cid,
+            channelTitle: String(it?.uploaderName || 'YouTube'),
+            ...(it?.uploaderAvatar ? { channelAvatar: String(it.uploaderAvatar) } : {}),
+            description: String(it?.shortDescription || ''),
+            ...(typeof it?.views === 'number'
+              ? { views: `${it.views.toLocaleString('id-ID')} x ditonton` }
+              : {}),
+            ...(duration ? { duration } : {}),
+          });
+        }
+        return out;
+      })()
+    );
+  }
+
+  const settled = await Promise.allSettled(attempts);
+  for (const s of settled) {
+    if (s.status === 'fulfilled' && s.value.length > 0) return s.value;
+  }
+  return [];
+}
+
+function searchLocalPresetVideos(queryText: string): VideoSearchResult[] {
+  const q = queryText.toLowerCase().trim();
+  if (!q) return [];
+  const matches: VideoSearchResult[] = [];
+  for (const entry of Object.values(PRESET_CHANNELS)) {
+    for (const v of entry.videos) {
+      const hay = `${v.title} ${v.channelTitle} ${v.description || ''}`.toLowerCase();
+      if (hay.includes(q)) {
+        matches.push({
+          ...v,
+          channelAvatar: entry.channel.avatar,
+          channelHandle: entry.channel.handle,
+          channelUrl: entry.channel.url,
+        });
+      }
+    }
+  }
+  return matches;
+}
+
+export async function searchYouTubeVideos(queryText: string): Promise<VideoSearchResult[]> {
+  const cleaned = queryText.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  if (!cleaned) return [];
+
+  const cacheKey = cleaned.toLowerCase();
+  const cached = videoSearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() && cached.results.length > 0) {
+    return cached.results;
+  }
+
+  const inFlight = pendingVideoSearches.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const promise = (async (): Promise<VideoSearchResult[]> => {
+    const deadlineAt = Date.now() + 8500;
+    const budgetMs = (preferredMs: number) =>
+      Math.max(1000, Math.min(preferredMs, deadlineAt - Date.now()));
+
+    const results: VideoSearchResult[] = [];
+    const seenIds = new Set<string>();
+    let lastError: Error | null = null;
+    let hadSuccessfulFetch = false;
+
+    const pushUnique = (items: VideoSearchResult[]) => {
+      for (const item of items) {
+        if (!VALID_VIDEO_ID_RE.test(item.id) || seenIds.has(item.id)) continue;
+        seenIds.add(item.id);
+        results.push(item);
+        if (results.length >= 24) break;
+      }
+    };
+
+    // If user pasted a YouTube video link or video ID directly, fetch its exact metadata via oEmbed + channel resolution
+    const directVideoId = extractDirectVideoIdFromInput(cleaned);
+    let searchTerm = cleaned;
+    if (directVideoId) {
+      try {
+        const [oembedRes, resolvedCh] = await Promise.allSettled([
+          fetchWithTimeout(
+            `https://www.youtube.com/oembed?url=${encodeURIComponent(
+              `https://www.youtube.com/watch?v=${directVideoId}`
+            )}&format=json`,
+            { headers: { Accept: 'application/json' } },
+            3500
+          ),
+          resolveYouTubeChannel(`https://www.youtube.com/watch?v=${directVideoId}`),
+        ]);
+
+        let title = '';
+        let authorName = 'YouTube';
+        let authorUrl: string | undefined;
+        let thumbUrl = `https://i.ytimg.com/vi/${directVideoId}/hqdefault.jpg`;
+
+        if (oembedRes.status === 'fulfilled' && oembedRes.value.ok) {
+          const oe = await safeResponseJson<any>(oembedRes.value);
+          if (oe?.title) title = String(oe.title).trim();
+          if (oe?.author_name) authorName = String(oe.author_name).trim();
+          if (oe?.author_url) authorUrl = String(oe.author_url).trim();
+          if (oe?.thumbnail_url) thumbUrl = String(oe.thumbnail_url).trim();
+        }
+
+        const resolvedChannelId =
+          resolvedCh.status === 'fulfilled' ? resolvedCh.value.channelId : '';
+        const resolvedTitle =
+          resolvedCh.status === 'fulfilled' && resolvedCh.value.title
+            ? resolvedCh.value.title
+            : authorName;
+
+        if (title) {
+          hadSuccessfulFetch = true;
+          searchTerm = title;
+          pushUnique([
+            {
+              id: directVideoId,
+              title,
+              publishedAt: new Date().toISOString(),
+              thumbnail: normalizeThumbnailUrl(thumbUrl, directVideoId),
+              channelId: resolvedChannelId,
+              channelTitle: resolvedTitle,
+              ...(authorUrl ? { channelUrl: authorUrl } : {}),
+              ...channelAvatarOrFallback('', resolvedChannelId),
+              description: '',
+            },
+          ]);
+        }
+      } catch {
+        // continue with regular search
+      }
+    }
+
+    // Tier 1: Direct InnerTube HTTP video-filtered search
+    const tier1 = await searchVideosViaInnerTubeHttp(searchTerm, budgetMs(4500));
+    if (tier1.ok) {
+      hadSuccessfulFetch = true;
+      pushUnique(tier1.results);
+    } else if (tier1.error) {
+      lastError = tier1.error;
+    }
+
+    // Tier 2 + Tier 3 in parallel if Tier 1 returned no videos and time budget allows
+    if (results.length === 0 && deadlineAt - Date.now() > 900) {
+      const [tier2, tier3] = await Promise.all([
+        searchVideosViaInnertubeLib(searchTerm, budgetMs(4000)),
+        searchVideosViaHtmlPage(searchTerm, budgetMs(4200)),
+      ]);
+
+      if (tier2.ok) {
+        hadSuccessfulFetch = true;
+        pushUnique(tier2.results);
+      } else if (tier2.error) {
+        lastError = tier2.error;
+      }
+
+      if (tier3.ok) {
+        hadSuccessfulFetch = true;
+        pushUnique(tier3.results);
+      } else if (tier3.error) {
+        lastError = tier3.error;
+      }
+    }
+
+    // Tier 4: External mirror fallback (Invidious / Piped) + local preset videos
+    if (results.length === 0 && deadlineAt - Date.now() > 900) {
+      const external = await searchVideosViaExternalMirror(searchTerm);
+      if (external.length > 0) {
+        hadSuccessfulFetch = true;
+        pushUnique(external);
+      }
+    }
+
+    if (results.length === 0) {
+      const localMatches = searchLocalPresetVideos(searchTerm);
+      if (localMatches.length > 0) {
+        hadSuccessfulFetch = true;
+        pushUnique(localMatches);
+      }
+    }
+
+    if (results.length === 0 && !hadSuccessfulFetch && lastError) {
+      throw lastError;
+    }
+
+    if (results.length > 0) {
+      videoSearchCache.set(cacheKey, {
+        results,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      });
+      pruneCacheMap(videoSearchCache, 120);
+    }
+
+    return results;
+  })().finally(() => {
+    pendingVideoSearches.delete(cacheKey);
+  });
+
+  pendingVideoSearches.set(cacheKey, promise);
+  return promise;
+}
+
 

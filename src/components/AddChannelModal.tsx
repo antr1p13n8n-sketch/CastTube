@@ -15,8 +15,18 @@ import {
   Check,
   ExternalLink,
   RefreshCw,
+  Play,
+  Radio,
+  ListPlus,
+  Film,
 } from 'lucide-react';
-import { Channel, ChannelGroup, YouTubeChannelSearchResult } from '../types';
+import {
+  Channel,
+  ChannelGroup,
+  Video,
+  YouTubeChannelSearchResult,
+  YouTubeVideoSearchResult,
+} from '../types';
 import { parseJsonSafely, buildHttpErrorMessage } from '../utils/safeJson';
 
 interface AddChannelModalProps {
@@ -29,8 +39,12 @@ interface AddChannelModalProps {
     targetGroupId: string,
     channelHints?: Record<string, Partial<Channel>>
   ) => Promise<{ success: number; failed: number; lastError?: string }>;
+  onPlayVideo?: (video: Video) => void;
+  onPlayAudio?: (video: Video) => void;
+  onToggleQueue?: (video: Video) => void;
+  queueIds?: string[];
   initialPastedText?: string;
-  initialTab?: 'search' | 'paste';
+  initialTab?: 'video' | 'search' | 'paste';
   initialSearchQuery?: string;
 }
 
@@ -129,11 +143,15 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   groups,
   existingChannelIds,
   onAddChannels,
+  onPlayVideo,
+  onPlayAudio,
+  onToggleQueue,
+  queueIds = [],
   initialPastedText = '',
   initialTab = 'search',
   initialSearchQuery = '',
 }) => {
-  const [activeTab, setActiveTab] = useState<'search' | 'paste'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'video' | 'search' | 'paste'>(initialTab);
   const [inputText, setInputText] = useState(initialPastedText);
   const [selectedGroupId, setSelectedGroupId] = useState(
     groups.find((g) => g.id !== 'all')?.id || 'general'
@@ -145,19 +163,21 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     message: string;
   } | null>(null);
 
-  // YouTube Channel Search states
+  // YouTube Search states (shared query for Video & Channel tabs, independent results)
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
   const [searchResults, setSearchResults] = useState<YouTubeChannelSearchResult[]>([]);
+  const [videoResults, setVideoResults] = useState<YouTubeVideoSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
+  const [hasSearchedChannel, setHasSearchedChannel] = useState(false);
+  const [hasSearchedVideo, setHasSearchedVideo] = useState(false);
   const [addingChannelId, setAddingChannelId] = useState<string | null>(null);
   const [addedInSession, setAddedInSession] = useState<Record<string, boolean>>({});
 
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const searchAbortRef = React.useRef<AbortController | null>(null);
   const searchDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastExecutedQueryRef = React.useRef<string>('');
+  const lastExecutedKeyRef = React.useRef<string>('');
   const pastedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -192,91 +212,154 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     }
   }, [groups, selectedGroupId]);
 
-  const executeYouTubeSearch = useCallback(async (queryText: string) => {
-    const trimmed = queryText.trim();
-    if (!trimmed) return;
+  const executeYouTubeSearch = useCallback(
+    async (queryText: string, modeOverride?: 'video' | 'search') => {
+      const targetMode = modeOverride ?? (activeTab === 'video' ? 'video' : 'search');
+      const trimmed = queryText.trim();
+      if (!trimmed) return;
 
-    if (searchDebounceRef.current) {
-      clearTimeout(searchDebounceRef.current);
-      searchDebounceRef.current = null;
-    }
-
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setSearchResults([]);
-      setHasSearched(true);
-      setIsSearching(false);
-      setSearchError('Anda sedang offline. Hubungkan internet untuk mencari channel YouTube.');
-      return;
-    }
-
-    searchAbortRef.current?.abort();
-    const controller = new AbortController();
-    searchAbortRef.current = controller;
-    lastExecutedQueryRef.current = trimmed;
-
-    let didTimeout = false;
-    const timeoutId = setTimeout(() => {
-      didTimeout = true;
-      controller.abort();
-    }, 15000);
-
-    setIsSearching(true);
-    setSearchError(null);
-    setHasSearched(true);
-    try {
-      const res = await fetch(`/api/youtube/search-channels?q=${encodeURIComponent(trimmed)}`, {
-        signal: controller.signal,
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/json',
-        },
-      });
-      const { data, rawText } = await parseJsonSafely<{
-        channels?: YouTubeChannelSearchResult[];
-        error?: string;
-      }>(res);
-      if (!res.ok) {
-        throw new Error(
-          buildHttpErrorMessage(res, data, rawText, 'Gagal mencari channel di YouTube')
-        );
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
       }
-      if (!data || !Array.isArray(data.channels)) {
-        throw new Error(
-          buildHttpErrorMessage(
-            res,
-            data,
-            rawText,
-            'Format respons pencarian YouTube tidak valid'
-          )
-        );
-      }
-      setSearchResults(data.channels);
-    } catch (err: unknown) {
-      if ((err as { name?: string })?.name === 'AbortError') {
-        if (didTimeout && searchAbortRef.current === controller) {
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (targetMode === 'video') {
+          setVideoResults([]);
+          setHasSearchedVideo(true);
+        } else {
           setSearchResults([]);
-          setSearchError('Pencarian channel melebihi batas waktu. Silakan klik Coba Lagi.');
+          setHasSearchedChannel(true);
         }
+        setIsSearching(false);
+        setSearchError(
+          targetMode === 'video'
+            ? 'Anda sedang offline. Hubungkan internet untuk mencari video YouTube.'
+            : 'Anda sedang offline. Hubungkan internet untuk mencari channel YouTube.'
+        );
         return;
       }
-      if (searchAbortRef.current === controller) {
-        setSearchResults([]);
-        setSearchError(
-          err instanceof Error ? err.message : 'Terjadi kesalahan saat mencari channel YouTube.'
-        );
+
+      searchAbortRef.current?.abort();
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      lastExecutedKeyRef.current = `${targetMode}:${trimmed}`;
+
+      let didTimeout = false;
+      const timeoutId = setTimeout(() => {
+        didTimeout = true;
+        controller.abort();
+      }, 15000);
+
+      setIsSearching(true);
+      setSearchError(null);
+      if (targetMode === 'video') {
+        setHasSearchedVideo(true);
+      } else {
+        setHasSearchedChannel(true);
       }
-    } finally {
-      clearTimeout(timeoutId);
-      if (searchAbortRef.current === controller) {
-        setIsSearching(false);
+
+      try {
+        const endpoint =
+          targetMode === 'video'
+            ? `/api/youtube/search-videos?q=${encodeURIComponent(trimmed)}`
+            : `/api/youtube/search-channels?q=${encodeURIComponent(trimmed)}`;
+
+        const res = await fetch(endpoint, {
+          signal: controller.signal,
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/json',
+          },
+        });
+        const { data, rawText } = await parseJsonSafely<{
+          channels?: YouTubeChannelSearchResult[];
+          videos?: YouTubeVideoSearchResult[];
+          error?: string;
+        }>(res);
+
+        if (!res.ok) {
+          throw new Error(
+            buildHttpErrorMessage(
+              res,
+              data,
+              rawText,
+              targetMode === 'video'
+                ? 'Gagal mencari video di YouTube'
+                : 'Gagal mencari channel di YouTube'
+            )
+          );
+        }
+
+        if (targetMode === 'video') {
+          if (!data || !Array.isArray(data.videos)) {
+            throw new Error(
+              buildHttpErrorMessage(
+                res,
+                data,
+                rawText,
+                'Format respons pencarian video YouTube tidak valid'
+              )
+            );
+          }
+          setVideoResults(data.videos);
+        } else {
+          if (!data || !Array.isArray(data.channels)) {
+            throw new Error(
+              buildHttpErrorMessage(
+                res,
+                data,
+                rawText,
+                'Format respons pencarian YouTube tidak valid'
+              )
+            );
+          }
+          setSearchResults(data.channels);
+        }
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') {
+          if (didTimeout && searchAbortRef.current === controller) {
+            if (targetMode === 'video') {
+              setVideoResults([]);
+            } else {
+              setSearchResults([]);
+            }
+            setSearchError(
+              targetMode === 'video'
+                ? 'Pencarian video melebihi batas waktu. Silakan klik Coba Lagi.'
+                : 'Pencarian channel melebihi batas waktu. Silakan klik Coba Lagi.'
+            );
+          }
+          return;
+        }
+        if (searchAbortRef.current === controller) {
+          if (targetMode === 'video') {
+            setVideoResults([]);
+          } else {
+            setSearchResults([]);
+          }
+          setSearchError(
+            err instanceof Error
+              ? err.message
+              : targetMode === 'video'
+              ? 'Terjadi kesalahan saat mencari video YouTube.'
+              : 'Terjadi kesalahan saat mencari channel YouTube.'
+          );
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        if (searchAbortRef.current === controller) {
+          setIsSearching(false);
+        }
       }
-    }
-  }, []);
+    },
+    [activeTab]
+  );
 
   useEffect(() => {
     if (!isOpen) {
       searchAbortRef.current?.abort();
-      lastExecutedQueryRef.current = '';
+      lastExecutedKeyRef.current = '';
       clearModalTimers();
       return;
     }
@@ -284,7 +367,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     setFeedback(null);
     setSearchError(null);
     setAddedInSession({});
-    lastExecutedQueryRef.current = '';
+    lastExecutedKeyRef.current = '';
     if (initialPastedText) {
       setActiveTab('paste');
       const formatted = parseAndFormatLinks(initialPastedText);
@@ -295,18 +378,22 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       setActiveTab(initialTab);
       if (initialSearchQuery.trim()) {
         setSearchQuery(initialSearchQuery);
-        executeYouTubeSearch(initialSearchQuery);
+        if (initialTab === 'video' || initialTab === 'search') {
+          void executeYouTubeSearch(initialSearchQuery, initialTab);
+        }
       } else {
         setSearchQuery('');
         setSearchResults([]);
-        setHasSearched(false);
+        setVideoResults([]);
+        setHasSearchedChannel(false);
+        setHasSearchedVideo(false);
       }
     }
   }, [isOpen, initialPastedText, initialTab, initialSearchQuery, executeYouTubeSearch, clearModalTimers]);
 
-  // Debounced auto-search when typing >= 2 characters on the Search tab
+  // Debounced auto-search when typing >= 2 characters on Video or Channel Search tab
   useEffect(() => {
-    if (!isOpen || activeTab !== 'search') return;
+    if (!isOpen || (activeTab !== 'search' && activeTab !== 'video')) return;
     const trimmed = searchQuery.trim();
     if (!trimmed) {
       if (searchDebounceRef.current) {
@@ -315,14 +402,15 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
       }
       return;
     }
-    if (trimmed.length < 2 || trimmed === lastExecutedQueryRef.current) return;
+    const execKey = `${activeTab}:${trimmed}`;
+    if (trimmed.length < 2 || execKey === lastExecutedKeyRef.current) return;
 
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
     searchDebounceRef.current = setTimeout(() => {
       searchDebounceRef.current = null;
-      void executeYouTubeSearch(trimmed);
+      void executeYouTubeSearch(trimmed, activeTab);
     }, 600);
 
     return () => {
@@ -335,7 +423,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    executeYouTubeSearch(searchQuery);
+    void executeYouTubeSearch(searchQuery, activeTab === 'video' ? 'video' : 'search');
   };
 
   const handleAddFromSearch = async (item: YouTubeChannelSearchResult) => {
@@ -363,6 +451,42 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
         setFeedback({
           type: 'error',
           message: result.lastError || `Gagal menambahkan channel "${item.title}".`,
+        });
+      }
+    } catch (err: unknown) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal menambahkan channel.',
+      });
+    } finally {
+      setAddingChannelId(null);
+    }
+  };
+
+  const handleAddChannelFromVideo = async (item: YouTubeVideoSearchResult) => {
+    if (addingChannelId || !item.channelId) return;
+    setAddingChannelId(item.channelId);
+    setFeedback(null);
+    try {
+      const result = await onAddChannels([item.channelId], selectedGroupId, {
+        [item.channelId]: {
+          id: item.channelId,
+          title: item.channelTitle,
+          handle: item.channelHandle,
+          avatar: item.channelAvatar,
+          url: item.channelUrl || `https://www.youtube.com/channel/${item.channelId}`,
+        },
+      });
+      if (result.success > 0) {
+        setAddedInSession((prev) => ({ ...prev, [item.channelId]: true }));
+        setFeedback({
+          type: 'success',
+          message: `Channel "${item.channelTitle}" berhasil ditambahkan ke grup.`,
+        });
+      } else {
+        setFeedback({
+          type: 'error',
+          message: result.lastError || `Gagal menambahkan channel "${item.channelTitle}".`,
         });
       }
     } catch (err: unknown) {
@@ -524,6 +648,17 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     'Musik Lofi Santai',
   ];
 
+  const videoTopics = [
+    'Podcast Terbaru Indonesia',
+    'Review Gadget Terbaru',
+    'Lofi Study Music',
+    'Talkshow & Diskusi',
+    'Dokumenter Sains',
+  ];
+
+  const isVideoTab = activeTab === 'video';
+  const hasSearchedCurrent = isVideoTab ? hasSearchedVideo : hasSearchedChannel;
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -553,10 +688,10 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
             </div>
             <div className="min-w-0">
               <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
-                Cari & Tambah Channel YouTube
+                Cari Video &amp; Channel YouTube
               </h2>
               <p className="text-xs text-slate-500 truncate">
-                Cari langsung dari YouTube atau tempel URL / @handle channel
+                Cari judul video langsung, cari channel, atau tempel URL / @handle
               </p>
             </div>
           </div>
@@ -570,12 +705,36 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
 
         {/* Mode Tabs & Group Selector */}
         <div className="px-4 sm:px-6 pt-3 sm:pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 shrink-0 bg-slate-50/70 dark:bg-slate-950/30">
-          <div className="flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-xl w-full sm:w-fit">
+          <div className="flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-xl w-full sm:w-fit overflow-x-auto scrollbar-none">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('video');
+                setFeedback(null);
+                setSearchError(null);
+              }}
+              className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === 'video'
+                  ? 'text-slate-900 dark:text-white'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              {activeTab === 'video' && (
+                <motion.span
+                  layoutId="addModalModeTab"
+                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                  className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
+                />
+              )}
+              <Film className="relative z-10 w-3.5 h-3.5 text-red-500 shrink-0" />
+              <span className="relative z-10">Cari Video</span>
+            </button>
             <button
               type="button"
               onClick={() => {
                 setActiveTab('search');
                 setFeedback(null);
+                setSearchError(null);
               }}
               className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                 activeTab === 'search'
@@ -613,7 +772,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 />
               )}
               <Clipboard className="relative z-10 w-3.5 h-3.5 text-red-500 shrink-0" />
-              <span className="relative z-10">Tempel Link / Handle</span>
+              <span className="relative z-10">Tempel Link</span>
             </button>
           </div>
 
@@ -639,9 +798,9 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
 
         {/* Scrollable Body */}
         <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
-          {activeTab === 'search' ? (
+          {activeTab === 'search' || activeTab === 'video' ? (
             <>
-              {/* YouTube Channel Search Input */}
+              {/* YouTube Video / Channel Search Input */}
               <form onSubmit={handleSearchSubmit} className="flex gap-2">
                 <div className="relative flex-1 min-w-0">
                   <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -657,7 +816,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                         const target = extracted[0];
                         setSearchQuery(target);
                         if (searchError) setSearchError(null);
-                        void executeYouTubeSearch(target);
+                        void executeYouTubeSearch(target, isVideoTab ? 'video' : 'search');
                       }
                     }}
                     onChange={(e) => {
@@ -666,13 +825,19 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                       if (searchError) setSearchError(null);
                       if (!val.trim()) {
                         searchAbortRef.current?.abort();
-                        lastExecutedQueryRef.current = '';
-                        setHasSearched(false);
+                        lastExecutedKeyRef.current = '';
+                        setHasSearchedChannel(false);
+                        setHasSearchedVideo(false);
                         setSearchResults([]);
+                        setVideoResults([]);
                         setIsSearching(false);
                       }
                     }}
-                    placeholder="Ketik nama channel, @handle, atau tempel link YouTube..."
+                    placeholder={
+                      isVideoTab
+                        ? 'Ketik judul video YouTube, topik podcast, atau tempel link video...'
+                        : 'Ketik nama channel, @handle, atau tempel link YouTube...'
+                    }
                     autoFocus={typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches}
                     className="w-full pl-10 pr-10 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
                   />
@@ -681,15 +846,17 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                       type="button"
                       onClick={() => {
                         searchAbortRef.current?.abort();
-                        lastExecutedQueryRef.current = '';
+                        lastExecutedKeyRef.current = '';
                         setSearchQuery('');
                         setSearchError(null);
                         setSearchResults([]);
-                        setHasSearched(false);
+                        setVideoResults([]);
+                        setHasSearchedChannel(false);
+                        setHasSearchedVideo(false);
                         setIsSearching(false);
                       }}
                       className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 rounded-lg text-sm text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
-                      aria-label="Kosongkan pencarian channel"
+                      aria-label="Kosongkan pencarian"
                     >
                       ×
                     </button>
@@ -715,19 +882,19 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
               </form>
 
               {/* Quick Topic Suggestions */}
-              {!hasSearched && (
+              {!hasSearchedCurrent && (
                 <div className="space-y-2">
                   <div className="text-[11px] font-semibold text-slate-500">
-                    Topik populer untuk dicari:
+                    {isVideoTab ? 'Judul atau topik video populer:' : 'Topik channel populer untuk dicari:'}
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    {searchTopics.map((topic) => (
+                    {(isVideoTab ? videoTopics : searchTopics).map((topic) => (
                       <button
                         key={topic}
                         type="button"
                         onClick={() => {
                           setSearchQuery(topic);
-                          executeYouTubeSearch(topic);
+                          void executeYouTubeSearch(topic, isVideoTab ? 'video' : 'search');
                         }}
                         className="px-3 py-1.5 text-xs font-medium rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-slate-700 transition-colors cursor-pointer"
                       >
@@ -768,7 +935,9 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   <div className="flex flex-wrap items-center gap-2 pl-6">
                     <button
                       type="button"
-                      onClick={() => executeYouTubeSearch(searchQuery)}
+                      onClick={() =>
+                        void executeYouTubeSearch(searchQuery, isVideoTab ? 'video' : 'search')
+                      }
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] cursor-pointer transition-colors"
                     >
                       <RefreshCw className="w-3 h-3" />
@@ -791,13 +960,198 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                 </div>
               )}
 
-              {/* Search Results */}
+              {/* Loading / Empty / Results */}
               {isSearching ? (
                 <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-slate-500">
                   <Loader2 className="w-6 h-6 animate-spin text-red-600" />
-                  <span>Mencari channel di YouTube...</span>
+                  <span>
+                    {isVideoTab
+                      ? 'Mencari judul video di YouTube...'
+                      : 'Mencari channel di YouTube...'}
+                  </span>
                 </div>
-              ) : hasSearched && searchResults.length === 0 && !searchError ? (
+              ) : isVideoTab ? (
+                hasSearchedVideo && videoResults.length === 0 && !searchError ? (
+                  <div className="py-10 px-4 text-center text-xs text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 space-y-3">
+                    <div>
+                      Tidak ada video ditemukan untuk "{searchQuery}". Coba kata kunci judul lain atau tempel link video YouTube.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {videoResults.map((video, idx) => {
+                      const isChannelAdded =
+                        Boolean(video.channelId) &&
+                        (existingChannelIds.includes(video.channelId) ||
+                          Boolean(addedInSession[video.channelId]));
+                      const isAddingChannel =
+                        Boolean(video.channelId) && addingChannelId === video.channelId;
+                      const isInQueue = queueIds.includes(video.id);
+
+                      return (
+                        <motion.div
+                          key={video.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{
+                            duration: 0.2,
+                            delay: Math.min(idx, 10) * 0.02,
+                            ease: [0.16, 1, 0.3, 1],
+                          }}
+                          className="flex flex-col sm:flex-row gap-3 p-2.5 sm:p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                        >
+                          {/* Thumbnail */}
+                          <div
+                            onClick={() => {
+                              if (onPlayVideo) {
+                                onPlayVideo(video);
+                                onClose();
+                              }
+                            }}
+                            className="relative w-full sm:w-40 aspect-video rounded-xl overflow-hidden bg-slate-900 shrink-0 cursor-pointer group"
+                          >
+                            <img
+                              src={video.thumbnail}
+                              alt={video.title}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            />
+                            {video.duration && (
+                              <span
+                                className={`absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
+                                  video.duration === 'LIVE'
+                                    ? 'bg-red-600 text-white'
+                                    : 'bg-black/80 text-white'
+                                }`}
+                              >
+                                {video.duration}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Metadata & Actions */}
+                          <div className="min-w-0 flex-1 flex flex-col justify-between gap-2">
+                            <div className="space-y-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white line-clamp-2 leading-snug">
+                                  {video.title}
+                                </h3>
+                                <a
+                                  href={`https://www.youtube.com/watch?v=${video.id}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1.5 -m-1 rounded-lg text-slate-400 hover:text-red-500 shrink-0"
+                                  title="Buka di YouTube"
+                                  aria-label="Buka di YouTube"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                <span className="font-semibold text-slate-700 dark:text-slate-200 truncate max-w-[180px]">
+                                  {video.channelTitle}
+                                </span>
+                                {video.views && (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span>{video.views}</span>
+                                  </>
+                                )}
+                                {video.publishedText && (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span>{video.publishedText}</span>
+                                  </>
+                                )}
+                              </div>
+
+                              {video.description && (
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
+                                  {video.description}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                              {onPlayVideo && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onPlayVideo(video);
+                                    onClose();
+                                  }}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors cursor-pointer"
+                                >
+                                  <Play className="w-3 h-3" />
+                                  <span>Putar Video</span>
+                                </button>
+                              )}
+                              {onPlayAudio && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onPlayAudio(video);
+                                    onClose();
+                                  }}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90 transition-opacity cursor-pointer"
+                                >
+                                  <Radio className="w-3 h-3" />
+                                  <span>Audio</span>
+                                </button>
+                              )}
+                              {onToggleQueue && (
+                                <button
+                                  type="button"
+                                  onClick={() => onToggleQueue(video)}
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-xl transition-colors cursor-pointer ${
+                                    isInQueue
+                                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                      : 'bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600'
+                                  }`}
+                                >
+                                  {isInQueue ? (
+                                    <>
+                                      <Check className="w-3 h-3" />
+                                      <span>Di Antrean</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ListPlus className="w-3 h-3" />
+                                      <span>Antrean</span>
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                              {video.channelId && (
+                                <button
+                                  type="button"
+                                  disabled={isChannelAdded || Boolean(addingChannelId)}
+                                  onClick={() => void handleAddChannelFromVideo(video)}
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-xl transition-colors cursor-pointer ${
+                                    isChannelAdded
+                                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 cursor-default'
+                                      : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-red-400 hover:text-red-600 disabled:opacity-50'
+                                  }`}
+                                >
+                                  {isAddingChannel ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : isChannelAdded ? (
+                                    <Check className="w-3 h-3" />
+                                  ) : (
+                                    <Plus className="w-3 h-3" />
+                                  )}
+                                  <span>{isChannelAdded ? 'Terdaftar' : 'Channel'}</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )
+              ) : hasSearchedChannel && searchResults.length === 0 && !searchError ? (
                 <div className="py-10 px-4 text-center text-xs text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 space-y-3">
                   <div>
                     Tidak ada channel ditemukan untuk "{searchQuery}". Coba kata kunci, URL channel, atau @handle lain.
