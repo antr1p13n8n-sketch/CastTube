@@ -1,4 +1,4 @@
-import { Channel, ChannelGroup, Video, ThemeMode, PlaybackProgress, PendingSyncTask, PlayerMode, Playlist } from '../types';
+import { Channel, ChannelGroup, Video, ThemeMode, PlaybackProgress, PendingSyncTask, PlayerMode, Playlist, BackgroundAudioSettings } from '../types';
 
 export const INITIAL_GROUPS: ChannelGroup[] = [
   { id: 'all', name: 'Semua Channel', isDefault: true },
@@ -191,6 +191,7 @@ const STORAGE_KEYS = {
   PLAYLISTS: 'casttube_playlists_v1',
   PLAYED_VIDEOS: 'casttube_played_videos_v1',
   LAST_FEED_SYNC: 'casttube_last_feed_sync_v1',
+  BG_AUDIO: 'casttube_bg_audio_v1',
 };
 
 export function loadGroups(): ChannelGroup[] {
@@ -527,6 +528,44 @@ export function loadLastFeedSyncAt(): number {
 export function saveLastFeedSyncAt(timestampMs: number = Date.now()) {
   try {
     localStorage.setItem(STORAGE_KEYS.LAST_FEED_SYNC, String(timestampMs));
+  } catch {
+    // ignore
+  }
+}
+
+export const DEFAULT_BG_AUDIO_SETTINGS: BackgroundAudioSettings = {
+  enabled: true,
+  autoSwitchOnMinimize: true,
+  autoResumeOnReopen: true,
+  keepScreenAwake: false,
+  promptDismissed: false,
+};
+
+export function loadBackgroundAudioSettings(): BackgroundAudioSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.BG_AUDIO);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          enabled: parsed.enabled !== false,
+          autoSwitchOnMinimize: parsed.autoSwitchOnMinimize !== false,
+          autoResumeOnReopen: parsed.autoResumeOnReopen !== false,
+          keepScreenAwake: Boolean(parsed.keepScreenAwake),
+          promptDismissed: Boolean(parsed.promptDismissed),
+          activatedAt: typeof parsed.activatedAt === 'string' ? parsed.activatedAt : undefined,
+        };
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return DEFAULT_BG_AUDIO_SETTINGS;
+}
+
+export function saveBackgroundAudioSettings(settings: BackgroundAudioSettings) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.BG_AUDIO, JSON.stringify(settings));
   } catch {
     // ignore
   }

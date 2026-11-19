@@ -1,0 +1,483 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Video } from '../types';
+import { formatTime } from '../utils/format';
+import { getPlaybackClockSnapshot, subscribePlaybackClock } from '../utils/playbackClock';
+
+interface DocumentPictureInPictureAPI {
+  requestWindow: (options?: { width?: number; height?: number }) => Promise<Window>;
+  window?: Window | null;
+}
+
+interface UseFloatingMiniPlayerOptions {
+  currentVideo: Video | null;
+  isPlaying: boolean;
+  usingNativeAudio: boolean;
+  hasNext: boolean;
+  onPlayPause: () => void;
+  onSkipBack: (seconds?: number) => void;
+  onSkipForward: (seconds?: number) => void;
+  onNext: () => void;
+}
+
+export type FloatingPopupMode = 'document' | 'video' | null;
+
+function renderCanvasCard(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  video: Video | null,
+  isPlaying: boolean,
+  usingNativeAudio: boolean,
+  currentTime: number,
+  duration: number
+) {
+  // Rich dark background
+  const grad = ctx.createLinearGradient(0, 0, width, height);
+  grad.addColorStop(0, '#0f172a');
+  grad.addColorStop(0.55, '#1e293b');
+  grad.addColorStop(1, '#450a0a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, width, height);
+
+  // Subtle decorative glow
+  const glow = ctx.createRadialGradient(width * 0.85, height * 0.2, 10, width * 0.85, height * 0.2, 180);
+  glow.addColorStop(0, 'rgba(220, 38, 38, 0.35)');
+  glow.addColorStop(1, 'rgba(220, 38, 38, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, width, height);
+
+  // Top brand + mode badge
+  ctx.fillStyle = '#ef4444';
+  ctx.beginPath();
+  ctx.roundRect(24, 22, 12, 12, 6);
+  ctx.fill();
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = 'bold 15px system-ui, -apple-system, sans-serif';
+  ctx.fillText('CastTube', 44, 33);
+
+  ctx.fillStyle = usingNativeAudio ? '#34d399' : '#fbbf24';
+  ctx.font = '600 13px system-ui, -apple-system, sans-serif';
+  const statusLabel = isPlaying
+    ? usingNativeAudio
+      ? 'Audio Latar Aktif'
+      : 'Pemutaran Aktif'
+    : 'Dijeda';
+  ctx.fillText(statusLabel, width - ctx.measureText(statusLabel).width - 24, 33);
+
+  // Title (wrap max 2 lines)
+  const title = video?.title || 'Tidak ada pemutaran';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 20px system-ui, -apple-system, sans-serif';
+  const words = title.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = '';
+  const maxWidth = width - 48;
+
+  for (const w of words) {
+    const test = currentLine ? `${currentLine} ${w}` : w;
+    if (ctx.measureText(test).width > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = w;
+      if (lines.length === 2) break;
+    } else {
+      currentLine = test;
+    }
+  }
+  if (lines.length < 2 && currentLine) {
+    lines.push(currentLine);
+  }
+  if (lines.length === 2 && words.length > 0 && lines.join(' ').length < title.length) {
+    lines[1] = `${lines[1].slice(0, Math.max(0, lines[1].length - 3))}...`;
+  }
+
+  lines.forEach((line, idx) => {
+    ctx.fillText(line, 24, 92 + idx * 28);
+  });
+
+  // Channel title
+  ctx.fillStyle = '#cbd5e1';
+  ctx.font = '500 15px system-ui, -apple-system, sans-serif';
+  ctx.fillText(video?.channelTitle || 'CastTube Audio', 24, 158);
+
+  // Equalizer indicator when playing
+  const baseEqY = 205;
+  const phase = Date.now() / 160;
+  for (let b = 0; b < 5; b++) {
+    const h = isPlaying ? 8 + Math.abs(Math.sin(phase + b * 0.9)) * 18 : 6;
+    ctx.fillStyle = b % 2 === 0 ? '#ef4444' : '#f87171';
+    ctx.beginPath();
+    ctx.roundRect(24 + b * 9, baseEqY - h, 5, h, 2);
+    ctx.fill();
+  }
+
+  // Time readout
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '600 13px ui-monospace, SFMono-Regular, Menlo, monospace';
+  const timeText = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+  ctx.fillText(timeText, width - ctx.measureText(timeText).width - 24, 204);
+
+  // Progress bar
+  const barY = 226;
+  const barW = width - 48;
+  ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
+  ctx.beginPath();
+  ctx.roundRect(24, barY, barW, 6, 3);
+  ctx.fill();
+
+  const pct = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
+  if (pct > 0) {
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.roundRect(24, barY, Math.max(8, barW * pct), 6, 3);
+    ctx.fill();
+  }
+}
+
+export function useFloatingMiniPlayer({
+  currentVideo,
+  isPlaying,
+  usingNativeAudio,
+  hasNext,
+  onPlayPause,
+  onSkipBack,
+  onSkipForward,
+  onNext,
+}: UseFloatingMiniPlayerOptions) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [mode, setMode] = useState<FloatingPopupMode>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const pipWindowRef = useRef<Window | null>(null);
+  const pipVideoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const clockUnsubRef = useRef<(() => void) | null>(null);
+
+  const propsRef = useRef({
+    currentVideo,
+    isPlaying,
+    usingNativeAudio,
+    hasNext,
+    onPlayPause,
+    onSkipBack,
+    onSkipForward,
+    onNext,
+  });
+  propsRef.current = {
+    currentVideo,
+    isPlaying,
+    usingNativeAudio,
+    hasNext,
+    onPlayPause,
+    onSkipBack,
+    onSkipForward,
+    onNext,
+  };
+
+  const supportsDocumentPip =
+    typeof window !== 'undefined' && 'documentPictureInPicture' in window;
+  const supportsVideoPip =
+    typeof document !== 'undefined' &&
+    Boolean(document.pictureInPictureEnabled) &&
+    typeof HTMLVideoElement !== 'undefined' &&
+    'requestPictureInPicture' in HTMLVideoElement.prototype;
+  const isSupported = supportsDocumentPip || supportsVideoPip;
+
+  const cleanupResources = useCallback(() => {
+    if (clockUnsubRef.current) {
+      clockUnsubRef.current();
+      clockUnsubRef.current = null;
+    }
+    if (canvasTimerRef.current) {
+      clearInterval(canvasTimerRef.current);
+      canvasTimerRef.current = null;
+    }
+    if (pipWindowRef.current && !pipWindowRef.current.closed) {
+      try {
+        pipWindowRef.current.close();
+      } catch {
+        // ignore
+      }
+    }
+    pipWindowRef.current = null;
+
+    if (typeof document !== 'undefined' && document.pictureInPictureElement) {
+      try {
+        void document.exitPictureInPicture().catch(() => {});
+      } catch {
+        // ignore
+      }
+    }
+    if (pipVideoRef.current) {
+      const stream = pipVideoRef.current.srcObject as MediaStream | null;
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+      pipVideoRef.current.srcObject = null;
+      pipVideoRef.current.remove();
+      pipVideoRef.current = null;
+    }
+    setIsOpen(false);
+    setMode(null);
+  }, []);
+
+  const renderDocumentPipContents = useCallback((win: Window) => {
+    const doc = win.document;
+    const { currentVideo: vid, isPlaying: playing, usingNativeAudio: native, hasNext: nextAvail } =
+      propsRef.current;
+
+    const titleEl = doc.getElementById('ct-pip-title');
+    const channelEl = doc.getElementById('ct-pip-channel');
+    const thumbEl = doc.getElementById('ct-pip-thumb') as HTMLImageElement | null;
+    const statusEl = doc.getElementById('ct-pip-status');
+    const playBtn = doc.getElementById('ct-pip-play');
+    const nextBtn = doc.getElementById('ct-pip-next') as HTMLButtonElement | null;
+
+    if (titleEl) titleEl.textContent = vid?.title || 'Tidak ada video aktif';
+    if (channelEl) channelEl.textContent = vid?.channelTitle || 'CastTube';
+    if (thumbEl && vid?.thumbnail && thumbEl.src !== vid.thumbnail) {
+      thumbEl.src = vid.thumbnail;
+      thumbEl.alt = vid.title;
+    }
+    if (statusEl) {
+      statusEl.textContent = native ? 'Audio Latar Aktif' : 'Popup Mengambang';
+      statusEl.style.color = native ? '#34d399' : '#fbbf24';
+    }
+    if (playBtn) {
+      playBtn.textContent = playing ? 'Jeda' : 'Putar';
+      playBtn.setAttribute('aria-label', playing ? 'Jeda' : 'Putar');
+    }
+    if (nextBtn) {
+      nextBtn.disabled = !nextAvail;
+      nextBtn.style.opacity = nextAvail ? '1' : '0.4';
+    }
+
+    const snap = getPlaybackClockSnapshot();
+    const timeEl = doc.getElementById('ct-pip-time');
+    const barFillEl = doc.getElementById('ct-pip-bar-fill');
+    if (timeEl) {
+      timeEl.textContent = `${formatTime(snap.currentTime)} / ${formatTime(snap.duration)}`;
+    }
+    if (barFillEl) {
+      const pct =
+        snap.duration > 0
+          ? Math.min(100, Math.max(0, (snap.currentTime / snap.duration) * 100))
+          : 0;
+      barFillEl.style.width = `${pct}%`;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode === 'document' && pipWindowRef.current && !pipWindowRef.current.closed) {
+      renderDocumentPipContents(pipWindowRef.current);
+    }
+  }, [mode, currentVideo?.id, currentVideo?.title, isPlaying, usingNativeAudio, hasNext, renderDocumentPipContents]);
+
+  useEffect(() => {
+    return () => {
+      cleanupResources();
+    };
+  }, [cleanupResources]);
+
+  const openPopup = useCallback(async (): Promise<boolean> => {
+    setError(null);
+    if (!propsRef.current.currentVideo) {
+      setError('Putar video atau podcast terlebih dahulu sebelum membuka popup mengambang.');
+      return false;
+    }
+
+    // 1. Desktop Document Picture-in-Picture (interactive rich floating mini window)
+    if (supportsDocumentPip) {
+      try {
+        if (pipWindowRef.current && !pipWindowRef.current.closed) {
+          pipWindowRef.current.focus();
+          return true;
+        }
+        cleanupResources();
+
+        const api = (window as unknown as { documentPictureInPicture: DocumentPictureInPictureAPI })
+          .documentPictureInPicture;
+        const pipWin = await api.requestWindow({ width: 390, height: 224 });
+        pipWindowRef.current = pipWin;
+
+        const doc = pipWin.document;
+        doc.title = 'CastTube · Pemutar Mengambang';
+        const style = doc.createElement('style');
+        style.textContent = `
+          * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+          body {
+            background: #0f172a; color: #f8fafc; padding: 14px; display: flex;
+            flex-direction: column; justify-content: space-between; height: 100vh; overflow: hidden;
+          }
+          .top { display: flex; gap: 12px; align-items: center; }
+          .thumb { width: 72px; height: 54px; border-radius: 10px; object-fit: cover; background: #1e293b; flex-shrink: 0; }
+          .meta { min-width: 0; flex: 1; }
+          .status { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+          .title { font-size: 13px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+          .channel { font-size: 11px; color: #94a3b8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .progress-wrap { margin-top: 10px; }
+          .bar { width: 100%; height: 5px; border-radius: 999px; background: #1e293b; overflow: hidden; }
+          .bar-fill { height: 100%; width: 0%; background: #dc2626; transition: width 0.2s linear; }
+          .time { margin-top: 5px; font-size: 11px; color: #94a3b8; font-family: ui-monospace, monospace; display: flex; justify-content: space-between; }
+          .controls { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 10px; }
+          button {
+            border: 0; border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 700;
+            cursor: pointer; background: #1e293b; color: #e2e8f0; transition: background 0.15s;
+          }
+          button:hover { background: #334155; }
+          button.primary { background: #dc2626; color: #fff; flex: 1; }
+          button.primary:hover { background: #b91c1c; }
+          button:disabled { cursor: not-allowed; }
+        `;
+        doc.head.appendChild(style);
+
+        doc.body.innerHTML = `
+          <div class="top">
+            <img id="ct-pip-thumb" class="thumb" referrerpolicy="no-referrer" alt="" />
+            <div class="meta">
+              <div id="ct-pip-status" class="status"></div>
+              <div id="ct-pip-title" class="title"></div>
+              <div id="ct-pip-channel" class="channel"></div>
+            </div>
+          </div>
+          <div class="progress-wrap">
+            <div class="bar"><div id="ct-pip-bar-fill" class="bar-fill"></div></div>
+            <div class="time">
+              <span id="ct-pip-time">0:00 / 0:00</span>
+              <span>Tetap aktif saat minimize</span>
+            </div>
+          </div>
+          <div class="controls">
+            <button id="ct-pip-back" type="button">-15d</button>
+            <button id="ct-pip-play" class="primary" type="button">Putar</button>
+            <button id="ct-pip-fwd" type="button">+30d</button>
+            <button id="ct-pip-next" type="button">Lanjut</button>
+          </div>
+        `;
+
+        doc.getElementById('ct-pip-back')?.addEventListener('click', () => propsRef.current.onSkipBack(15));
+        doc.getElementById('ct-pip-play')?.addEventListener('click', () => propsRef.current.onPlayPause());
+        doc.getElementById('ct-pip-fwd')?.addEventListener('click', () => propsRef.current.onSkipForward(30));
+        doc.getElementById('ct-pip-next')?.addEventListener('click', () => propsRef.current.onNext());
+
+        renderDocumentPipContents(pipWin);
+        clockUnsubRef.current = subscribePlaybackClock(() => {
+          const snap = getPlaybackClockSnapshot();
+          const timeEl = doc.getElementById('ct-pip-time');
+          const barFillEl = doc.getElementById('ct-pip-bar-fill');
+          if (timeEl) {
+            timeEl.textContent = `${formatTime(snap.currentTime)} / ${formatTime(snap.duration)}`;
+          }
+          if (barFillEl) {
+            const pct =
+              snap.duration > 0
+                ? Math.min(100, Math.max(0, (snap.currentTime / snap.duration) * 100))
+                : 0;
+            barFillEl.style.width = `${pct}%`;
+          }
+        });
+
+        pipWin.addEventListener('pagehide', () => {
+          cleanupResources();
+        });
+
+        setIsOpen(true);
+        setMode('document');
+        return true;
+      } catch (err) {
+        cleanupResources();
+        // Fall through to video PiP if Document PiP was rejected
+        if (!supportsVideoPip) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Browser memblokir jendela popup Picture-in-Picture.'
+          );
+          return false;
+        }
+      }
+    }
+
+    // 2. Mobile / Chrome Video Picture-in-Picture fallback via untainted offscreen canvas stream
+    if (supportsVideoPip) {
+      try {
+        cleanupResources();
+        const canvas = document.createElement('canvas');
+        canvas.width = 480;
+        canvas.height = 270;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Canvas tidak didukung di browser ini.');
+
+        const drawNow = () => {
+          const snap = getPlaybackClockSnapshot();
+          renderCanvasCard(
+            ctx,
+            canvas.width,
+            canvas.height,
+            propsRef.current.currentVideo,
+            propsRef.current.isPlaying,
+            propsRef.current.usingNativeAudio,
+            snap.currentTime,
+            snap.duration
+          );
+        };
+        drawNow();
+
+        const stream = canvas.captureStream(4);
+        const videoEl = document.createElement('video');
+        videoEl.muted = true;
+        videoEl.playsInline = true;
+        videoEl.autoplay = true;
+        videoEl.srcObject = stream;
+        videoEl.className = 'fixed opacity-0 pointer-events-none w-px h-px -z-50';
+        document.body.appendChild(videoEl);
+        pipVideoRef.current = videoEl;
+
+        await videoEl.play();
+        await videoEl.requestPictureInPicture();
+
+        canvasTimerRef.current = setInterval(drawNow, 500);
+        videoEl.addEventListener('leavepictureinpicture', () => {
+          cleanupResources();
+        });
+
+        setIsOpen(true);
+        setMode('video');
+        return true;
+      } catch (err) {
+        cleanupResources();
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Mode Picture-in-Picture belum didukung atau diblokir oleh browser ini.'
+        );
+        return false;
+      }
+    }
+
+    setError('Browser ini belum mendukung jendela popup mengambang (Picture-in-Picture).');
+    return false;
+  }, [cleanupResources, renderDocumentPipContents, supportsDocumentPip, supportsVideoPip]);
+
+  const closePopup = useCallback(() => {
+    cleanupResources();
+  }, [cleanupResources]);
+
+  const togglePopup = useCallback(async () => {
+    if (isOpen) {
+      closePopup();
+      return false;
+    }
+    return openPopup();
+  }, [isOpen, closePopup, openPopup]);
+
+  return {
+    isSupported,
+    isOpen,
+    mode,
+    error,
+    openPopup,
+    closePopup,
+    togglePopup,
+  };
+}

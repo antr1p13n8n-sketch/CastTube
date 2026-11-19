@@ -13,6 +13,7 @@ export interface NativeAudioHandle {
 
 interface NativeAudioPlayerProps {
   active: boolean;
+  keepAlivePrimed?: boolean;
   currentVideo: Video | null;
   isPlaying: boolean;
   playbackRate: number;
@@ -37,6 +38,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
   function NativeAudioPlayer(
     {
       active,
+      keepAlivePrimed = false,
       currentVideo,
       isPlaying,
       playbackRate,
@@ -53,6 +55,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
     ref
   ) {
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const audioCtxRef = useRef<AudioContext | null>(null);
     const [retryAttempt, setRetryAttempt] = useState(0);
     const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const switchGuardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,6 +65,8 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
 
     const activeRef = useRef(active);
     activeRef.current = active;
+    const keepAlivePrimedRef = useRef(keepAlivePrimed);
+    keepAlivePrimedRef.current = keepAlivePrimed;
     const isPlayingRef = useRef(isPlaying);
     isPlayingRef.current = isPlaying;
     const videoIdRef = useRef<string | null>(currentVideo?.id || null);
@@ -92,11 +97,28 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
         ? `/api/youtube/audio-stream?videoId=${encodeURIComponent(currentVideo.id)}${
             retryAttempt > 0 ? `&r=${retryAttempt}` : ''
           }`
+        : keepAlivePrimed && currentVideo
+        ? SILENT_WAV_DATA_URI
         : undefined;
 
     useImperativeHandle(ref, () => ({
       unlock() {
         const audio = audioRef.current;
+        try {
+          const AudioCtx =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+          if (AudioCtx) {
+            if (!audioCtxRef.current) {
+              audioCtxRef.current = new AudioCtx();
+            }
+            if (audioCtxRef.current.state === 'suspended') {
+              void audioCtxRef.current.resume().catch(() => {});
+            }
+          }
+        } catch {
+          // ignore AudioContext unavailable
+        }
         if (!audio) return;
         try {
           audio.muted = isMuted;
@@ -107,8 +129,11 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
             if (audio.paused) {
               void audio.play().catch(() => {});
             }
-          } else if (!audio.getAttribute('src')) {
-            audio.src = SILENT_WAV_DATA_URI;
+          } else {
+            audio.loop = true;
+            if (!audio.getAttribute('src') || audio.getAttribute('src') === SILENT_WAV_DATA_URI) {
+              audio.src = SILENT_WAV_DATA_URI;
+            }
             void audio.play().catch(() => {});
           }
         } catch {
@@ -220,9 +245,10 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
         switchGuardTimerRef.current = null;
       }
 
-      if (!active || !streamUrl) {
+      if (!active && !keepAlivePrimed) {
         isSwitchingSrcRef.current = false;
         appliedInitialSeekForIdRef.current = null;
+        audio.loop = false;
         if (!audio.paused) audio.pause();
         if (audio.getAttribute('src')) {
           audio.removeAttribute('src');
@@ -231,6 +257,16 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
         return;
       }
 
+      if (!active && keepAlivePrimed) {
+        isSwitchingSrcRef.current = true;
+        audio.loop = true;
+        if (isPlayingRef.current && audio.paused && streamUrl) {
+          void audio.play().catch(() => {});
+        }
+        return;
+      }
+
+      audio.loop = false;
       isSwitchingSrcRef.current = true;
       switchGuardTimerRef.current = setTimeout(() => {
         isSwitchingSrcRef.current = false;
@@ -242,7 +278,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
           switchGuardTimerRef.current = null;
         }
       };
-    }, [active, streamUrl]);
+    }, [active, keepAlivePrimed, streamUrl]);
 
     // Sync play / pause state cleanly
     useEffect(() => {

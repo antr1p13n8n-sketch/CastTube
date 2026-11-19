@@ -99,3 +99,12 @@ export interface AudioExtractorConfig {
   extractorUrl?: string;
   updatedAt?: string;
 }
+
+export interface BackgroundAudioSettings {
+  enabled: boolean;
+  autoSwitchOnMinimize: boolean;
+  autoResumeOnReopen: boolean;
+  keepScreenAwake: boolean;
+  promptDismissed: boolean;
+  activatedAt?: string;
+}

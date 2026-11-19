@@ -16,6 +16,7 @@ import {
   X,
   Download,
   Loader2,
+  Play,
 } from 'lucide-react';
 import {
   User,
@@ -45,6 +46,7 @@ import {
   PlaybackProgress,
   PendingSyncTask,
   Playlist,
+  BackgroundAudioSettings,
 } from './types';
 import {
   loadGroups,
@@ -69,9 +71,12 @@ import {
   savePlayedVideoIds,
   loadLastFeedSyncAt,
   saveLastFeedSyncAt,
+  loadBackgroundAudioSettings,
+  saveBackgroundAudioSettings,
 } from './utils/storage';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useBackgroundAudio } from './hooks/useBackgroundAudio';
+import { useFloatingMiniPlayer } from './hooks/useFloatingMiniPlayer';
 import { useAudioDownload } from './hooks/useAudioDownload';
 import { buildExtractorHeaders, syncExtractorConfigToServer } from './utils/extractorConfig';
 import { parseJsonSafely, buildHttpErrorMessage } from './utils/safeJson';
@@ -104,6 +109,9 @@ const PlaylistModal = lazy(() =>
 const AudioExtractorModal = lazy(() =>
   import('./components/AudioExtractorModal').then((m) => ({ default: m.AudioExtractorModal }))
 );
+const BackgroundAudioModal = lazy(() =>
+  import('./components/BackgroundAudioModal').then((m) => ({ default: m.BackgroundAudioModal }))
+);
 
 const FEED_PAGE_SIZE = 36;
 
@@ -122,6 +130,7 @@ export default function App() {
     progressMap: Record<string, PlaybackProgress>;
     lastVideoId: string | null;
     session: ReturnType<typeof loadPlayerSessionState>;
+    bgAudio: BackgroundAudioSettings;
     initialVideo: Video | null;
     initialTime: number;
     initialDuration: number;
@@ -131,6 +140,7 @@ export default function App() {
     const bootProgress = loadPlaybackProgressMap();
     const bootLastId = loadLastVideoId();
     const bootSession = loadPlayerSessionState();
+    const bootBgAudio = loadBackgroundAudioSettings();
     const bootVideo =
       (bootLastId ? bootVideos.find((item) => item.id === bootLastId) : undefined) ||
       (bootVideos.length > 0 ? bootVideos[0] : null);
@@ -142,6 +152,7 @@ export default function App() {
       progressMap: bootProgress,
       lastVideoId: bootLastId,
       session: bootSession,
+      bgAudio: bootBgAudio,
       initialVideo: bootVideo,
       initialTime,
       initialDuration,
@@ -220,12 +231,28 @@ export default function App() {
   const channelLoadAbortRef = useRef<AbortController | null>(null);
   const activeChannelLoadIdRef = useRef<string | null>(null);
 
-  // Audio Extractor Restriction Recovery States
+  // Audio Extractor & Background Audio Activation States
   const [isExtractorModalOpen, setIsExtractorModalOpen] = useState<boolean>(false);
   const [hasOpenedExtractorModal, setHasOpenedExtractorModal] = useState<boolean>(false);
   const [pendingExtractorVideo, setPendingExtractorVideo] = useState<Video | null>(null);
   const [extractorIntent, setExtractorIntent] = useState<'download' | 'playback'>('download');
   const [extractorVersion, setExtractorVersion] = useState<number>(0);
+
+  const [bgAudioSettings, setBgAudioSettings] = useState<BackgroundAudioSettings>(boot.bgAudio);
+  const bgAudioSettingsRef = useRef(bgAudioSettings);
+  bgAudioSettingsRef.current = bgAudioSettings;
+  const [isBgAudioModalOpen, setIsBgAudioModalOpen] = useState<boolean>(false);
+  const [hasOpenedBgAudioModal, setHasOpenedBgAudioModal] = useState<boolean>(false);
+  const [bgAudioNotice, setBgAudioNotice] = useState<string | null>(null);
+  const bgAudioNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pendingReopenResume, setPendingReopenResume] = useState<Video | null>(() =>
+    boot.session.wasPlaying &&
+    boot.bgAudio.enabled &&
+    boot.bgAudio.autoResumeOnReopen &&
+    boot.initialVideo
+      ? boot.initialVideo
+      : null
+  );
 
   // Audio Download Manager
   const handleDownloadRestrictionBlocked = useCallback((blockedVideo: Video) => {
@@ -345,6 +372,51 @@ export default function App() {
     };
   }, [currentVideo?.id, activeTab, isPlaying, extractorVersion]);
 
+  // Pre-probe next queued track so background audio transitions don't stall waiting for a fresh check
+  useEffect(() => {
+    const nextQueued = queue[0];
+    if (!nextQueued || !isPlaying || !bgAudioSettings.enabled || playerMode !== 'audio') return;
+    const nextId = nextQueued.id;
+    if (probedAudioIdsRef.current.has(nextId)) return;
+    probedAudioIdsRef.current.add(nextId);
+
+    let cancelled = false;
+    fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(nextId)}&check=1`, {
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        ...buildExtractorHeaders(),
+      },
+    })
+      .then(async (res) => {
+        if (!res.ok) return { available: false, status: 'unavailable' };
+        const { data } = await parseJsonSafely<{ available?: boolean; status?: string }>(res);
+        return data || { available: false, status: 'unavailable' };
+      })
+      .then((data) => {
+        if (cancelled) {
+          probedAudioIdsRef.current.delete(nextId);
+          return;
+        }
+        const resolvedStatus: NativeAudioStatus = data?.available
+          ? 'available'
+          : data?.status === 'login_required' || data?.status === 'live_stream'
+          ? data.status
+          : 'unavailable';
+        setAudioStatusMap((prev) => ({
+          ...prev,
+          [nextId]: resolvedStatus,
+        }));
+      })
+      .catch(() => {
+        probedAudioIdsRef.current.delete(nextId);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [queue[0]?.id, isPlaying, bgAudioSettings.enabled, playerMode, extractorVersion]);
+
   useEffect(() => {
     void syncExtractorConfigToServer();
   }, []);
@@ -413,6 +485,62 @@ export default function App() {
   useEffect(() => {
     if (isExtractorModalOpen) setHasOpenedExtractorModal(true);
   }, [isExtractorModalOpen]);
+  useEffect(() => {
+    if (isBgAudioModalOpen) setHasOpenedBgAudioModal(true);
+  }, [isBgAudioModalOpen]);
+  useEffect(() => {
+    saveBackgroundAudioSettings(bgAudioSettings);
+  }, [bgAudioSettings]);
+  useEffect(() => {
+    if (isPlaying) {
+      setPendingReopenResume(null);
+    }
+  }, [isPlaying]);
+
+  // Screen Wake Lock when background audio wake-lock option is active and playing
+  useEffect(() => {
+    if (
+      !bgAudioSettings.enabled ||
+      !bgAudioSettings.keepScreenAwake ||
+      !isPlaying ||
+      typeof navigator === 'undefined' ||
+      !('wakeLock' in navigator)
+    ) {
+      return;
+    }
+
+    let sentinel: { release: () => Promise<void> } | null = null;
+    let released = false;
+    const requestLock = async () => {
+      if (released || document.visibilityState !== 'visible') return;
+      try {
+        const api = (
+          navigator as unknown as {
+            wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+          }
+        ).wakeLock;
+        if (api) {
+          sentinel = await api.request('screen');
+        }
+      } catch {
+        // Ignore if battery saver or OS rejects wake lock
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void requestLock();
+      }
+    };
+    void requestLock();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      released = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (sentinel) {
+        void sentinel.release().catch(() => {});
+      }
+    };
+  }, [bgAudioSettings.enabled, bgAudioSettings.keepScreenAwake, isPlaying]);
 
   const handleExtractorResolved = useCallback(
     (_cfg: unknown, retryVideo: Video | null) => {
@@ -806,6 +934,14 @@ export default function App() {
       autoSwitchedToAudioRef.current = false;
       selectVideoForPlayback(video, mode, true);
       setActiveTab('player');
+      if (
+        mode === 'audio' &&
+        !bgAudioSettingsRef.current.activatedAt &&
+        !bgAudioSettingsRef.current.promptDismissed
+      ) {
+        setHasOpenedBgAudioModal(true);
+        setIsBgAudioModalOpen(true);
+      }
     },
     [selectVideoForPlayback]
   );
@@ -832,6 +968,17 @@ export default function App() {
   const handlePrevTrack = useCallback(() => {
     handleSeek(0);
   }, [handleSeek]);
+
+  const floatingMiniPlayer = useFloatingMiniPlayer({
+    currentVideo,
+    isPlaying,
+    usingNativeAudio: useNativeAudio,
+    hasNext: queue.length > 0,
+    onPlayPause: handlePlayPause,
+    onSkipBack: handleSkipBack,
+    onSkipForward: handleSkipForward,
+    onNext: handleNextTrack,
+  });
 
   const handleToggleQueue = useCallback((video: Video) => {
     setQueue((prev) => {
@@ -989,6 +1136,9 @@ export default function App() {
     return () => {
       if (feedUpdateNoticeTimerRef.current) {
         clearTimeout(feedUpdateNoticeTimerRef.current);
+      }
+      if (bgAudioNoticeTimerRef.current) {
+        clearTimeout(bgAudioNoticeTimerRef.current);
       }
     };
   }, []);
@@ -2041,7 +2191,12 @@ export default function App() {
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
     onVisibilityHiddenWhilePlaying: () => {
-      if (playerMode === 'video' && currentAudioStatus === 'available') {
+      if (
+        bgAudioSettingsRef.current.enabled &&
+        bgAudioSettingsRef.current.autoSwitchOnMinimize &&
+        playerMode === 'video' &&
+        currentAudioStatus === 'available'
+      ) {
         autoSwitchedToAudioRef.current = true;
         setPlayerMode('audio');
       }
@@ -2233,10 +2388,53 @@ export default function App() {
     setVideoToAddToPlaylist(null);
     setIsPlaylistModalOpen(true);
   }, []);
+  const showBgAudioNotice = useCallback((msg: string) => {
+    setBgAudioNotice(msg);
+    if (bgAudioNoticeTimerRef.current) {
+      clearTimeout(bgAudioNoticeTimerRef.current);
+    }
+    bgAudioNoticeTimerRef.current = setTimeout(() => {
+      setBgAudioNotice(null);
+    }, 4500);
+  }, []);
+
+  const handleOpenBackgroundAudioPopup = useCallback(() => {
+    nativeAudioRef.current?.unlock();
+    setHasOpenedBgAudioModal(true);
+    setIsBgAudioModalOpen(true);
+  }, []);
+
+  const handleActivateBgAudio = useCallback(
+    (next: BackgroundAudioSettings) => {
+      nativeAudioRef.current?.unlock();
+      setBgAudioSettings(next);
+      setPendingReopenResume(null);
+      showBgAudioNotice('Audio latar belakang aktif. Suara tetap berjalan saat app diminimize.');
+    },
+    [showBgAudioNotice]
+  );
+
+  const handleDismissBgAudio = useCallback((next: BackgroundAudioSettings) => {
+    setBgAudioSettings(next);
+  }, []);
+
+  const handleResumeLastPlayback = useCallback(() => {
+    if (!pendingReopenResume) return;
+    const target = pendingReopenResume;
+    setPendingReopenResume(null);
+    handlePlayVideo(target, playerMode);
+  }, [pendingReopenResume, handlePlayVideo, playerMode]);
+
   const handleTogglePlayerModeFromHeader = useCallback(() => {
     autoSwitchedToAudioRef.current = false;
     setPlayerMode((prev) => {
-      if (prev === 'video') nativeAudioRef.current?.unlock();
+      if (prev === 'video') {
+        nativeAudioRef.current?.unlock();
+        if (!bgAudioSettingsRef.current.activatedAt && !bgAudioSettingsRef.current.promptDismissed) {
+          setHasOpenedBgAudioModal(true);
+          setIsBgAudioModalOpen(true);
+        }
+      }
       return prev === 'video' ? 'audio' : 'video';
     });
   }, []);
@@ -2249,6 +2447,10 @@ export default function App() {
     autoSwitchedToAudioRef.current = false;
     nativeAudioRef.current?.unlock();
     setPlayerMode('audio');
+    if (!bgAudioSettingsRef.current.activatedAt && !bgAudioSettingsRef.current.promptDismissed) {
+      setHasOpenedBgAudioModal(true);
+      setIsBgAudioModalOpen(true);
+    }
   }, []);
   const handleExpandPiP = useCallback(() => {
     autoSwitchedToAudioRef.current = false;
@@ -2284,6 +2486,10 @@ export default function App() {
       if (e.key === 'Escape') {
         if (channelToDelete) {
           setChannelToDelete(null);
+          return;
+        }
+        if (isBgAudioModalOpen) {
+          setIsBgAudioModalOpen(false);
           return;
         }
         if (isExtractorModalOpen) {
@@ -2324,6 +2530,7 @@ export default function App() {
 
       const anyModalOpen =
         Boolean(channelToDelete) ||
+        isBgAudioModalOpen ||
         isExtractorModalOpen ||
         isPlaylistModalOpen ||
         isChannelDrawerOpen ||
@@ -2344,6 +2551,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     channelToDelete,
+    isBgAudioModalOpen,
     isExtractorModalOpen,
     isPlaylistModalOpen,
     isChannelDrawerOpen,
@@ -2416,6 +2624,11 @@ export default function App() {
                 downloadState={audioDownloads[currentVideo.id]}
                 onDownloadAudio={handleDownloadAudio}
                 onOpenAudioExtractorSettings={handleOpenAudioExtractorSettings}
+                backgroundAudioEnabled={bgAudioSettings.enabled}
+                onOpenBackgroundAudioPopup={handleOpenBackgroundAudioPopup}
+                isFloatingSupported={floatingMiniPlayer.isSupported}
+                isFloatingOpen={floatingMiniPlayer.isOpen}
+                onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
                 onPlayPause={handlePlayPause}
                 onSeek={handleSeek}
                 onSkipBack={handleSkipBack}
@@ -2454,6 +2667,11 @@ export default function App() {
                 onClearQueue={handleClearQueue}
                 downloadState={audioDownloads[currentVideo.id]}
                 onDownloadAudio={handleDownloadAudio}
+                backgroundAudioEnabled={bgAudioSettings.enabled}
+                onOpenBackgroundAudioPopup={handleOpenBackgroundAudioPopup}
+                isFloatingSupported={floatingMiniPlayer.isSupported}
+                isFloatingOpen={floatingMiniPlayer.isOpen}
+                onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
                 playerSlot={
                   hasActivatedYouTube ? (
                     <YouTubePlayer
@@ -3063,6 +3281,13 @@ export default function App() {
       <NativeAudioPlayer
         ref={nativeAudioRef}
         active={useNativeAudio}
+        keepAlivePrimed={Boolean(
+          currentVideo &&
+            playerMode === 'audio' &&
+            bgAudioSettings.enabled &&
+            isPlaying &&
+            currentAudioStatus === 'checking'
+        )}
         currentVideo={currentVideo}
         isPlaying={isPlaying}
         playbackRate={playbackRate}
@@ -3090,6 +3315,11 @@ export default function App() {
         onNext={handleNextTrack}
         onExpand={handleExpandPlayerTab}
         onToggleMode={handleTogglePlayerModeFromHeader}
+        onOpenBackgroundAudioPopup={handleOpenBackgroundAudioPopup}
+        backgroundAudioActive={bgAudioSettings.enabled && useNativeAudio}
+        isFloatingSupported={floatingMiniPlayer.isSupported}
+        isFloatingOpen={floatingMiniPlayer.isOpen}
+        onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
       />
 
       {/* Lazy-Loaded Modals & Drawers */}
@@ -3162,6 +3392,24 @@ export default function App() {
             pendingVideo={pendingExtractorVideo}
             intent={extractorIntent}
             onResolved={handleExtractorResolved}
+          />
+        )}
+
+        {hasOpenedBgAudioModal && (
+          <BackgroundAudioModal
+            isOpen={isBgAudioModalOpen}
+            onClose={() => setIsBgAudioModalOpen(false)}
+            settings={bgAudioSettings}
+            onActivateNow={handleActivateBgAudio}
+            onDismissPrompt={handleDismissBgAudio}
+            currentVideo={currentVideo}
+            nativeAudioStatus={currentAudioStatus}
+            usingNativeAudio={useNativeAudio}
+            isFloatingSupported={floatingMiniPlayer.isSupported}
+            isFloatingOpen={floatingMiniPlayer.isOpen}
+            floatingError={floatingMiniPlayer.error}
+            onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
+            onOpenExtractorAuth={handleOpenAudioExtractorSettings}
           />
         )}
       </Suspense>
@@ -3332,6 +3580,67 @@ export default function App() {
                   className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
                   title="Tutup"
                   aria-label="Tutup pemberitahuan pembaruan"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {pendingReopenResume && (
+            <motion.div
+              key="reopen-resume-toast"
+              initial={{ opacity: 0, y: 16, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="pointer-events-auto"
+            >
+              <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-slate-900/95 border-slate-700/80 text-white">
+                <Radio className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="font-bold">Lanjutkan Pemutaran Terakhir?</div>
+                  <div className="opacity-85 truncate">{pendingReopenResume.title}</div>
+                  <button
+                    type="button"
+                    onClick={handleResumeLastPlayback}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                  >
+                    <Play className="w-3 h-3" />
+                    <span>Lanjutkan Audio</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingReopenResume(null)}
+                  className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                  title="Tutup"
+                  aria-label="Tutup pemberitahuan lanjutkan pemutaran"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {bgAudioNotice && (
+            <motion.div
+              key="bg-audio-notice-toast"
+              initial={{ opacity: 0, y: 16, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="pointer-events-auto"
+            >
+              <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-emerald-950/95 border-emerald-700/80 text-emerald-50">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0 text-left leading-relaxed">{bgAudioNotice}</div>
+                <button
+                  type="button"
+                  onClick={() => setBgAudioNotice(null)}
+                  className="p-1.5 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+                  title="Tutup"
+                  aria-label="Tutup pemberitahuan audio latar"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>

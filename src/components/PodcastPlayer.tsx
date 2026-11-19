@@ -21,6 +21,7 @@ import {
   Download,
   Loader2,
   Check,
+  PictureInPicture2,
 } from 'lucide-react';
 import { NativeAudioStatus, Video, VisualizerStyle } from '../types';
 import { formatTime, formatRelativeTime, formatBytes } from '../utils/format';
@@ -57,6 +58,11 @@ interface PodcastPlayerProps {
   downloadState?: AudioDownloadItem;
   onDownloadAudio?: (video: Video) => void;
   onOpenAudioExtractorSettings?: () => void;
+  backgroundAudioEnabled?: boolean;
+  onOpenBackgroundAudioPopup?: () => void;
+  isFloatingSupported?: boolean;
+  isFloatingOpen?: boolean;
+  onToggleFloatingPopup?: () => void;
 }
 
 const PodcastScrubber: React.FC<{
@@ -140,6 +146,11 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
   downloadState,
   onDownloadAudio,
   onOpenAudioExtractorSettings,
+  backgroundAudioEnabled = false,
+  onOpenBackgroundAudioPopup,
+  isFloatingSupported = false,
+  isFloatingOpen = false,
+  onToggleFloatingPopup,
 }) => {
   const [visualizerStyle, setVisualizerStyle] = useState<VisualizerStyle>('bars');
   const [showQueue, setShowQueue] = useState(false);
@@ -200,7 +211,43 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Background Audio Activation Popup button */}
+          {onOpenBackgroundAudioPopup && (
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={onOpenBackgroundAudioPopup}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                backgroundAudioEnabled && usingNativeAudio
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
+                  : backgroundAudioEnabled
+                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                  : 'bg-red-600 hover:bg-red-700 text-white shadow-xs'
+              }`}
+              title="Buka Pengaturan & Aktivasi Audio Latar Belakang"
+            >
+              <Radio className="w-4 h-4 shrink-0" />
+              <span>{backgroundAudioEnabled ? 'Audio Latar' : 'Aktifkan Latar'}</span>
+            </motion.button>
+          )}
+
+          {/* Floating Mini-Player PiP Toggle */}
+          {isFloatingSupported && onToggleFloatingPopup && (
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={onToggleFloatingPopup}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                isFloatingOpen
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                  : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+              title={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Buka Popup Mengambang (PiP)'}
+            >
+              <PictureInPicture2 className="w-4 h-4 text-red-600 dark:text-red-400" />
+              <span className="hidden sm:inline">{isFloatingOpen ? 'Tutup Popup' : 'Popup'}</span>
+            </motion.button>
+          )}
+
           {/* Download Audio button */}
           {onDownloadAudio && (
             <motion.button
@@ -288,7 +335,16 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                   : 'YouTube membatasi ekstraksi audio langsung untuk video ini dari server cloud, sehingga pemutaran beralih ke iframe YouTube yang otomatis dijeda browser HP saat diminimize/layar dikunci.'}
               </div>
             </div>
-            <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0 self-end sm:self-auto">
+              {onOpenBackgroundAudioPopup && (
+                <button
+                  type="button"
+                  onClick={onOpenBackgroundAudioPopup}
+                  className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90 transition-opacity whitespace-nowrap cursor-pointer"
+                >
+                  Popup Audio Latar
+                </button>
+              )}
               {nativeAudioStatus !== 'live_stream' && onOpenAudioExtractorSettings && (
                 <button
                   type="button"

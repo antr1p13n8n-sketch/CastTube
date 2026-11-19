@@ -11,6 +11,8 @@ import {
   Maximize2,
   Download,
   Loader2,
+  PictureInPicture2,
+  Radio,
 } from 'lucide-react';
 import { Video } from '../types';
 import { formatRelativeTime, formatBytes } from '../utils/format';
@@ -28,6 +30,11 @@ interface VideoPlayerViewProps {
   onExpandPiP?: () => void;
   downloadState?: AudioDownloadItem;
   onDownloadAudio?: (video: Video) => void;
+  backgroundAudioEnabled?: boolean;
+  onOpenBackgroundAudioPopup?: () => void;
+  isFloatingSupported?: boolean;
+  isFloatingOpen?: boolean;
+  onToggleFloatingPopup?: () => void;
 }
 
 export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
@@ -42,6 +49,11 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
   onExpandPiP,
   downloadState,
   onDownloadAudio,
+  backgroundAudioEnabled = false,
+  onOpenBackgroundAudioPopup,
+  isFloatingSupported = false,
+  isFloatingOpen = false,
+  onToggleFloatingPopup,
 }) => {
   const [descExpanded, setDescExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -117,7 +129,39 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
           <span className="text-xs text-slate-400">· 1080p HD Ready</span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {onOpenBackgroundAudioPopup && (
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={onOpenBackgroundAudioPopup}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${
+                backgroundAudioEnabled
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
+                  : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+              title="Aktifkan atau atur audio tetap menyala saat minimize/close"
+            >
+              <Radio className="w-3.5 h-3.5 text-red-500" />
+              <span>Audio Latar</span>
+            </motion.button>
+          )}
+
+          {isFloatingSupported && onToggleFloatingPopup && (
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={onToggleFloatingPopup}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${
+                isFloatingOpen
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                  : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+              title={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Buka Popup Mengambang (PiP)'}
+            >
+              <PictureInPicture2 className="w-3.5 h-3.5 text-red-500" />
+              <span className="hidden sm:inline">{isFloatingOpen ? 'Tutup Popup' : 'Popup'}</span>
+            </motion.button>
+          )}
+
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.95 }}
