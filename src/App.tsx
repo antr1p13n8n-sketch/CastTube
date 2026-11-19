@@ -9,7 +9,6 @@ import {
   Filter,
   Layers,
   Sparkles,
-  Clipboard,
   Trash2,
   Check,
   AlertCircle,
@@ -17,7 +16,6 @@ import {
   Download,
   Loader2,
   Play,
-  Plus,
 } from 'lucide-react';
 import {
   User,
@@ -488,9 +486,7 @@ export default function App() {
   // Modals & Drawers (track first-open so lazy bundles aren't downloaded until requested)
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
   const [hasOpenedAddModal, setHasOpenedAddModal] = useState<boolean>(false);
-  const [addModalTab, setAddModalTab] = useState<'video' | 'search' | 'paste'>('search');
-  const [addModalSearchQuery, setAddModalSearchQuery] = useState<string>('');
-  const [pastedLinkForModal, setPastedLinkForModal] = useState<string>('');
+  const [addModalInitialInput, setAddModalInitialInput] = useState<string>('');
   const [isGroupModalOpen, setIsGroupModalOpen] = useState<boolean>(false);
   const [hasOpenedGroupModal, setHasOpenedGroupModal] = useState<boolean>(false);
   const [isChannelDrawerOpen, setIsChannelDrawerOpen] = useState<boolean>(false);
@@ -602,55 +598,11 @@ export default function App() {
     [handleDownloadAudio, extractorIntent]
   );
 
-  const openSearchChannelModal = (initialQuery = '') => {
-    const trimmed = initialQuery.trim();
-    if (/(?:https?:\/\/)?(?:[a-z0-9-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(trimmed)) {
-      setAddModalTab('paste');
-      setAddModalSearchQuery('');
-      setPastedLinkForModal(trimmed);
-      setIsAddModalOpen(true);
-      return;
-    }
-    setPastedLinkForModal('');
-    setAddModalTab('search');
-    setAddModalSearchQuery(trimmed);
+  const openUnifiedAddModal = useCallback((initialInput = '') => {
+    setAddModalInitialInput(initialInput.trim());
+    setHasOpenedAddModal(true);
     setIsAddModalOpen(true);
-  };
-
-  const openSearchVideoModal = (initialQuery = '') => {
-    const trimmed = initialQuery.trim();
-    if (/^@[a-zA-Z0-9_.-]{2,}$/.test(trimmed) || /^UC[a-zA-Z0-9_-]{22}$/.test(trimmed)) {
-      setPastedLinkForModal('');
-      setAddModalTab('search');
-      setAddModalSearchQuery(trimmed);
-      setIsAddModalOpen(true);
-      return;
-    }
-    setPastedLinkForModal('');
-    setAddModalTab('video');
-    setAddModalSearchQuery(trimmed);
-    setIsAddModalOpen(true);
-  };
-
-  // Quick Paste & Open Add Modal
-  const handleQuickPasteAndOpen = async () => {
-    setAddModalTab('paste');
-    setAddModalSearchQuery('');
-    try {
-      if (navigator.clipboard && navigator.clipboard.readText) {
-        const text = await navigator.clipboard.readText();
-        if (text && text.trim()) {
-          setPastedLinkForModal(text.trim());
-          setIsAddModalOpen(true);
-          return;
-        }
-      }
-    } catch {
-      // ignore clipboard permission error and open modal with focused textarea
-    }
-    setPastedLinkForModal('');
-    setIsAddModalOpen(true);
-  };
+  }, []);
 
   // 1. Automatic Dark Mode according to system or user choice
   useEffect(() => {
@@ -2546,7 +2498,7 @@ export default function App() {
   const activeGroup = groups.find((g) => g.id === activeGroupId) || groups[0];
   const selectedChannel = channels.find((c) => c.id === selectedChannelId);
 
-  const handleOpenAddFromHeader = useCallback(() => openSearchChannelModal(''), []);
+  const handleOpenAddFromHeader = useCallback(() => openUnifiedAddModal(''), [openUnifiedAddModal]);
   const handleOpenGroupFromHeader = useCallback(() => setIsGroupModalOpen(true), []);
   const handleOpenDrawerFromHeader = useCallback(() => setIsChannelDrawerOpen(true), []);
   const handleOpenPlaylistFromHeader = useCallback(() => {
@@ -2738,8 +2690,7 @@ export default function App() {
         }
         if (isAddModalOpen) {
           setIsAddModalOpen(false);
-          setPastedLinkForModal('');
-          setAddModalSearchQuery('');
+          setAddModalInitialInput('');
           return;
         }
       }
@@ -3009,34 +2960,12 @@ export default function App() {
               <motion.button
                 whileHover={{ y: -1 }}
                 whileTap={{ scale: 0.96 }}
-                onClick={() => openSearchVideoModal(searchQuery.trim())}
+                onClick={() => openUnifiedAddModal(searchQuery.trim())}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                title="Cari judul video langsung di YouTube dan putar"
+                title="Cari video YouTube, cari channel, atau tempel link dalam satu kolom"
               >
                 <Search className="w-3.5 h-3.5" />
-                <span>Cari Video YouTube</span>
-              </motion.button>
-
-              <motion.button
-                whileHover={{ y: -1 }}
-                whileTap={{ scale: 0.96 }}
-                onClick={() => openSearchChannelModal(searchQuery.trim())}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                title="Cari dan tambahkan channel baru langsung dari YouTube"
-              >
-                <Plus className="w-3.5 h-3.5 text-red-500" />
-                <span>Cari Channel</span>
-              </motion.button>
-
-              <motion.button
-                whileHover={{ y: -1 }}
-                whileTap={{ scale: 0.96 }}
-                onClick={handleQuickPasteAndOpen}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                title="Tempel link YouTube langsung dari clipboard"
-              >
-                <Clipboard className="w-3.5 h-3.5 text-red-500" />
-                <span>Tempel Link</span>
+                <span>Cari Video / Channel / Link</span>
               </motion.button>
 
               <motion.button
@@ -3186,7 +3115,7 @@ export default function App() {
                       /(?:https?:\/\/)?(?:[a-z0-9-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(pasted)
                     ) {
                       e.preventDefault();
-                      openSearchChannelModal(pasted.trim());
+                      openUnifiedAddModal(pasted.trim());
                     }
                   }}
                   onKeyDown={(e) => {
@@ -3198,12 +3127,9 @@ export default function App() {
                         ) ||
                         /^@[a-zA-Z0-9_.-]{2,}$/.test(trimmed) ||
                         /^UC[a-zA-Z0-9_-]{22}$/.test(trimmed);
-                      if (isLinkOrHandle) {
+                      if (isLinkOrHandle || filteredVideos.length === 0) {
                         e.preventDefault();
-                        openSearchChannelModal(trimmed);
-                      } else if (filteredVideos.length === 0) {
-                        e.preventDefault();
-                        openSearchVideoModal(trimmed);
+                        openUnifiedAddModal(trimmed);
                       }
                     }
                   }}
@@ -3222,11 +3148,11 @@ export default function App() {
               {searchQuery.trim() && (
                 <button
                   type="button"
-                  onClick={() => openSearchVideoModal(searchQuery.trim())}
+                  onClick={() => openUnifiedAddModal(searchQuery.trim())}
                   className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200/80 dark:border-red-800/60 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
-                  title={`Cari judul video "${searchQuery.trim()}" di YouTube`}
+                  title={`Cari "${searchQuery.trim()}" atau tambahkan di YouTube`}
                 >
-                  Cari Video di YouTube
+                  Cari di YouTube
                 </button>
               )}
             </div>
@@ -3433,18 +3359,12 @@ export default function App() {
               </p>
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button
-                  onClick={() => openSearchVideoModal(searchQuery.trim())}
+                  onClick={() => openUnifiedAddModal(searchQuery.trim())}
                   className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
                 >
                   {searchQuery.trim()
-                    ? `Cari Video "${searchQuery.trim()}" di YouTube`
-                    : 'Cari Video YouTube'}
-                </button>
-                <button
-                  onClick={() => openSearchChannelModal(searchQuery.trim())}
-                  className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
-                >
-                  Cari Channel
+                    ? `Cari "${searchQuery.trim()}" di YouTube`
+                    : 'Cari Video, Channel, atau Tempel Link'}
                 </button>
                 {searchQuery && (
                   <button
@@ -3603,8 +3523,7 @@ export default function App() {
             isOpen={isAddModalOpen}
             onClose={() => {
               setIsAddModalOpen(false);
-              setPastedLinkForModal('');
-              setAddModalSearchQuery('');
+              setAddModalInitialInput('');
             }}
             groups={groups}
             existingChannelIds={existingChannelIds}
@@ -3613,9 +3532,7 @@ export default function App() {
             onPlayAudio={handlePlayAudioCard}
             onToggleQueue={handleToggleQueue}
             queueIds={queue.map((q) => q.id)}
-            initialPastedText={pastedLinkForModal}
-            initialTab={addModalTab}
-            initialSearchQuery={addModalSearchQuery}
+            initialInput={addModalInitialInput}
           />
         )}
 

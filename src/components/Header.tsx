@@ -274,9 +274,10 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             whileTap={{ scale: 0.95 }}
             onClick={onOpenAddModal}
             className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-md shadow-red-600/20 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            title="Cari Video, Cari Channel, atau Tempel Link YouTube"
           >
             <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Tambah Channel</span>
+            <span className="hidden sm:inline">Cari &amp; Tambah</span>
           </motion.button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X,
@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   Clipboard,
   ClipboardCheck,
-  Trash2,
   Search,
   Check,
   ExternalLink,
@@ -19,6 +18,9 @@ import {
   Radio,
   ListPlus,
   Film,
+  Link2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   Channel,
@@ -43,9 +45,7 @@ interface AddChannelModalProps {
   onPlayAudio?: (video: Video) => void;
   onToggleQueue?: (video: Video) => void;
   queueIds?: string[];
-  initialPastedText?: string;
-  initialTab?: 'video' | 'search' | 'paste';
-  initialSearchQuery?: string;
+  initialInput?: string;
 }
 
 // Helper to extract, unwrap, and clean YouTube URLs / handles from any text block (including mobile share text like "Title https://youtu.be/...")
@@ -53,12 +53,19 @@ function cleanYouTubeUrl(rawUrl: string): string {
   const trimmed = rawUrl.replace(/[),.;!?'"\]]+$/g, '').trim();
   try {
     let urlObj = new URL(trimmed);
-    if (urlObj.hostname.includes('google.') && (urlObj.searchParams.get('q') || urlObj.searchParams.get('url'))) {
+    if (
+      urlObj.hostname.includes('google.') &&
+      (urlObj.searchParams.get('q') || urlObj.searchParams.get('url'))
+    ) {
       const target = urlObj.searchParams.get('q') || urlObj.searchParams.get('url') || '';
       if (target) {
         urlObj = new URL(target.startsWith('http') ? target : `https://${target}`);
       }
-    } else if (urlObj.hostname.includes('youtube.com') && urlObj.pathname === '/attribution_link' && urlObj.searchParams.get('u')) {
+    } else if (
+      urlObj.hostname.includes('youtube.com') &&
+      urlObj.pathname === '/attribution_link' &&
+      urlObj.searchParams.get('u')
+    ) {
       const inner = urlObj.searchParams.get('u') || '';
       const resolvedInner = inner.startsWith('http')
         ? inner
@@ -77,6 +84,17 @@ function cleanYouTubeUrl(rawUrl: string): string {
   } catch {
     return trimmed;
   }
+}
+
+export function isYouTubeLinkOrHandleToken(token: string): boolean {
+  const clean = token.trim();
+  if (!clean) return false;
+  return (
+    /^https?:\/\//i.test(clean) ||
+    /(?:[a-z0-9-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(clean) ||
+    /^@[a-zA-Z0-9_.-]{2,}$/.test(clean) ||
+    /^UC[a-zA-Z0-9_-]{22}$/.test(clean)
+  );
 }
 
 export function parseAndFormatLinks(raw: string): string[] {
@@ -113,7 +131,9 @@ export function parseAndFormatLinks(raw: string): string[] {
   }
 
   // 3. Extract standalone @handles or UC channel IDs outside URLs
-  const handleOrIdMatches = remainder.match(/(?:^|[\s,;])(@[a-zA-Z0-9_.-]{2,}|UC[a-zA-Z0-9_-]{22})(?=$|[\s,/?#])/g);
+  const handleOrIdMatches = remainder.match(
+    /(?:^|[\s,;])(@[a-zA-Z0-9_.-]{2,}|UC[a-zA-Z0-9_-]{22})(?=$|[\s,/?#])/g
+  );
   if (handleOrIdMatches) {
     for (const token of handleOrIdMatches) {
       pushUnique(token.replace(/^[\s,;]+/, '').trim());
@@ -137,6 +157,11 @@ export function parseAndFormatLinks(raw: string): string[] {
   return results;
 }
 
+function extractDirectLinksOnly(raw: string): string[] {
+  const candidates = parseAndFormatLinks(raw);
+  return candidates.filter((item) => isYouTubeLinkOrHandleToken(item));
+}
+
 export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   isOpen,
   onClose,
@@ -147,40 +172,43 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
   onPlayAudio,
   onToggleQueue,
   queueIds = [],
-  initialPastedText = '',
-  initialTab = 'search',
-  initialSearchQuery = '',
+  initialInput = '',
 }) => {
-  const [activeTab, setActiveTab] = useState<'video' | 'search' | 'paste'>(initialTab);
-  const [inputText, setInputText] = useState(initialPastedText);
+  const [unifiedInput, setUnifiedInput] = useState(initialInput);
   const [selectedGroupId, setSelectedGroupId] = useState(
     groups.find((g) => g.id !== 'all')?.id || 'general'
   );
-  const [isLoading, setIsLoading] = useState(false);
+  const [isAddingLinks, setIsAddingLinks] = useState(false);
   const [hasPasted, setHasPasted] = useState(false);
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'info';
     message: string;
   } | null>(null);
 
-  // YouTube Search states (shared query for Video & Channel tabs, independent results)
-  const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
-  const [searchResults, setSearchResults] = useState<YouTubeChannelSearchResult[]>([]);
+  // Unified YouTube search states (Channel + Video in parallel)
+  const [channelResults, setChannelResults] = useState<YouTubeChannelSearchResult[]>([]);
   const [videoResults, setVideoResults] = useState<YouTubeVideoSearchResult[]>([]);
+  const [showAllChannels, setShowAllChannels] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [hasSearchedChannel, setHasSearchedChannel] = useState(false);
-  const [hasSearchedVideo, setHasSearchedVideo] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [addingChannelId, setAddingChannelId] = useState<string | null>(null);
   const [addedInSession, setAddedInSession] = useState<Record<string, boolean>>({});
 
-  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const searchAbortRef = React.useRef<AbortController | null>(null);
   const searchDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastExecutedKeyRef = React.useRef<string>('');
+  const lastExecutedQueryRef = React.useRef<string>('');
   const pastedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const detectedDirectLinks = useMemo(
+    () => extractDirectLinksOnly(unifiedInput),
+    [unifiedInput]
+  );
+  const isDirectLinkMode = detectedDirectLinks.length > 0;
+  const isMultiLineInput = unifiedInput.includes('\n') || unifiedInput.length > 72;
 
   const clearModalTimers = useCallback(() => {
     if (searchDebounceRef.current) {
@@ -212,206 +240,192 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     }
   }, [groups, selectedGroupId]);
 
-  const executeYouTubeSearch = useCallback(
-    async (queryText: string, modeOverride?: 'video' | 'search') => {
-      const targetMode = modeOverride ?? (activeTab === 'video' ? 'video' : 'search');
-      const trimmed = queryText.trim();
-      if (!trimmed) return;
+  const executeUnifiedSearch = useCallback(async (queryText: string) => {
+    const trimmed = queryText.trim();
+    if (!trimmed) return;
 
-      if (searchDebounceRef.current) {
-        clearTimeout(searchDebounceRef.current);
-        searchDebounceRef.current = null;
-      }
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
 
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        if (targetMode === 'video') {
-          setVideoResults([]);
-          setHasSearchedVideo(true);
-        } else {
-          setSearchResults([]);
-          setHasSearchedChannel(true);
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setChannelResults([]);
+      setVideoResults([]);
+      setHasSearched(true);
+      setIsSearching(false);
+      setSearchError('Anda sedang offline. Hubungkan internet untuk mencari di YouTube.');
+      return;
+    }
+
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+    lastExecutedQueryRef.current = trimmed;
+
+    let didTimeout = false;
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, 15000);
+
+    setIsSearching(true);
+    setSearchError(null);
+    setHasSearched(true);
+    setShowAllChannels(false);
+
+    try {
+      const fetchJson = async <T,>(url: string, fallbackErr: string): Promise<T> => {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          cache: 'no-store',
+          headers: { Accept: 'application/json' },
+        });
+        const { data, rawText } = await parseJsonSafely<T & { error?: string }>(res);
+        if (!res.ok || !data) {
+          throw new Error(buildHttpErrorMessage(res, data, rawText, fallbackErr));
         }
-        setIsSearching(false);
+        return data;
+      };
+
+      const [videosOutcome, channelsOutcome] = await Promise.allSettled([
+        fetchJson<{ videos?: YouTubeVideoSearchResult[] }>(
+          `/api/youtube/search-videos?q=${encodeURIComponent(trimmed)}`,
+          'Gagal mencari video di YouTube'
+        ),
+        fetchJson<{ channels?: YouTubeChannelSearchResult[] }>(
+          `/api/youtube/search-channels?q=${encodeURIComponent(trimmed)}`,
+          'Gagal mencari channel di YouTube'
+        ),
+      ]);
+
+      if (searchAbortRef.current !== controller) return;
+
+      const nextVideos =
+        videosOutcome.status === 'fulfilled' && Array.isArray(videosOutcome.value.videos)
+          ? videosOutcome.value.videos
+          : null;
+      const nextChannels =
+        channelsOutcome.status === 'fulfilled' && Array.isArray(channelsOutcome.value.channels)
+          ? channelsOutcome.value.channels
+          : null;
+
+      if (nextVideos === null && nextChannels === null) {
+        const errReason =
+          videosOutcome.status === 'rejected'
+            ? videosOutcome.reason
+            : channelsOutcome.status === 'rejected'
+            ? channelsOutcome.reason
+            : null;
+        if ((errReason as { name?: string })?.name === 'AbortError') {
+          if (didTimeout) {
+            setVideoResults([]);
+            setChannelResults([]);
+            setSearchError('Pencarian YouTube melebihi batas waktu. Silakan klik Coba Lagi.');
+          }
+          return;
+        }
+        setVideoResults([]);
+        setChannelResults([]);
         setSearchError(
-          targetMode === 'video'
-            ? 'Anda sedang offline. Hubungkan internet untuk mencari video YouTube.'
-            : 'Anda sedang offline. Hubungkan internet untuk mencari channel YouTube.'
+          errReason instanceof Error
+            ? errReason.message
+            : 'Terjadi kesalahan saat mencari di YouTube.'
         );
         return;
       }
 
-      searchAbortRef.current?.abort();
-      const controller = new AbortController();
-      searchAbortRef.current = controller;
-      lastExecutedKeyRef.current = `${targetMode}:${trimmed}`;
-
-      let didTimeout = false;
-      const timeoutId = setTimeout(() => {
-        didTimeout = true;
-        controller.abort();
-      }, 15000);
-
-      setIsSearching(true);
-      setSearchError(null);
-      if (targetMode === 'video') {
-        setHasSearchedVideo(true);
-      } else {
-        setHasSearchedChannel(true);
+      setVideoResults(nextVideos || []);
+      setChannelResults(nextChannels || []);
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') {
+        if (didTimeout && searchAbortRef.current === controller) {
+          setVideoResults([]);
+          setChannelResults([]);
+          setSearchError('Pencarian YouTube melebihi batas waktu. Silakan klik Coba Lagi.');
+        }
+        return;
       }
-
-      try {
-        const endpoint =
-          targetMode === 'video'
-            ? `/api/youtube/search-videos?q=${encodeURIComponent(trimmed)}`
-            : `/api/youtube/search-channels?q=${encodeURIComponent(trimmed)}`;
-
-        const res = await fetch(endpoint, {
-          signal: controller.signal,
-          cache: 'no-store',
-          headers: {
-            Accept: 'application/json',
-          },
-        });
-        const { data, rawText } = await parseJsonSafely<{
-          channels?: YouTubeChannelSearchResult[];
-          videos?: YouTubeVideoSearchResult[];
-          error?: string;
-        }>(res);
-
-        if (!res.ok) {
-          throw new Error(
-            buildHttpErrorMessage(
-              res,
-              data,
-              rawText,
-              targetMode === 'video'
-                ? 'Gagal mencari video di YouTube'
-                : 'Gagal mencari channel di YouTube'
-            )
-          );
-        }
-
-        if (targetMode === 'video') {
-          if (!data || !Array.isArray(data.videos)) {
-            throw new Error(
-              buildHttpErrorMessage(
-                res,
-                data,
-                rawText,
-                'Format respons pencarian video YouTube tidak valid'
-              )
-            );
-          }
-          setVideoResults(data.videos);
-        } else {
-          if (!data || !Array.isArray(data.channels)) {
-            throw new Error(
-              buildHttpErrorMessage(
-                res,
-                data,
-                rawText,
-                'Format respons pencarian YouTube tidak valid'
-              )
-            );
-          }
-          setSearchResults(data.channels);
-        }
-      } catch (err: unknown) {
-        if ((err as { name?: string })?.name === 'AbortError') {
-          if (didTimeout && searchAbortRef.current === controller) {
-            if (targetMode === 'video') {
-              setVideoResults([]);
-            } else {
-              setSearchResults([]);
-            }
-            setSearchError(
-              targetMode === 'video'
-                ? 'Pencarian video melebihi batas waktu. Silakan klik Coba Lagi.'
-                : 'Pencarian channel melebihi batas waktu. Silakan klik Coba Lagi.'
-            );
-          }
-          return;
-        }
-        if (searchAbortRef.current === controller) {
-          if (targetMode === 'video') {
-            setVideoResults([]);
-          } else {
-            setSearchResults([]);
-          }
-          setSearchError(
-            err instanceof Error
-              ? err.message
-              : targetMode === 'video'
-              ? 'Terjadi kesalahan saat mencari video YouTube.'
-              : 'Terjadi kesalahan saat mencari channel YouTube.'
-          );
-        }
-      } finally {
-        clearTimeout(timeoutId);
-        if (searchAbortRef.current === controller) {
-          setIsSearching(false);
-        }
+      if (searchAbortRef.current === controller) {
+        setVideoResults([]);
+        setChannelResults([]);
+        setSearchError(
+          err instanceof Error ? err.message : 'Terjadi kesalahan saat mencari di YouTube.'
+        );
       }
-    },
-    [activeTab]
-  );
+    } finally {
+      clearTimeout(timeoutId);
+      if (searchAbortRef.current === controller) {
+        setIsSearching(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
       searchAbortRef.current?.abort();
-      lastExecutedKeyRef.current = '';
+      lastExecutedQueryRef.current = '';
       clearModalTimers();
       return;
     }
+
     clearModalTimers();
     setFeedback(null);
     setSearchError(null);
     setAddedInSession({});
-    lastExecutedKeyRef.current = '';
-    if (initialPastedText) {
-      setActiveTab('paste');
-      const formatted = parseAndFormatLinks(initialPastedText);
-      setInputText(formatted.length > 0 ? formatted.join('\n') : initialPastedText);
-      setHasPasted(true);
-      pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
-    } else {
-      setActiveTab(initialTab);
-      if (initialSearchQuery.trim()) {
-        setSearchQuery(initialSearchQuery);
-        if (initialTab === 'video' || initialTab === 'search') {
-          void executeYouTubeSearch(initialSearchQuery, initialTab);
-        }
-      } else {
-        setSearchQuery('');
-        setSearchResults([]);
-        setVideoResults([]);
-        setHasSearchedChannel(false);
-        setHasSearchedVideo(false);
-      }
-    }
-  }, [isOpen, initialPastedText, initialTab, initialSearchQuery, executeYouTubeSearch, clearModalTimers]);
+    setShowAllChannels(false);
+    lastExecutedQueryRef.current = '';
 
-  // Debounced auto-search when typing >= 2 characters on Video or Channel Search tab
+    const cleanInit = initialInput.trim();
+    if (cleanInit) {
+      const direct = extractDirectLinksOnly(cleanInit);
+      if (direct.length > 0) {
+        setUnifiedInput(direct.join('\n'));
+        setHasPasted(true);
+        pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
+        setChannelResults([]);
+        setVideoResults([]);
+        setHasSearched(false);
+      } else {
+        setUnifiedInput(cleanInit);
+        void executeUnifiedSearch(cleanInit);
+      }
+    } else {
+      setUnifiedInput('');
+      setChannelResults([]);
+      setVideoResults([]);
+      setHasSearched(false);
+    }
+
+    const focusTimer = setTimeout(() => {
+      if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches) {
+        inputRef.current?.focus();
+      }
+    }, 100);
+    return () => clearTimeout(focusTimer);
+  }, [isOpen, initialInput, executeUnifiedSearch, clearModalTimers]);
+
+  // Debounced auto-search when typing >= 2 characters and NOT entering direct links
   useEffect(() => {
-    if (!isOpen || (activeTab !== 'search' && activeTab !== 'video')) return;
-    const trimmed = searchQuery.trim();
-    if (!trimmed) {
+    if (!isOpen) return;
+    const trimmed = unifiedInput.trim();
+    if (!trimmed || isDirectLinkMode) {
       if (searchDebounceRef.current) {
         clearTimeout(searchDebounceRef.current);
         searchDebounceRef.current = null;
       }
       return;
     }
-    const execKey = `${activeTab}:${trimmed}`;
-    if (trimmed.length < 2 || execKey === lastExecutedKeyRef.current) return;
+
+    if (trimmed.length < 2 || trimmed === lastExecutedQueryRef.current) return;
 
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
     searchDebounceRef.current = setTimeout(() => {
       searchDebounceRef.current = null;
-      void executeYouTubeSearch(trimmed, activeTab);
-    }, 600);
+      void executeUnifiedSearch(trimmed);
+    }, 580);
 
     return () => {
       if (searchDebounceRef.current) {
@@ -419,11 +433,134 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
         searchDebounceRef.current = null;
       }
     };
-  }, [isOpen, activeTab, searchQuery, executeYouTubeSearch]);
+  }, [isOpen, unifiedInput, isDirectLinkMode, executeUnifiedSearch]);
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    void executeYouTubeSearch(searchQuery, activeTab === 'video' ? 'video' : 'search');
+  const handleSubmitLinks = async (linksToAdd?: string[]) => {
+    const items = linksToAdd && linksToAdd.length > 0 ? linksToAdd : parseAndFormatLinks(unifiedInput);
+    if (items.length === 0) return;
+
+    setIsAddingLinks(true);
+    setFeedback(null);
+
+    try {
+      const result = await onAddChannels(items, selectedGroupId);
+      if (result.success > 0) {
+        setFeedback({
+          type: 'success',
+          message: `Berhasil menambahkan ${result.success} channel!${
+            result.failed > 0 ? ` (${result.failed} gagal dimuat)` : ''
+          }`,
+        });
+        setUnifiedInput('');
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => {
+          onClose();
+          setFeedback(null);
+        }, 1050);
+      } else {
+        setFeedback({
+          type: 'error',
+          message:
+            result.lastError ||
+            'Tidak dapat menemukan channel dari link tersebut. Pastikan URL atau @handle benar.',
+        });
+      }
+    } catch (err: unknown) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal menambahkan channel.',
+      });
+    } finally {
+      setIsAddingLinks(false);
+    }
+  };
+
+  const handleUnifiedSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const trimmed = unifiedInput.trim();
+    if (!trimmed) return;
+
+    if (isDirectLinkMode) {
+      void handleSubmitLinks(detectedDirectLinks);
+    } else {
+      void executeUnifiedSearch(trimmed);
+    }
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        throw new Error('Clipboard API tidak didukung');
+      }
+
+      const text = await navigator.clipboard.readText();
+      if (!text || !text.trim()) {
+        inputRef.current?.focus();
+        setFeedback({
+          type: 'info',
+          message:
+            'Papan klip kosong. Salin link atau judul YouTube terlebih dahulu, atau ketik langsung di atas.',
+        });
+        return;
+      }
+
+      const directLinks = extractDirectLinksOnly(text);
+      if (directLinks.length > 0) {
+        setUnifiedInput((prev) => {
+          const prevLinks = extractDirectLinksOnly(prev);
+          const merged = Array.from(new Set([...prevLinks, ...directLinks]));
+          return merged.join('\n');
+        });
+        setHasPasted(true);
+        if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
+        pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
+        setFeedback({
+          type: 'success',
+          message: `${directLinks.length} link YouTube berhasil ditempel! Klik "Tambahkan" untuk memuat channel.`,
+        });
+      } else {
+        const cleanQuery = text.trim();
+        setUnifiedInput(cleanQuery);
+        setHasPasted(true);
+        if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
+        pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
+        void executeUnifiedSearch(cleanQuery);
+      }
+
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = setTimeout(() => setFeedback(null), 3200);
+    } catch {
+      inputRef.current?.focus();
+      setFeedback({
+        type: 'info',
+        message:
+          'Browser membatasi baca clipboard otomatis. Ketuk kotak input lalu pilih Tempel / Paste (atau Ctrl+V).',
+      });
+    }
+  };
+
+  const handleNativePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasteData = e.clipboardData.getData('text');
+    if (!pasteData) return;
+
+    const directLinks = extractDirectLinksOnly(pasteData);
+    if (directLinks.length > 0) {
+      e.preventDefault();
+      setUnifiedInput((prev) => {
+        const prevLinks = prev.trim() ? extractDirectLinksOnly(prev) : [];
+        const merged = Array.from(new Set([...prevLinks, ...directLinks]));
+        return merged.join('\n');
+      });
+      setHasPasted(true);
+      if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
+      pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
+      setFeedback({
+        type: 'success',
+        message: `${directLinks.length} link YouTube terdeteksi! Klik "Tambahkan" untuk memuat channel.`,
+      });
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = setTimeout(() => setFeedback(null), 3000);
+    }
   };
 
   const handleAddFromSearch = async (item: YouTubeChannelSearchResult) => {
@@ -499,135 +636,18 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     }
   };
 
-  // Focus textarea when entering paste tab without pre-filled links
-  useEffect(() => {
-    if (!isOpen || activeTab !== 'paste' || initialPastedText) return;
-    const t = setTimeout(() => {
-      textareaRef.current?.focus();
-    }, 120);
-    return () => clearTimeout(t);
-  }, [isOpen, activeTab, initialPastedText]);
-
-  // Read directly from system clipboard with smooth fallback focus when blocked by browser/iframe
-  const handlePasteFromClipboard = async () => {
-    try {
-      if (!navigator.clipboard || !navigator.clipboard.readText) {
-        throw new Error('Clipboard API tidak didukung');
-      }
-
-      const text = await navigator.clipboard.readText();
-      if (!text || !text.trim()) {
-        textareaRef.current?.focus();
-        setFeedback({
-          type: 'info',
-          message:
-            'Papan klip (clipboard) kosong. Salin link YouTube terlebih dahulu, atau ketik langsung di bawah.',
-        });
-        return;
-      }
-
-      const formattedLinks = parseAndFormatLinks(text);
-      const textToAdd = formattedLinks.length > 0 ? formattedLinks.join('\n') : text.trim();
-
-      setInputText((prev) => {
-        const existing = parseAndFormatLinks(prev);
-        const merged = Array.from(new Set([...existing, ...formattedLinks]));
-        return merged.length > 0 ? merged.join('\n') : prev.trim() ? `${prev.trim()}\n${textToAdd}` : textToAdd;
-      });
-
-      setHasPasted(true);
-      if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
-      pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
-
-      setFeedback({
-        type: 'success',
-        message: `${formattedLinks.length || 1} link berhasil ditempel dari clipboard!`,
-      });
-      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
-      feedbackTimerRef.current = setTimeout(() => setFeedback(null), 3000);
-    } catch {
-      textareaRef.current?.focus();
-      setFeedback({
-        type: 'info',
-        message:
-          'Browser membatasi tempel otomatis. Kotak input di bawah sudah aktif — ketuk lalu pilih Tempel / Paste (atau tekan Ctrl+V / Cmd+V).',
-      });
-    }
-  };
-
-  // Handle native paste event to extract & clean URLs automatically (even single mobile Share link + title)
-  const handleNativePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const pasteData = e.clipboardData.getData('text');
-    if (!pasteData) return;
-
-    const formatted = parseAndFormatLinks(pasteData);
-    if (formatted.length > 0) {
-      e.preventDefault();
-      setInputText((prev) => {
-        const existing = prev.trim() ? parseAndFormatLinks(prev) : [];
-        const merged = Array.from(new Set([...existing, ...formatted]));
-        return merged.join('\n');
-      });
-      setHasPasted(true);
-      if (pastedTimerRef.current) clearTimeout(pastedTimerRef.current);
-      pastedTimerRef.current = setTimeout(() => setHasPasted(false), 2500);
-      setFeedback({
-        type: 'success',
-        message: `${formatted.length} link YouTube berhasil ditempel!`,
-      });
-      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
-      feedbackTimerRef.current = setTimeout(() => setFeedback(null), 2500);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim()) return;
-
-    const lines = parseAndFormatLinks(inputText);
-    if (lines.length === 0) return;
-
-    setIsLoading(true);
+  const handleClearInput = () => {
+    searchAbortRef.current?.abort();
+    lastExecutedQueryRef.current = '';
+    setUnifiedInput('');
+    setSearchError(null);
     setFeedback(null);
-
-    try {
-      const result = await onAddChannels(lines, selectedGroupId);
-      if (result.success > 0) {
-        setFeedback({
-          type: 'success',
-          message: `Berhasil menambahkan ${result.success} channel!${
-            result.failed > 0 ? ` (${result.failed} gagal dimuat)` : ''
-          }`,
-        });
-        setInputText('');
-        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = setTimeout(() => {
-          onClose();
-          setFeedback(null);
-        }, 1200);
-      } else {
-        setFeedback({
-          type: 'error',
-          message:
-            result.lastError ||
-            'Tidak dapat menemukan channel. Pastikan link atau handle YouTube benar.',
-        });
-      }
-    } catch (err: unknown) {
-      setFeedback({
-        type: 'error',
-        message: err instanceof Error ? err.message : 'Gagal memproses channel.',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleAddPreset = (url: string) => {
-    setInputText((prev) => {
-      const trimmed = prev.trim();
-      return trimmed ? `${trimmed}\n${url}` : url;
-    });
+    setChannelResults([]);
+    setVideoResults([]);
+    setHasSearched(false);
+    setIsSearching(false);
+    setShowAllChannels(false);
+    inputRef.current?.focus();
   };
 
   const presets = [
@@ -640,24 +660,15 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
     { name: 'TED', url: 'https://www.youtube.com/@TED' },
   ];
 
-  const searchTopics = [
+  const popularTopics = [
     'Podcast Indonesia',
-    'Gadget & Teknologi',
-    'Berita & Diskusi',
-    'Edukasi Sains',
-    'Musik Lofi Santai',
-  ];
-
-  const videoTopics = [
-    'Podcast Terbaru Indonesia',
     'Review Gadget Terbaru',
     'Lofi Study Music',
+    'Edukasi Sains',
     'Talkshow & Diskusi',
-    'Dokumenter Sains',
   ];
 
-  const isVideoTab = activeTab === 'video';
-  const hasSearchedCurrent = isVideoTab ? hasSearchedVideo : hasSearchedChannel;
+  const visibleChannelResults = showAllChannels ? channelResults : channelResults.slice(0, 4);
 
   return (
     <AnimatePresence>
@@ -680,240 +691,208 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
             onClick={(e) => e.stopPropagation()}
             className="relative w-full max-w-2xl max-h-[90dvh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left transition-colors duration-200"
           >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="p-2 rounded-xl bg-red-600 text-white shadow-sm shrink-0">
-              <Youtube className="w-5 h-5" />
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-xl bg-red-600 text-white shadow-sm shrink-0">
+                  <Youtube className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
+                    Cari Video, Channel &amp; Tempel Link
+                  </h2>
+                  <p className="text-xs text-slate-500 truncate">
+                    Satu kolom untuk cari judul video, cari channel, atau tempel URL / @handle
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+                aria-label="Tutup"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <div className="min-w-0">
-              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
-                Cari Video &amp; Channel YouTube
-              </h2>
-              <p className="text-xs text-slate-500 truncate">
-                Cari judul video langsung, cari channel, atau tempel URL / @handle
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
 
-        {/* Mode Tabs & Group Selector */}
-        <div className="px-4 sm:px-6 pt-3 sm:pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 shrink-0 bg-slate-50/70 dark:bg-slate-950/30">
-          <div className="flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-xl w-full sm:w-fit overflow-x-auto scrollbar-none">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('video');
-                setFeedback(null);
-                setSearchError(null);
-                const trimmed = searchQuery.trim();
-                if (trimmed.length >= 2 && lastExecutedKeyRef.current !== `video:${trimmed}` && videoResults.length === 0) {
-                  void executeYouTubeSearch(trimmed, 'video');
-                }
-              }}
-              className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
-                activeTab === 'video'
-                  ? 'text-slate-900 dark:text-white'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              {activeTab === 'video' && (
-                <motion.span
-                  layoutId="addModalModeTab"
-                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                  className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
-                />
-              )}
-              <Film className="relative z-10 w-3.5 h-3.5 text-red-500 shrink-0" />
-              <span className="relative z-10">Cari Video</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('search');
-                setFeedback(null);
-                setSearchError(null);
-                const trimmed = searchQuery.trim();
-                if (trimmed.length >= 2 && lastExecutedKeyRef.current !== `search:${trimmed}` && searchResults.length === 0) {
-                  void executeYouTubeSearch(trimmed, 'search');
-                }
-              }}
-              className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
-                activeTab === 'search'
-                  ? 'text-slate-900 dark:text-white'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              {activeTab === 'search' && (
-                <motion.span
-                  layoutId="addModalModeTab"
-                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                  className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
-                />
-              )}
-              <Search className="relative z-10 w-3.5 h-3.5 text-red-500 shrink-0" />
-              <span className="relative z-10">Cari Channel</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('paste');
-                setFeedback(null);
-              }}
-              className={`relative flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
-                activeTab === 'paste'
-                  ? 'text-slate-900 dark:text-white'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              {activeTab === 'paste' && (
-                <motion.span
-                  layoutId="addModalModeTab"
-                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                  className="absolute inset-0 rounded-lg bg-white dark:bg-slate-700 shadow-xs"
-                />
-              )}
-              <Clipboard className="relative z-10 w-3.5 h-3.5 text-red-500 shrink-0" />
-              <span className="relative z-10">Tempel Link</span>
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between sm:justify-start gap-2">
-            <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">
-              Grup Tujuan:
-            </span>
-            <select
-              value={selectedGroupId}
-              onChange={(e) => setSelectedGroupId(e.target.value)}
-              className="px-2.5 py-1.5 text-xs font-medium rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500 cursor-pointer"
-            >
-              {groups
-                .filter((g) => g.id !== 'all')
-                .map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Scrollable Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
-          {activeTab === 'search' || activeTab === 'video' ? (
-            <>
-              {/* YouTube Video / Channel Search Input */}
-              <form onSubmit={handleSearchSubmit} className="flex gap-2">
+            {/* Unified Search + Link Input & Group Bar */}
+            <div className="px-4 sm:px-6 pt-3.5 sm:pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 space-y-2.5 shrink-0 bg-slate-50/70 dark:bg-slate-950/30">
+              <form onSubmit={handleUnifiedSubmit} className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-1 min-w-0">
-                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onPaste={(e) => {
-                      const pasted = e.clipboardData.getData('text');
-                      if (!pasted) return;
-                      const extracted = parseAndFormatLinks(pasted);
-                      if (extracted.length > 0 && /(?:youtube\.com|youtu\.be|^@|^UC[a-zA-Z0-9_-]{22}$)/i.test(extracted[0])) {
+                  {isDirectLinkMode ? (
+                    <Link2 className="w-4 h-4 absolute left-3.5 top-3 text-red-500 pointer-events-none" />
+                  ) : (
+                    <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400 pointer-events-none" />
+                  )}
+                  <textarea
+                    ref={inputRef}
+                    rows={isMultiLineInput ? 3 : 1}
+                    value={unifiedInput}
+                    onPaste={handleNativePaste}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        const target = extracted[0];
-                        setSearchQuery(target);
-                        if (searchError) setSearchError(null);
-                        void executeYouTubeSearch(target, isVideoTab ? 'video' : 'search');
+                        handleUnifiedSubmit();
                       }
                     }}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setSearchQuery(val);
+                      setUnifiedInput(val);
                       if (searchError) setSearchError(null);
                       if (!val.trim()) {
                         searchAbortRef.current?.abort();
-                        lastExecutedKeyRef.current = '';
-                        setHasSearchedChannel(false);
-                        setHasSearchedVideo(false);
-                        setSearchResults([]);
+                        lastExecutedQueryRef.current = '';
+                        setHasSearched(false);
+                        setChannelResults([]);
                         setVideoResults([]);
                         setIsSearching(false);
                       }
                     }}
-                    placeholder={
-                      isVideoTab
-                        ? 'Ketik judul video YouTube, topik podcast, atau tempel link video...'
-                        : 'Ketik nama channel, @handle, atau tempel link YouTube...'
-                    }
-                    autoFocus={typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches}
-                    className="w-full pl-10 pr-10 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500"
+                    placeholder="Ketik judul video, nama channel, @handle, atau tempel link YouTube..."
+                    className={`w-full pl-10 ${
+                      unifiedInput ? 'pr-9' : 'pr-3.5'
+                    } py-2.5 text-xs rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-red-500 resize-none leading-relaxed ${
+                      isDirectLinkMode ? 'font-mono' : ''
+                    }`}
                   />
-                  {searchQuery && (
+                  {unifiedInput && (
                     <button
                       type="button"
-                      onClick={() => {
-                        searchAbortRef.current?.abort();
-                        lastExecutedKeyRef.current = '';
-                        setSearchQuery('');
-                        setSearchError(null);
-                        setSearchResults([]);
-                        setVideoResults([]);
-                        setHasSearchedChannel(false);
-                        setHasSearchedVideo(false);
-                        setIsSearching(false);
-                      }}
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 rounded-lg text-sm text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
-                      aria-label="Kosongkan pencarian"
+                      onClick={handleClearInput}
+                      className="absolute right-1.5 top-1.5 p-1.5 rounded-lg text-sm text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                      aria-label="Kosongkan input"
+                      title="Kosongkan"
                     >
-                      ×
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
-                <button
-                  type="submit"
-                  disabled={isSearching || !searchQuery.trim()}
-                  className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-sm transition-colors cursor-pointer shrink-0"
-                >
-                  {isSearching ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Mencari...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Search className="w-4 h-4" />
-                      <span>Cari</span>
-                    </>
-                  )}
-                </button>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void handlePasteFromClipboard()}
+                    className={`flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-xl border transition-colors cursor-pointer shrink-0 ${
+                      hasPasted
+                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                    }`}
+                    title="Tempel link atau kata kunci dari clipboard"
+                  >
+                    {hasPasted ? (
+                      <>
+                        <ClipboardCheck className="w-4 h-4" />
+                        <span>Tertempel</span>
+                      </>
+                    ) : (
+                      <>
+                        <Clipboard className="w-4 h-4 text-red-500" />
+                        <span>Tempel</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={isSearching || isAddingLinks || !unifiedInput.trim()}
+                    className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-sm transition-colors cursor-pointer shrink-0"
+                  >
+                    {isAddingLinks || isSearching ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>{isAddingLinks ? 'Menambahkan...' : 'Mencari...'}</span>
+                      </>
+                    ) : isDirectLinkMode ? (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        <span>Tambahkan</span>
+                      </>
+                    ) : (
+                      <>
+                        <Search className="w-4 h-4" />
+                        <span>Cari</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </form>
 
-              {/* Quick Topic Suggestions */}
-              {!hasSearchedCurrent && (
-                <div className="space-y-2">
-                  <div className="text-[11px] font-semibold text-slate-500">
-                    {isVideoTab ? 'Judul atau topik video populer:' : 'Topik channel populer untuk dicari:'}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(isVideoTab ? videoTopics : searchTopics).map((topic) => (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                <span>
+                  {isDirectLinkMode
+                    ? `Terdeteksi ${detectedDirectLinks.length} link/handle YouTube siap ditambahkan`
+                    : 'Pencarian otomatis menampilkan video & channel sekaligus'}
+                </span>
+
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold whitespace-nowrap">Grup Tujuan:</span>
+                  <select
+                    value={selectedGroupId}
+                    onChange={(e) => setSelectedGroupId(e.target.value)}
+                    className="px-2.5 py-1 text-xs font-medium rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-red-500 cursor-pointer"
+                  >
+                    {groups
+                      .filter((g) => g.id !== 'all')
+                      .map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Scrollable Unified Body */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
+              {/* Direct Link Preview Action Banner when links or @handles are in the box */}
+              {isDirectLinkMode && (
+                <div className="p-3.5 rounded-2xl bg-red-50/80 dark:bg-red-950/25 border border-red-200/80 dark:border-red-900/50 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
+                      <Link2 className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+                      <span>
+                        {detectedDirectLinks.length} Link / Handle YouTube Siap Ditambahkan
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {detectedDirectLinks.length === 1 && (
+                        <button
+                          type="button"
+                          onClick={() => void executeUnifiedSearch(detectedDirectLinks[0])}
+                          disabled={isSearching || isAddingLinks}
+                          className="px-2.5 py-1.5 text-[11px] font-semibold rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-red-400 hover:text-red-600 transition-colors cursor-pointer"
+                        >
+                          Cari Terkait
+                        </button>
+                      )}
                       <button
-                        key={topic}
                         type="button"
-                        onClick={() => {
-                          setSearchQuery(topic);
-                          void executeYouTubeSearch(topic, isVideoTab ? 'video' : 'search');
-                        }}
-                        className="px-3 py-1.5 text-xs font-medium rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                        onClick={() => void handleSubmitLinks(detectedDirectLinks)}
+                        disabled={isAddingLinks}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-60 cursor-pointer"
                       >
-                        {topic}
+                        {isAddingLinks ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Plus className="w-3.5 h-3.5" />
+                        )}
+                        <span>Tambahkan ke Grup</span>
                       </button>
+                    </div>
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-600 dark:text-slate-300 space-y-1 max-h-24 overflow-y-auto">
+                    {detectedDirectLinks.map((link) => (
+                      <div key={link} className="truncate">
+                        {link}
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Feedback */}
+              {/* Feedback Banner */}
               {feedback && (
                 <div
                   className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
@@ -943,515 +922,424 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   <div className="flex flex-wrap items-center gap-2 pl-6">
                     <button
                       type="button"
-                      onClick={() =>
-                        void executeYouTubeSearch(searchQuery, isVideoTab ? 'video' : 'search')
-                      }
+                      onClick={() => void executeUnifiedSearch(unifiedInput)}
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] cursor-pointer transition-colors"
                     >
                       <RefreshCw className="w-3 h-3" />
                       <span>Coba Lagi</span>
                     </button>
-                    {searchQuery.trim() && (
+                    {unifiedInput.trim() && (
                       <button
                         type="button"
-                        onClick={() => {
-                          setInputText(searchQuery.trim());
-                          setActiveTab('paste');
-                          setSearchError(null);
-                        }}
+                        onClick={() => void handleSubmitLinks([unifiedInput.trim()])}
                         className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 font-semibold text-[11px] hover:bg-red-100/60 cursor-pointer transition-colors"
                       >
-                        Tambah Langsung via Link / @handle
+                        Coba Tambah Langsung
                       </button>
                     )}
                   </div>
                 </div>
               )}
 
-              {/* Loading / Empty / Results */}
+              {/* Loading State */}
               {isSearching ? (
                 <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-slate-500">
                   <Loader2 className="w-6 h-6 animate-spin text-red-600" />
-                  <span>
-                    {isVideoTab
-                      ? 'Mencari judul video di YouTube...'
-                      : 'Mencari channel di YouTube...'}
-                  </span>
+                  <span>Mencari video &amp; channel di YouTube...</span>
                 </div>
-              ) : isVideoTab ? (
-                hasSearchedVideo && videoResults.length === 0 && !searchError ? (
-                  <div className="py-10 px-4 text-center text-xs text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 space-y-3">
-                    <div>
-                      Tidak ada video ditemukan untuk "{searchQuery}". Coba kata kunci judul lain atau tempel link video YouTube.
-                    </div>
-                    {searchQuery.trim() && (
-                      <div className="flex flex-wrap items-center justify-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveTab('search');
-                            void executeYouTubeSearch(searchQuery.trim(), 'search');
-                          }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors"
-                        >
-                          <Search className="w-3.5 h-3.5" />
-                          <span>Cari sebagai Channel</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInputText(searchQuery.trim());
-                            setActiveTab('paste');
-                          }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors"
-                        >
-                          <Clipboard className="w-3.5 h-3.5" />
-                          <span>Tempel Link</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {videoResults.map((video, idx) => {
-                      const isChannelAdded =
-                        Boolean(video.channelId) &&
-                        (existingChannelIds.includes(video.channelId) ||
-                          Boolean(addedInSession[video.channelId]));
-                      const isAddingChannel =
-                        Boolean(video.channelId) && addingChannelId === video.channelId;
-                      const isInQueue = queueIds.includes(video.id);
-
-                      return (
-                        <motion.div
-                          key={video.id}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{
-                            duration: 0.2,
-                            delay: Math.min(idx, 10) * 0.02,
-                            ease: [0.16, 1, 0.3, 1],
-                          }}
-                          className="flex flex-col sm:flex-row gap-3 p-2.5 sm:p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
-                        >
-                          {/* Thumbnail */}
-                          <div
-                            onClick={() => {
-                              if (onPlayVideo) {
-                                onPlayVideo(video);
-                                onClose();
-                              }
-                            }}
-                            className="relative w-full sm:w-40 aspect-video rounded-xl overflow-hidden bg-slate-900 shrink-0 cursor-pointer group"
-                          >
-                            <img
-                              src={video.thumbnail}
-                              alt={video.title}
-                              referrerPolicy="no-referrer"
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                            />
-                            {video.duration && (
-                              <span
-                                className={`absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
-                                  video.duration === 'LIVE'
-                                    ? 'bg-red-600 text-white'
-                                    : 'bg-black/80 text-white'
-                                }`}
-                              >
-                                {video.duration}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Metadata & Actions */}
-                          <div className="min-w-0 flex-1 flex flex-col justify-between gap-2">
-                            <div className="space-y-1">
-                              <div className="flex items-start justify-between gap-2">
-                                <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white line-clamp-2 leading-snug">
-                                  {video.title}
-                                </h3>
-                                <a
-                                  href={`https://www.youtube.com/watch?v=${video.id}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="p-1.5 -m-1 rounded-lg text-slate-400 hover:text-red-500 shrink-0"
-                                  title="Buka di YouTube"
-                                  aria-label="Buka di YouTube"
-                                >
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                </a>
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                                <span className="font-semibold text-slate-700 dark:text-slate-200 truncate max-w-[180px]">
-                                  {video.channelTitle}
-                                </span>
-                                {video.views && (
-                                  <>
-                                    <span aria-hidden="true">·</span>
-                                    <span>{video.views}</span>
-                                  </>
-                                )}
-                                {video.publishedText && (
-                                  <>
-                                    <span aria-hidden="true">·</span>
-                                    <span>{video.publishedText}</span>
-                                  </>
-                                )}
-                              </div>
-
-                              {video.description && (
-                                <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
-                                  {video.description}
-                                </p>
-                              )}
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                              {onPlayVideo && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    onPlayVideo(video);
-                                    onClose();
-                                  }}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors cursor-pointer"
-                                >
-                                  <Play className="w-3 h-3" />
-                                  <span>Putar Video</span>
-                                </button>
-                              )}
-                              {onPlayAudio && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    onPlayAudio(video);
-                                    onClose();
-                                  }}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90 transition-opacity cursor-pointer"
-                                >
-                                  <Radio className="w-3 h-3" />
-                                  <span>Audio</span>
-                                </button>
-                              )}
-                              {onToggleQueue && (
-                                <button
-                                  type="button"
-                                  onClick={() => onToggleQueue(video)}
-                                  className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-xl transition-colors cursor-pointer ${
-                                    isInQueue
-                                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                                      : 'bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600'
-                                  }`}
-                                >
-                                  {isInQueue ? (
-                                    <>
-                                      <Check className="w-3 h-3" />
-                                      <span>Di Antrean</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <ListPlus className="w-3 h-3" />
-                                      <span>Antrean</span>
-                                    </>
-                                  )}
-                                </button>
-                              )}
-                              {video.channelId && (
-                                <button
-                                  type="button"
-                                  disabled={isChannelAdded || Boolean(addingChannelId)}
-                                  onClick={() => void handleAddChannelFromVideo(video)}
-                                  className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-xl transition-colors cursor-pointer ${
-                                    isChannelAdded
-                                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 cursor-default'
-                                      : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-red-400 hover:text-red-600 disabled:opacity-50'
-                                  }`}
-                                >
-                                  {isAddingChannel ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : isChannelAdded ? (
-                                    <Check className="w-3 h-3" />
-                                  ) : (
-                                    <Plus className="w-3 h-3" />
-                                  )}
-                                  <span>{isChannelAdded ? 'Terdaftar' : 'Channel'}</span>
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </motion.div>
-                      );
-                    })}
-                  </div>
-                )
-              ) : hasSearchedChannel && searchResults.length === 0 && !searchError ? (
+              ) : hasSearched &&
+                channelResults.length === 0 &&
+                videoResults.length === 0 &&
+                !searchError ? (
                 <div className="py-10 px-4 text-center text-xs text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 space-y-3">
                   <div>
-                    Tidak ada channel ditemukan untuk "{searchQuery}". Coba kata kunci, URL channel, atau @handle lain.
+                    Tidak ada video atau channel ditemukan untuk "{unifiedInput.trim()}". Coba kata
+                    kunci lain atau tempel link YouTube langsung.
                   </div>
-                  {searchQuery.trim() && (
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveTab('video');
-                          void executeYouTubeSearch(searchQuery.trim(), 'video');
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 cursor-pointer transition-colors"
-                      >
-                        <Film className="w-3.5 h-3.5" />
-                        <span>Cari Judul Video "{searchQuery.trim()}"</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setInputText(searchQuery.trim());
-                          setActiveTab('paste');
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors"
-                      >
-                        <Clipboard className="w-3.5 h-3.5" />
-                        <span>Coba Tambah Langsung</span>
-                      </button>
-                    </div>
+                  {unifiedInput.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSubmitLinks([unifiedInput.trim()])}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Coba Tambah sebagai Channel</span>
+                    </button>
                   )}
                 </div>
               ) : (
-                <div className="space-y-2.5">
-                  {searchResults.map((item, idx) => {
-                    const isAlreadyAdded =
-                      existingChannelIds.includes(item.id) || Boolean(addedInSession[item.id]);
-                    const isAddingThis = addingChannelId === item.id;
-
-                    return (
-                      <motion.div
-                        key={item.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                          duration: 0.2,
-                          delay: Math.min(idx, 10) * 0.025,
-                          ease: [0.16, 1, 0.3, 1],
-                        }}
-                        whileHover={{ y: -2 }}
-                        className="flex items-center justify-between gap-2.5 sm:gap-3 p-2.5 sm:p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
-                      >
-                        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
-                          <img
-                            src={item.avatar || `https://avatar.vercel.sh/${item.id}?size=100`}
-                            alt={item.title}
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              const img = e.currentTarget;
-                              const fallback = `https://avatar.vercel.sh/${item.id}?size=100`;
-                              if (img.src !== fallback) img.src = fallback;
-                            }}
-                            className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover shrink-0 bg-slate-200 dark:bg-slate-700"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
-                                {item.title}
-                              </h3>
-                              <a
-                                href={item.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="p-1.5 -m-1 rounded-lg text-slate-400 hover:text-red-500 shrink-0"
-                                title="Lihat di YouTube"
-                                aria-label="Lihat di YouTube"
+                <>
+                  {/* Unified Results: Channels + Videos */}
+                  {hasSearched ? (
+                    <div className="space-y-5">
+                      {/* Channel Results Section */}
+                      {channelResults.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-100">
+                              <Youtube className="w-4 h-4 text-red-500" />
+                              <span>Channel YouTube ({channelResults.length})</span>
+                            </div>
+                            {channelResults.length > 4 && (
+                              <button
+                                type="button"
+                                onClick={() => setShowAllChannels((prev) => !prev)}
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:underline cursor-pointer"
                               >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                              {item.handle && <span className="truncate">{item.handle}</span>}
-                              {item.handle && item.subscriberCount && (
-                                <span aria-hidden="true">·</span>
-                              )}
-                              {item.subscriberCount && <span>{item.subscriberCount}</span>}
-                            </div>
-
-                            {item.description && (
-                              <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
-                                {item.description}
-                              </p>
+                                <span>
+                                  {showAllChannels
+                                    ? 'Tampilkan lebih sedikit'
+                                    : `Lihat semua (${channelResults.length})`}
+                                </span>
+                                {showAllChannels ? (
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                )}
+                              </button>
                             )}
                           </div>
+
+                          <div className="space-y-2">
+                            {visibleChannelResults.map((item, idx) => {
+                              const isAlreadyAdded =
+                                existingChannelIds.includes(item.id) ||
+                                Boolean(addedInSession[item.id]);
+                              const isAddingThis = addingChannelId === item.id;
+
+                              return (
+                                <motion.div
+                                  key={item.id}
+                                  initial={{ opacity: 0, y: 8 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{
+                                    duration: 0.18,
+                                    delay: Math.min(idx, 6) * 0.02,
+                                    ease: [0.16, 1, 0.3, 1],
+                                  }}
+                                  className="flex items-center justify-between gap-2.5 sm:gap-3 p-2.5 sm:p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                                >
+                                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                                    <img
+                                      src={
+                                        item.avatar ||
+                                        `https://avatar.vercel.sh/${item.id}?size=100`
+                                      }
+                                      alt={item.title}
+                                      referrerPolicy="no-referrer"
+                                      onError={(e) => {
+                                        const img = e.currentTarget;
+                                        const fallback = `https://avatar.vercel.sh/${item.id}?size=100`;
+                                        if (img.src !== fallback) img.src = fallback;
+                                      }}
+                                      className="w-10 h-10 sm:w-11 sm:h-11 rounded-full object-cover shrink-0 bg-slate-200 dark:bg-slate-700"
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
+                                          {item.title}
+                                        </h3>
+                                        <a
+                                          href={item.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="p-1 -m-0.5 rounded-lg text-slate-400 hover:text-red-500 shrink-0"
+                                          title="Lihat di YouTube"
+                                          aria-label="Lihat di YouTube"
+                                        >
+                                          <ExternalLink className="w-3.5 h-3.5" />
+                                        </a>
+                                      </div>
+
+                                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                        {item.handle && (
+                                          <span className="truncate">{item.handle}</span>
+                                        )}
+                                        {item.handle && item.subscriberCount && (
+                                          <span aria-hidden="true">·</span>
+                                        )}
+                                        {item.subscriberCount && (
+                                          <span>{item.subscriberCount}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <motion.button
+                                    whileTap={{ scale: 0.94 }}
+                                    type="button"
+                                    disabled={isAlreadyAdded || Boolean(addingChannelId)}
+                                    onClick={() => void handleAddFromSearch(item)}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                                      isAlreadyAdded
+                                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 cursor-default'
+                                        : 'bg-red-600 hover:bg-red-700 text-white disabled:opacity-50'
+                                    }`}
+                                  >
+                                    {isAddingThis ? (
+                                      <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        <span>Memuat...</span>
+                                      </>
+                                    ) : isAlreadyAdded ? (
+                                      <>
+                                        <Check className="w-3.5 h-3.5" />
+                                        <span>Terdaftar</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Plus className="w-3.5 h-3.5" />
+                                        <span>Tambah</span>
+                                      </>
+                                    )}
+                                  </motion.button>
+                                </motion.div>
+                              );
+                            })}
+                          </div>
                         </div>
-
-                        <motion.button
-                          whileTap={{ scale: 0.94 }}
-                          type="button"
-                          disabled={isAlreadyAdded || Boolean(addingChannelId)}
-                          onClick={() => handleAddFromSearch(item)}
-                          className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                            isAlreadyAdded
-                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 cursor-default'
-                              : 'bg-red-600 hover:bg-red-700 text-white disabled:opacity-50'
-                          }`}
-                        >
-                          {isAddingThis ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Memuat...</span>
-                            </>
-                          ) : isAlreadyAdded ? (
-                            <>
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Terdaftar</span>
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Tambah</span>
-                            </>
-                          )}
-                        </motion.button>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Link atau Handle YouTube:
-                  </label>
-
-                  <div className="flex items-center gap-2">
-                    {inputText && (
-                      <button
-                        type="button"
-                        onClick={() => setInputText('')}
-                        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
-                        title="Kosongkan teks"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Hapus</span>
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={handlePasteFromClipboard}
-                      className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                        hasPasted
-                          ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700'
-                          : 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200/80 dark:border-red-800/80'
-                      }`}
-                      title="Tempel link langsung dari papan klip (clipboard)"
-                    >
-                      {hasPasted ? (
-                        <>
-                          <ClipboardCheck className="w-3.5 h-3.5" />
-                          <span>Berhasil Ditempel!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Clipboard className="w-3.5 h-3.5" />
-                          <span>Tempel dari Clipboard</span>
-                        </>
                       )}
-                    </button>
-                  </div>
-                </div>
 
-                <textarea
-                  ref={textareaRef}
-                  rows={4}
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  onPaste={handleNativePaste}
-                  placeholder={`Ketuk di sini lalu pilih Tempel (atau Ctrl+V / klik tombol "Tempel dari Clipboard").\n\nContoh yang didukung:\nhttps://www.youtube.com/@mkbhd\nhttps://youtu.be/VIDEO_ID\nhttps://youtube.com/shorts/VIDEO_ID\n@corbuzier\nUCsXVk37bltHxD1rDPwtNM8Q`}
-                  className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 font-mono focus:outline-hidden focus:ring-2 focus:ring-red-500 leading-relaxed"
-                />
-                <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400">
-                  <span>Bisa paste URL video, Shorts, Playlist, URL channel, atau @handle.</span>
-                  <span className="font-mono tabular-nums">
-                    {inputText.trim()
-                      ? `${parseAndFormatLinks(inputText).length} link`
-                      : '0 link'}
-                  </span>
-                </div>
-              </div>
+                      {/* Video Results Section */}
+                      {videoResults.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-100">
+                            <Film className="w-4 h-4 text-red-500" />
+                            <span>Video YouTube ({videoResults.length})</span>
+                          </div>
 
-              {/* Quick Preset Channels */}
-              <div className="pt-1">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Contoh Channel Populer (Klik untuk menambahkan):</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {presets.map((p) => (
-                    <button
-                      type="button"
-                      key={p.name}
-                      onClick={() => handleAddPreset(p.url)}
-                      className="px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
-                    >
-                      + {p.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                          <div className="space-y-2.5">
+                            {videoResults.map((video, idx) => {
+                              const isChannelAdded =
+                                Boolean(video.channelId) &&
+                                (existingChannelIds.includes(video.channelId) ||
+                                  Boolean(addedInSession[video.channelId]));
+                              const isAddingChannel =
+                                Boolean(video.channelId) && addingChannelId === video.channelId;
+                              const isInQueue = queueIds.includes(video.id);
 
-              {/* Feedback banner */}
-              {feedback && (
-                <div
-                  className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
-                    feedback.type === 'success'
-                      ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                      : feedback.type === 'info'
-                      ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-                      : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 border border-red-200 dark:border-red-800'
-                  }`}
-                >
-                  {feedback.type === 'success' ? (
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                              return (
+                                <motion.div
+                                  key={video.id}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{
+                                    duration: 0.2,
+                                    delay: Math.min(idx, 10) * 0.02,
+                                    ease: [0.16, 1, 0.3, 1],
+                                  }}
+                                  className="flex flex-col sm:flex-row gap-3 p-2.5 sm:p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                                >
+                                  {/* Thumbnail */}
+                                  <div
+                                    onClick={() => {
+                                      if (onPlayVideo) {
+                                        onPlayVideo(video);
+                                        onClose();
+                                      }
+                                    }}
+                                    className="relative w-full sm:w-40 aspect-video rounded-xl overflow-hidden bg-slate-900 shrink-0 cursor-pointer group"
+                                  >
+                                    <img
+                                      src={video.thumbnail}
+                                      alt={video.title}
+                                      referrerPolicy="no-referrer"
+                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                    />
+                                    {video.duration && (
+                                      <span
+                                        className={`absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
+                                          video.duration === 'LIVE'
+                                            ? 'bg-red-600 text-white'
+                                            : 'bg-black/80 text-white'
+                                        }`}
+                                      >
+                                        {video.duration}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Metadata & Actions */}
+                                  <div className="min-w-0 flex-1 flex flex-col justify-between gap-2">
+                                    <div className="space-y-1">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white line-clamp-2 leading-snug">
+                                          {video.title}
+                                        </h3>
+                                        <a
+                                          href={`https://www.youtube.com/watch?v=${video.id}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="p-1.5 -m-1 rounded-lg text-slate-400 hover:text-red-500 shrink-0"
+                                          title="Buka di YouTube"
+                                          aria-label="Buka di YouTube"
+                                        >
+                                          <ExternalLink className="w-3.5 h-3.5" />
+                                        </a>
+                                      </div>
+
+                                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                        <span className="font-semibold text-slate-700 dark:text-slate-200 truncate max-w-[180px]">
+                                          {video.channelTitle}
+                                        </span>
+                                        {video.views && (
+                                          <>
+                                            <span aria-hidden="true">·</span>
+                                            <span>{video.views}</span>
+                                          </>
+                                        )}
+                                        {video.publishedText && (
+                                          <>
+                                            <span aria-hidden="true">·</span>
+                                            <span>{video.publishedText}</span>
+                                          </>
+                                        )}
+                                      </div>
+
+                                      {video.description && (
+                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
+                                          {video.description}
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                      {onPlayVideo && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            onPlayVideo(video);
+                                            onClose();
+                                          }}
+                                          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors cursor-pointer"
+                                        >
+                                          <Play className="w-3 h-3" />
+                                          <span>Putar Video</span>
+                                        </button>
+                                      )}
+                                      {onPlayAudio && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            onPlayAudio(video);
+                                            onClose();
+                                          }}
+                                          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90 transition-opacity cursor-pointer"
+                                        >
+                                          <Radio className="w-3 h-3" />
+                                          <span>Audio</span>
+                                        </button>
+                                      )}
+                                      {onToggleQueue && (
+                                        <button
+                                          type="button"
+                                          onClick={() => onToggleQueue(video)}
+                                          className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-xl transition-colors cursor-pointer ${
+                                            isInQueue
+                                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                              : 'bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600'
+                                          }`}
+                                        >
+                                          {isInQueue ? (
+                                            <>
+                                              <Check className="w-3 h-3" />
+                                              <span>Di Antrean</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <ListPlus className="w-3 h-3" />
+                                              <span>Antrean</span>
+                                            </>
+                                          )}
+                                        </button>
+                                      )}
+                                      {video.channelId && (
+                                        <button
+                                          type="button"
+                                          disabled={isChannelAdded || Boolean(addingChannelId)}
+                                          onClick={() => void handleAddChannelFromVideo(video)}
+                                          className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-xl transition-colors cursor-pointer ${
+                                            isChannelAdded
+                                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 cursor-default'
+                                              : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-red-400 hover:text-red-600 disabled:opacity-50'
+                                          }`}
+                                        >
+                                          {isAddingChannel ? (
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                          ) : isChannelAdded ? (
+                                            <Check className="w-3 h-3" />
+                                          ) : (
+                                            <Plus className="w-3 h-3" />
+                                          )}
+                                          <span>{isChannelAdded ? 'Terdaftar' : 'Channel'}</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   ) : (
-                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    /* Initial Suggestions (Topics + Preset Channels) */
+                    <div className="space-y-5">
+                      <div className="space-y-2">
+                        <div className="text-[11px] font-semibold text-slate-500">
+                          Topik populer untuk mencari video &amp; channel:
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {popularTopics.map((topic) => (
+                            <button
+                              key={topic}
+                              type="button"
+                              onClick={() => {
+                                setUnifiedInput(topic);
+                                void executeUnifiedSearch(topic);
+                              }}
+                              className="px-3 py-1.5 text-xs font-medium rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                            >
+                              {topic}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                          <span>Channel Populer (Klik untuk menempel link ke daftar tambah):</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {presets.map((p) => (
+                            <button
+                              key={p.name}
+                              type="button"
+                              onClick={() =>
+                                setUnifiedInput((prev) => {
+                                  const existing = extractDirectLinksOnly(prev);
+                                  const merged = Array.from(new Set([...existing, p.url]));
+                                  return merged.join('\n');
+                                })
+                              }
+                              className="px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                            >
+                              + {p.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Tips: Anda bisa mengetik kata kunci apa saja, menempel banyak link sekaligus (URL video, Shorts, Playlist, link channel), atau memasukkan <span className="font-mono">@handle</span> YouTube langsung di satu kolom atas.
+                      </div>
+                    </div>
                   )}
-                  <span>{feedback.message}</span>
-                </div>
+                </>
               )}
-
-              {/* Submit & Cancel */}
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  disabled={isLoading}
-                  className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={isLoading || !inputText.trim()}
-                  className="flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-md transition-all cursor-pointer"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Memproses Channel...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="w-4 h-4" />
-                      <span>Tambahkan Channel</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
+            </div>
           </motion.div>
         </motion.div>
       )}
