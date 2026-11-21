@@ -943,13 +943,14 @@ export default function App() {
       if (
         bgAudioSettingsRef.current.enabled &&
         bgAudioSettingsRef.current.autoPopupOnPlay &&
-        !floatingMiniPlayerRef.current.isOpen
+        !floatingMiniPlayerRef.current.isOpen &&
+        (activeTab !== 'player' || playerMode === 'audio')
       ) {
         void floatingMiniPlayerRef.current.openPopup({ silent: true });
       }
     }
     setIsPlaying(willPlay);
-  }, []);
+  }, [activeTab, playerMode]);
 
   const handleSeek = useCallback((seconds: number) => {
     setPlaybackClock(currentVideoIdRef.current, seconds);
@@ -1053,6 +1054,47 @@ export default function App() {
     }
     prevPopupEmbedActiveRef.current = isPopupEmbedActive;
   }, [isPopupEmbedActive]);
+
+  const handleToggleFloatingPopup = useCallback(async (): Promise<boolean> => {
+    nativeAudioRef.current?.unlock();
+    void ensureAutoYouTubeCookies();
+    if (floatingMiniPlayerRef.current.isOpen) {
+      floatingMiniPlayerRef.current.closePopup();
+      return false;
+    }
+    let targetVideo = currentVideoRef.current;
+    if (!targetVideo) {
+      targetVideo = latestStateRef.current.videos[0] || null;
+      if (!targetVideo) return false;
+      selectVideoForPlayback(targetVideo, playerMode, true);
+      saveLastVideoId(targetVideo.id);
+    } else if (!isPlayingRef.current) {
+      setIsPlaying(true);
+    }
+    return floatingMiniPlayerRef.current.openPopup({
+      manual: true,
+      videoOverride: targetVideo,
+    });
+  }, [playerMode, selectVideoForPlayback]);
+
+  // Automatically keep floating popup active when navigating away from the main player to Feed while playing
+  const prevActiveTabRef = useRef(activeTab);
+  useEffect(() => {
+    const prevTab = prevActiveTabRef.current;
+    prevActiveTabRef.current = activeTab;
+    if (
+      prevTab === 'player' &&
+      activeTab === 'feed' &&
+      isPlayingRef.current &&
+      currentVideoRef.current &&
+      !floatingMiniPlayerRef.current.isOpen
+    ) {
+      void floatingMiniPlayerRef.current.openPopup({
+        silent: true,
+        videoOverride: currentVideoRef.current,
+      });
+    }
+  }, [activeTab]);
 
   const handleToggleQueue = useCallback((video: Video) => {
     setQueue((prev) => {
@@ -2283,6 +2325,17 @@ export default function App() {
     onPlay: () => {
       nativeAudioRef.current?.unlock();
       setIsPlaying(true);
+      if (
+        bgAudioSettingsRef.current.enabled &&
+        bgAudioSettingsRef.current.autoPopupOnPlay &&
+        !floatingMiniPlayerRef.current.isOpen &&
+        currentVideoRef.current
+      ) {
+        void floatingMiniPlayerRef.current.openPopup({
+          silent: true,
+          videoOverride: currentVideoRef.current,
+        });
+      }
     },
     onPause: () => setIsPlaying(false),
     onNext: handleNextTrack,
@@ -2744,6 +2797,8 @@ export default function App() {
         onSignOut={handleSignOut}
         onOpenBackgroundAudioPopup={handleOpenBackgroundAudioPopup}
         backgroundAudioEnabled={bgAudioSettings.enabled}
+        isFloatingOpen={floatingMiniPlayer.isOpen}
+        onToggleFloatingPopup={handleToggleFloatingPopup}
       />
 
       {/* Offline & Background Sync Status Banner */}
@@ -2788,7 +2843,7 @@ export default function App() {
                 onOpenBackgroundAudioPopup={handleOpenBackgroundAudioPopup}
                 isFloatingSupported={floatingMiniPlayer.isSupported}
                 isFloatingOpen={floatingMiniPlayer.isOpen}
-                onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
+                onToggleFloatingPopup={handleToggleFloatingPopup}
                 onPlayPause={handlePlayPause}
                 onSeek={handleSeek}
                 onSkipBack={handleSkipBack}
@@ -2818,7 +2873,7 @@ export default function App() {
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : isPlaying && !useNativeAudio && !isCheckingNativeAudio && !isPopupEmbedActive
+                  : isPlaying && !useNativeAudio && !isCheckingNativeAudio && !floatingMiniPlayer.isOpen
                   ? 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 sm:w-64 aspect-video rounded-2xl overflow-hidden shadow-2xl border-2 border-fuchsia-400/70 dark:border-fuchsia-500/60 z-40 bg-black transition-all'
                   : 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 aspect-video pointer-events-none opacity-0 -z-50 overflow-hidden'
               }
@@ -2839,7 +2894,8 @@ export default function App() {
                 onOpenBackgroundAudioPopup={handleOpenBackgroundAudioPopup}
                 isFloatingSupported={floatingMiniPlayer.isSupported}
                 isFloatingOpen={floatingMiniPlayer.isOpen}
-                onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
+                movedToPopup={isPopupEmbedActive}
+                onToggleFloatingPopup={handleToggleFloatingPopup}
                 onAddToPlaylist={handleAddToPlaylistCard}
                 isPlayed={playedIdSet.has(currentVideo.id)}
                 onTogglePlayed={handleTogglePlayed}
@@ -3494,7 +3550,7 @@ export default function App() {
         backgroundAudioActive={bgAudioSettings.enabled && useNativeAudio}
         isFloatingSupported={floatingMiniPlayer.isSupported}
         isFloatingOpen={floatingMiniPlayer.isOpen}
-        onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
+        onToggleFloatingPopup={handleToggleFloatingPopup}
       />
 
       {/* Universal Draggable In-App Floating Popup (guaranteed active on all browsers/mobile/iframes) */}
@@ -3506,6 +3562,11 @@ export default function App() {
         usingNativeAudio={useNativeAudio}
         hasNext={queue.length > 0}
         embedHost={floatingMiniPlayer.pipEmbedHost}
+        canOpenOsPip={floatingMiniPlayer.canOpenOsPip}
+        onOpenOsPip={() => {
+          void floatingMiniPlayer.openOsPipWindow({ manual: true });
+        }}
+        onOpenSettings={handleOpenBackgroundAudioPopup}
         onToggleEmbedHost={floatingMiniPlayer.togglePipEmbedHost}
         onFallbackStandardHost={floatingMiniPlayer.fallbackToStandardEmbedHost}
         onPlayPause={handlePlayPause}
@@ -3607,7 +3668,7 @@ export default function App() {
             supportsAutoPip={floatingMiniPlayer.supportsAutoPip}
             isFloatingOpen={floatingMiniPlayer.isOpen}
             floatingError={floatingMiniPlayer.error}
-            onToggleFloatingPopup={floatingMiniPlayer.togglePopup}
+            onToggleFloatingPopup={handleToggleFloatingPopup}
             onOpenExtractorAuth={handleOpenAudioExtractorSettings}
             onAutoCookieReady={handleAutoCookieReady}
           />

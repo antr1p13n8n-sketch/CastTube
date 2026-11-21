@@ -38,6 +38,8 @@ interface HeaderProps {
   onSignOut: () => void;
   onOpenBackgroundAudioPopup?: () => void;
   backgroundAudioEnabled?: boolean;
+  isFloatingOpen?: boolean;
+  onToggleFloatingPopup?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = React.memo(({
@@ -57,6 +59,8 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   onSignOut,
   onOpenBackgroundAudioPopup,
   backgroundAudioEnabled = false,
+  isFloatingOpen = false,
+  onToggleFloatingPopup,
 }) => {
   return (
     <header className="sticky top-0 z-30 w-full bg-white/85 dark:bg-slate-950/85 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800/80 transition-colors duration-200">
@@ -160,20 +164,22 @@ export const Header: React.FC<HeaderProps> = React.memo(({
 
         {/* Zone 3: Actions + Theme Selector + Auth */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          {onOpenBackgroundAudioPopup && (
+          {(onToggleFloatingPopup || onOpenBackgroundAudioPopup) && (
             <button
               type="button"
-              onClick={onOpenBackgroundAudioPopup}
+              onClick={onToggleFloatingPopup || onOpenBackgroundAudioPopup}
               className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                backgroundAudioEnabled
+                isFloatingOpen
+                  ? 'bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 text-white shadow-md shadow-fuchsia-500/25'
+                  : backgroundAudioEnabled
                   ? 'bg-gradient-to-r from-emerald-500/15 via-cyan-500/15 to-indigo-500/15 text-emerald-700 dark:text-cyan-300 border border-emerald-400/50 dark:border-cyan-500/40 hover:brightness-105'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
-              title="Popup Otomatis Tanpa Pembatasan & Audio Latar"
-              aria-label="Popup Otomatis Tanpa Pembatasan"
+              title={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Aktifkan Popup Pemutar Mengambang'}
+              aria-label={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Aktifkan Popup Pemutar Mengambang'}
             >
-              <PictureInPicture2 className="w-3.5 h-3.5 text-fuchsia-500" />
-              <span className="hidden lg:inline">Popup Otomatis</span>
+              <PictureInPicture2 className={`w-3.5 h-3.5 ${isFloatingOpen ? 'text-white' : 'text-fuchsia-500'}`} />
+              <span className="hidden lg:inline">{isFloatingOpen ? 'Popup Aktif' : 'Popup'}</span>
             </button>
           )}
 
@@ -362,14 +368,18 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           <span>Playlist{playlistCount > 0 ? ` (${playlistCount})` : ''}</span>
         </motion.button>
 
-        {onOpenBackgroundAudioPopup && (
+        {(onToggleFloatingPopup || onOpenBackgroundAudioPopup) && (
           <motion.button
             whileTap={{ scale: 0.95 }}
-            onClick={onOpenBackgroundAudioPopup}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 hover:bg-cyan-50 dark:hover:bg-cyan-950/30 transition-colors cursor-pointer"
+            onClick={onToggleFloatingPopup || onOpenBackgroundAudioPopup}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+              isFloatingOpen
+                ? 'bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 text-white font-bold shadow-sm shadow-fuchsia-500/20'
+                : 'hover:bg-cyan-50 dark:hover:bg-cyan-950/30'
+            }`}
           >
-            <PictureInPicture2 className="w-3.5 h-3.5 text-cyan-500" />
-            <span>Popup</span>
+            <PictureInPicture2 className={`w-3.5 h-3.5 ${isFloatingOpen ? 'text-white' : 'text-cyan-500'}`} />
+            <span>{isFloatingOpen ? 'Popup Aktif' : 'Popup'}</span>
           </motion.button>
         )}
       </nav>

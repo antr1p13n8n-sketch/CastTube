@@ -40,6 +40,7 @@ interface VideoPlayerViewProps {
   onOpenBackgroundAudioPopup?: () => void;
   isFloatingSupported?: boolean;
   isFloatingOpen?: boolean;
+  movedToPopup?: boolean;
   onToggleFloatingPopup?: () => void;
   onAddToPlaylist?: (video: Video) => void;
   isPlayed?: boolean;
@@ -66,6 +67,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
   onOpenBackgroundAudioPopup,
   isFloatingSupported = false,
   isFloatingOpen = false,
+  movedToPopup = false,
   onToggleFloatingPopup,
   onAddToPlaylist,
   isPlayed = false,
@@ -201,6 +203,37 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
           {/* 16:9 Video Player Container */}
           <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black shadow-xl ring-1 ring-fuchsia-500/25">
             {playerSlot}
+            {movedToPopup && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-5 text-center bg-slate-950/85 backdrop-blur-md">
+                <img
+                  src={currentVideo.thumbnail}
+                  alt={currentVideo.title}
+                  referrerPolicy="no-referrer"
+                  className="absolute inset-0 w-full h-full object-cover opacity-20 pointer-events-none"
+                />
+                <div className="relative z-10 max-w-sm space-y-3">
+                  <div className="w-12 h-12 rounded-2xl mx-auto bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-fuchsia-500/30">
+                    <PictureInPicture2 className="w-6 h-6" />
+                  </div>
+                  <div className="text-sm font-bold text-white">
+                    Sedang Diputar di Popup Mengambang
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Video berjalan aktif di jendela popup yang bebas digeser saat Anda menelusuri daftar video.
+                  </p>
+                  {onToggleFloatingPopup && (
+                    <button
+                      type="button"
+                      onClick={onToggleFloatingPopup}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 hover:brightness-110 shadow-md shadow-fuchsia-500/25 transition-all cursor-pointer"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      <span>Kembalikan ke Pemutar Utama</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Video Title & Actions */}

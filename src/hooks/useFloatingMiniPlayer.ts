@@ -31,6 +31,7 @@ interface UseFloatingMiniPlayerOptions {
 export interface OpenFloatingPopupOptions {
   silent?: boolean;
   videoOverride?: Video;
+  manual?: boolean;
 }
 
 export type FloatingPopupMode = 'document' | 'video' | 'inapp' | null;
@@ -224,6 +225,7 @@ export function useFloatingMiniPlayer({
     onEmbedStateChange,
   };
 
+  const isTopWindow = typeof window !== 'undefined' && window.self === window.top;
   const supportsDocumentPip =
     typeof window !== 'undefined' && 'documentPictureInPicture' in window;
   const supportsVideoPip =
@@ -231,7 +233,8 @@ export function useFloatingMiniPlayer({
     Boolean(document.pictureInPictureEnabled) &&
     typeof HTMLVideoElement !== 'undefined' &&
     'requestPictureInPicture' in HTMLVideoElement.prototype;
-  // Universal popup support: always enabled via Document PiP or interactive draggable In-App Popup
+  const canOpenOsPip = supportsDocumentPip && isTopWindow;
+  // Universal popup support: always enabled via unrestricted interactive FloatingInAppPopup
   const isSupported = true;
 
   const isPopupEmbedActive = Boolean(
@@ -427,7 +430,7 @@ export function useFloatingMiniPlayer({
     };
   }, [cleanupResources]);
 
-  const openPopup = useCallback(
+  const openOsPipWindow = useCallback(
     async (options?: OpenFloatingPopupOptions): Promise<boolean> => {
       setError(null);
       if (options?.videoOverride) {
@@ -435,21 +438,18 @@ export function useFloatingMiniPlayer({
       }
       if (!propsRef.current.currentVideo) {
         if (!options?.silent) {
-          setError('Putar video atau podcast terlebih dahulu sebelum membuka popup.');
+          setError('Pilih atau putar video terlebih dahulu untuk membuka jendela PiP.');
         }
         return false;
       }
 
-      const isTopWindow = typeof window !== 'undefined' && window.self === window.top;
-      const isMinimizeContext =
-        typeof document !== 'undefined' && document.visibilityState === 'hidden';
-
-      // 1. Desktop Top-Level Document Picture-in-Picture (OS floating window)
-      if (supportsDocumentPip && isTopWindow && !isMinimizeContext) {
+      if (canOpenOsPip) {
         try {
           if (pipWindowRef.current && !pipWindowRef.current.closed) {
             if (!options?.silent) pipWindowRef.current.focus();
             renderDocumentPipContents(pipWindowRef.current);
+            setIsOpen(true);
+            setMode('document');
             return true;
           }
           cleanupResources();
@@ -646,18 +646,54 @@ export function useFloatingMiniPlayer({
           setIsOpen(true);
           setMode('document');
           openedByMinimizeRef.current = false;
-          wasHiddenSinceOpenRef.current = isMinimizeContext;
+          wasHiddenSinceOpenRef.current =
+            typeof document !== 'undefined' && document.visibilityState === 'hidden';
           return true;
         } catch {
           cleanupResources();
         }
       }
 
-      // 2. Universal Unrestricted Draggable Floating In-App Popup
-      // Always succeeds on Mobile, Safari, Firefox, PWA, Desktop, and Preview Iframes
+      // Always fall back seamlessly to unrestricted interactive In-App Popup
+      setIsOpen(true);
+      setMode('inapp');
+      return true;
+    },
+    [canOpenOsPip, cleanupResources, renderDocumentPipContents]
+  );
+
+  // Guaranteed Universal Floating In-App Popup (zero user-activation / about:blank / popup-blocker restrictions)
+  const openPopup = useCallback(
+    async (options?: OpenFloatingPopupOptions): Promise<boolean> => {
+      setError(null);
+      if (options?.videoOverride) {
+        propsRef.current.currentVideo = options.videoOverride;
+      }
+      if (!propsRef.current.currentVideo) {
+        if (!options?.silent) {
+          setError('Putar video atau podcast terlebih dahulu sebelum membuka popup.');
+        }
+        return false;
+      }
+
+      const isMinimizeContext =
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'hidden' &&
+        !options?.manual;
+
       if (modeRef.current === 'inapp' && isOpenRef.current) {
+        if (options?.manual) {
+          openedByMinimizeRef.current = false;
+        }
         return true;
       }
+
+      if (modeRef.current === 'document' && isOpenRef.current && pipWindowRef.current && !pipWindowRef.current.closed) {
+        if (!options?.silent) pipWindowRef.current.focus();
+        renderDocumentPipContents(pipWindowRef.current);
+        return true;
+      }
+
       cleanupResources();
       setIsOpen(true);
       setMode('inapp');
@@ -665,7 +701,7 @@ export function useFloatingMiniPlayer({
       wasHiddenSinceOpenRef.current = isMinimizeContext;
       return true;
     },
-    [cleanupResources, renderDocumentPipContents, supportsDocumentPip]
+    [cleanupResources, renderDocumentPipContents]
   );
 
   const closePopup = useCallback(() => {
@@ -677,7 +713,7 @@ export function useFloatingMiniPlayer({
       closePopup();
       return false;
     }
-    return openPopup();
+    return openPopup({ manual: true });
   }, [closePopup, openPopup]);
 
   const togglePipEmbedHost = useCallback(() => {
@@ -784,6 +820,7 @@ export function useFloatingMiniPlayer({
   return {
     isSupported,
     supportsAutoPip,
+    canOpenOsPip,
     isOpen,
     isPopupEmbedActive,
     mode,
@@ -792,6 +829,7 @@ export function useFloatingMiniPlayer({
     fallbackToStandardEmbedHost,
     error,
     openPopup,
+    openOsPipWindow,
     closePopup,
     togglePopup,
   };

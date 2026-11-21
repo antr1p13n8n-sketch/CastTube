@@ -14,6 +14,8 @@ import {
   Tv,
   Headphones,
   RefreshCw,
+  ExternalLink,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { PlayerMode, Video } from '../types';
 import { formatTime } from '../utils/format';
@@ -32,6 +34,9 @@ interface FloatingInAppPopupProps {
   usingNativeAudio: boolean;
   hasNext: boolean;
   embedHost: 'nocookie' | 'standard';
+  canOpenOsPip?: boolean;
+  onOpenOsPip?: () => void;
+  onOpenSettings?: () => void;
   onToggleEmbedHost: () => void;
   onFallbackStandardHost: () => void;
   onPlayPause: () => void;
@@ -87,6 +92,9 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   usingNativeAudio,
   hasNext,
   embedHost,
+  canOpenOsPip = false,
+  onOpenOsPip,
+  onOpenSettings,
   onToggleEmbedHost,
   onFallbackStandardHost,
   onPlayPause,
@@ -101,6 +109,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
 }) => {
   const [compact, setCompact] = useState(false);
   const dragControls = useDragControls();
+  const viewportBoundsRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const iframeStateRef = useRef<{ videoId: string | null; playing: boolean | null }>({
     videoId: null,
@@ -243,67 +252,97 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   }, [useEmbed]);
 
   return (
-    <AnimatePresence>
-      {isOpen && currentVideo && (
-        <motion.div
-          key="floating-inapp-popup"
-          drag
-          dragControls={dragControls}
-          dragListener={false}
-          dragMomentum={false}
-          initial={{ opacity: 0, y: 24, scale: 0.94 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 20, scale: 0.94 }}
-          transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-          className={`fixed right-3 sm:right-5 bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-fuchsia-200/80 dark:border-fuchsia-500/35 shadow-2xl shadow-fuchsia-500/15 overflow-hidden text-left transition-[width] duration-200 ${
-            compact ? 'w-[min(calc(100vw-1.5rem),296px)]' : 'w-[min(calc(100vw-1.5rem),352px)]'
-          }`}
-        >
-          {/* Top Rainbow Hairline */}
-          <div className="h-1 w-full casttube-gradient-bar" />
-
-          {/* Drag Header Bar */}
-          <div
-            onPointerDown={(e) => dragControls.start(e)}
-            className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-gradient-to-r from-rose-500/8 via-fuchsia-500/8 to-cyan-500/8 border-b border-slate-200/70 dark:border-slate-800/80 cursor-grab active:cursor-grabbing select-none touch-none"
+    <>
+      <div
+        ref={viewportBoundsRef}
+        className="fixed inset-2 pointer-events-none z-40"
+        aria-hidden="true"
+      />
+      <AnimatePresence>
+        {isOpen && currentVideo && (
+          <motion.div
+            key="floating-inapp-popup"
+            drag
+            dragControls={dragControls}
+            dragListener={false}
+            dragMomentum={false}
+            dragConstraints={viewportBoundsRef}
+            dragElastic={0.06}
+            initial={{ opacity: 0, y: 24, scale: 0.94 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.94 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+            className={`fixed right-3 sm:right-5 bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-fuchsia-200/80 dark:border-fuchsia-500/35 shadow-2xl shadow-fuchsia-500/15 overflow-hidden text-left transition-[width] duration-200 ${
+              compact ? 'w-[min(calc(100vw-1.5rem),296px)]' : 'w-[min(calc(100vw-1.5rem),352px)]'
+            }`}
           >
-            <div className="flex items-center gap-2 min-w-0">
-              <GripHorizontal className="w-4 h-4 text-fuchsia-500 shrink-0" />
-              <span className="text-[11px] font-extrabold tracking-tight bg-gradient-to-r from-rose-600 via-fuchsia-600 to-indigo-600 dark:from-rose-400 dark:via-fuchsia-400 dark:to-cyan-400 bg-clip-text text-transparent truncate">
-                Popup Aktif · Geser Bebas
-              </span>
-            </div>
+            {/* Top Rainbow Hairline */}
+            <div className="h-1 w-full casttube-gradient-bar" />
 
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                onClick={() => setCompact((v) => !v)}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                title={compact ? 'Tampilkan Video / Visualizer' : 'Perkecil Tampilan Popup'}
-                aria-label={compact ? 'Tampilkan penuh popup' : 'Perkecil popup'}
-              >
-                <Minimize2 className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={onExpand}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-fuchsia-600 dark:text-slate-400 dark:hover:text-fuchsia-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                title="Buka Pemutar Penuh"
-                aria-label="Buka Pemutar Penuh"
-              >
-                <Maximize2 className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
-                title="Tutup Popup"
-                aria-label="Tutup Popup"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+            {/* Drag Header Bar */}
+            <div
+              onPointerDown={(e) => dragControls.start(e)}
+              className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-gradient-to-r from-rose-500/8 via-fuchsia-500/8 to-cyan-500/8 border-b border-slate-200/70 dark:border-slate-800/80 cursor-grab active:cursor-grabbing select-none touch-none"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <GripHorizontal className="w-4 h-4 text-fuchsia-500 shrink-0" />
+                <span className="text-[11px] font-extrabold tracking-tight bg-gradient-to-r from-rose-600 via-fuchsia-600 to-indigo-600 dark:from-rose-400 dark:via-fuchsia-400 dark:to-cyan-400 bg-clip-text text-transparent truncate">
+                  Popup Aktif · Geser Bebas
+                </span>
+              </div>
+
+              <div className="flex items-center gap-0.5 shrink-0">
+                {canOpenOsPip && onOpenOsPip && (
+                  <button
+                    type="button"
+                    onClick={onOpenOsPip}
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    title="Lepas ke Jendela OS Mengambang (PiP)"
+                    aria-label="Lepas ke Jendela OS Mengambang"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {onOpenSettings && (
+                  <button
+                    type="button"
+                    onClick={onOpenSettings}
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-fuchsia-600 dark:text-slate-400 dark:hover:text-fuchsia-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    title="Setelan Popup & Cookie Otomatis"
+                    aria-label="Setelan Popup"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setCompact((v) => !v)}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  title={compact ? 'Tampilkan Video / Visualizer' : 'Perkecil Tampilan Popup'}
+                  aria-label={compact ? 'Tampilkan penuh popup' : 'Perkecil popup'}
+                >
+                  <Minimize2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onExpand}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-fuchsia-600 dark:text-slate-400 dark:hover:text-fuchsia-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  title="Buka Pemutar Penuh"
+                  aria-label="Buka Pemutar Penuh"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                  title="Tutup Popup"
+                  aria-label="Tutup Popup"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
-          </div>
 
           {/* Media Stage */}
           <div className="p-3.5 space-y-3">
@@ -495,8 +534,9 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
               </button>
             </div>
           </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 };
