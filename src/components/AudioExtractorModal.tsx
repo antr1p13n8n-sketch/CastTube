@@ -409,7 +409,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/65 backdrop-blur-sm"
         >
           <motion.div
             key="extractor-modal-card"
@@ -418,20 +418,21 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg max-h-[90dvh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left"
+            className="w-full max-w-lg max-h-[90dvh] flex flex-col rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-fuchsia-200/70 dark:border-fuchsia-900/50 shadow-2xl overflow-hidden text-left"
           >
+            <div className="h-1 w-full casttube-gradient-bar shrink-0" />
             {/* Header */}
             <div className="flex items-start justify-between gap-3 px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
               <div className="flex items-start gap-3 min-w-0">
-                <div className="p-2.5 rounded-2xl bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">
+                <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-rose-500/15 via-fuchsia-500/15 to-indigo-500/15 text-fuchsia-600 dark:text-fuchsia-400 shrink-0">
                   <ShieldAlert className="w-5 h-5" />
                 </div>
                 <div className="min-w-0">
                   <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-                    Atasi Pembatasan YouTube
+                    Sesi Akun &amp; Audio Latar Opsional
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-                    Hubungkan sesi sekali saja agar Audio Latar, Popup di HP/Layar Terkunci, video yang memblokir embed, dan unduhan tetap lancar.
+                    Opsional untuk video terkunci akun, kontrol layar terkunci di HP, atau unduhan audio offline.
                   </p>
                 </div>
               </div>
@@ -447,14 +448,14 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
 
             <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-5">
               {/* Benefits Note */}
-              <div className="px-3.5 py-2.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                Membuka jalur audio langsung saat server cloud kena cek anti-bot, melewati blokir embed (Error 101/150), serta mengaktifkan kontrol popup &amp; notifikasi layar terkunci di HP.
+              <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-fuchsia-50/75 to-cyan-50/90 dark:from-indigo-950/35 dark:via-fuchsia-950/25 dark:to-cyan-950/35 border border-indigo-200/80 dark:border-indigo-800/50 text-[11px] text-indigo-950 dark:text-indigo-200 leading-relaxed">
+                Membuka jalur audio native langsung, melewati pembatasan usia/akun, serta mengaktifkan kontrol notifikasi layar terkunci di HP.
               </div>
 
               {/* Pending Video Notice */}
               {pendingVideo && (
                 <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/70">
-                  <Download className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+                  <Download className="w-4 h-4 text-fuchsia-500 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                       {intent === 'playback' ? 'Audio Latar & Popup' : 'Menunggu Unduhan'}
@@ -488,7 +489,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                   <button
                     type="button"
                     onClick={handleDisconnectAll}
-                    className="flex items-center gap-1 text-[11px] font-bold text-red-600 dark:text-red-400 hover:underline shrink-0 cursor-pointer"
+                    className="flex items-center gap-1 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline shrink-0 cursor-pointer"
                   >
                     <Unlink className="w-3 h-3" />
                     <span>Putuskan</span>
@@ -506,7 +507,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                   }}
                   className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                     activeTab === 'oauth'
-                      ? 'bg-white dark:bg-slate-900 text-red-600 dark:text-red-400 shadow-xs'
+                      ? 'bg-gradient-to-r from-rose-500 to-fuchsia-600 text-white shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
@@ -521,7 +522,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                   }}
                   className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                     activeTab === 'cookies'
-                      ? 'bg-white dark:bg-slate-900 text-red-600 dark:text-red-400 shadow-xs'
+                      ? 'bg-gradient-to-r from-fuchsia-500 to-indigo-600 text-white shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
@@ -536,7 +537,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                   }}
                   className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                     activeTab === 'server'
-                      ? 'bg-white dark:bg-slate-900 text-red-600 dark:text-red-400 shadow-xs'
+                      ? 'bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
@@ -557,7 +558,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                       type="button"
                       onClick={handleStartDeviceAuth}
                       disabled={isStartingDevice}
-                      className="w-full py-3 px-4 rounded-2xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md shadow-red-600/20 flex items-center justify-center gap-2 transition-colors disabled:opacity-60 cursor-pointer"
+                      className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white text-xs font-bold shadow-md shadow-fuchsia-500/25 flex items-center justify-center gap-2 transition-all disabled:opacity-60 cursor-pointer"
                     >
                       {isStartingDevice ? (
                         <>
@@ -597,13 +598,13 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                         href={deviceInfo.verificationUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors"
+                        className="inline-flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white text-xs font-bold transition-all"
                       >
                         <ExternalLink className="w-4 h-4" />
                         <span>Buka google.com/device & Izinkan</span>
                       </a>
                       <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" />
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-fuchsia-500" />
                         <span>Menunggu konfirmasi otomatis...</span>
                       </div>
                     </div>
@@ -614,9 +615,9 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
               {/* Tab 2: Cookie Auto & Paste */}
               {activeTab === 'cookies' && (
                 <div className="space-y-4">
-                  <div className="p-3.5 rounded-2xl bg-red-50/80 dark:bg-red-950/25 border border-red-200/80 dark:border-red-900/50 space-y-2.5">
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-rose-50/90 via-fuchsia-50/80 to-indigo-50/90 dark:from-rose-950/25 dark:via-fuchsia-950/25 dark:to-indigo-950/25 border border-fuchsia-200/80 dark:border-fuchsia-900/50 space-y-2.5">
                     <div className="flex items-start gap-2.5">
-                      <Sparkles className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                      <Sparkles className="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400 shrink-0 mt-0.5" />
                       <div className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
                         <div className="font-bold text-slate-900 dark:text-white">
                           Set Cookie Otomatis (Tanpa Login)
@@ -630,7 +631,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                       type="button"
                       onClick={() => void handleAutoSetupCookie()}
                       disabled={isAutoSettingCookie || isSaving}
-                      className="w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60 cursor-pointer shadow-sm"
+                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-60 cursor-pointer shadow-sm"
                     >
                       {isAutoSettingCookie ? (
                         <>
@@ -663,7 +664,7 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                       onChange={(e) => setCookiesInput(e.target.value)}
                       rows={4}
                       placeholder="Tempel isi cookies.txt atau string SAPISID=...; SID=...; HSID=... di sini"
-                      className="w-full rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-3 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                      className="w-full rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-3 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500/40"
                     />
                     <button
                       type="submit"
@@ -695,12 +696,12 @@ export const AudioExtractorModal: React.FC<AudioExtractorModalProps> = ({
                     value={extractorUrlInput}
                     onChange={(e) => setExtractorUrlInput(e.target.value)}
                     placeholder="https://cobalt-anda.domain.com"
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 px-3.5 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 px-3.5 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500/40"
                   />
                   <button
                     type="submit"
                     disabled={isSaving}
-                    className="w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60 cursor-pointer"
+                    className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:brightness-110 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-60 cursor-pointer"
                   >
                     {isSaving ? (
                       <>

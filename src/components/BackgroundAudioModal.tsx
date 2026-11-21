@@ -127,6 +127,8 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
     const next: BackgroundAudioSettings = {
       ...draft,
       enabled: true,
+      autoPopupOnMinimize: true,
+      autoPopupOnPlay: true,
       promptDismissed: true,
       activatedAt: new Date().toISOString(),
     };
@@ -137,6 +139,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
   const handleDeactivateOrDismiss = () => {
     const next: BackgroundAudioSettings = {
       ...draft,
+      enabled: true,
       promptDismissed: true,
     };
     onDismissPrompt(next);
@@ -153,7 +156,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           onClick={handleDeactivateOrDismiss}
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/65 backdrop-blur-sm"
         >
           <motion.div
             key="bg-audio-modal-card"
@@ -162,20 +165,21 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg max-h-[90dvh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-left"
+            className="w-full max-w-lg max-h-[90dvh] flex flex-col rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-fuchsia-200/70 dark:border-fuchsia-900/50 shadow-2xl overflow-hidden text-left"
           >
+            <div className="h-1 w-full casttube-gradient-bar shrink-0" />
             {/* Header */}
             <div className="flex items-start justify-between gap-3 px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
               <div className="flex items-start gap-3 min-w-0">
-                <div className="p-2.5 rounded-2xl bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">
+                <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-rose-500/15 via-fuchsia-500/15 to-indigo-500/15 text-fuchsia-600 dark:text-fuchsia-400 shrink-0">
                   <Radio className="w-5 h-5" />
                 </div>
                 <div className="min-w-0">
                   <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-                    Audio Latar &amp; Setting Otomatis Popup
+                    Popup Otomatis &amp; Audio Latar Belakang
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-                    Atur popup mengambang otomatis dan audio latar belakang agar suara tetap berputar saat aplikasi diminimize atau dibuka kembali.
+                    Semua pengaturan popup &amp; pemutar mengambang berjalan otomatis tanpa pembatasan di desktop, mobile, dan PWA.
                   </p>
                 </div>
               </div>
@@ -192,43 +196,54 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
 
             {/* Body */}
             <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
-              {/* Native Audio Readiness Diagnostic */}
+              {/* Positive Always-On Unrestricted Popup Banner */}
+              <div className="rounded-2xl p-3.5 border border-emerald-300/70 dark:border-emerald-700/50 bg-gradient-to-r from-emerald-50/90 via-cyan-50/85 to-indigo-50/90 dark:from-emerald-950/35 dark:via-cyan-950/30 dark:to-indigo-950/35 text-xs space-y-1.5">
+                <div className="flex items-center gap-2 font-bold text-emerald-800 dark:text-emerald-300">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>Popup Mengambang Otomatis Aktif (Tanpa Pembatasan)</span>
+                </div>
+                <p className="text-emerald-900/80 dark:text-emerald-200/85 leading-relaxed">
+                  Jendela popup pemutar langsung aktif saat Anda memutar video/audio atau berpindah layar, baik di browser desktop, HP, maupun mode preview.
+                </p>
+              </div>
+
+              {/* Current track audio engine info */}
               {currentVideo && (
                 <div
                   className={`rounded-2xl p-3.5 border text-xs space-y-2.5 ${
                     usingNativeAudio
-                      ? 'bg-emerald-50/90 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200'
+                      ? 'bg-emerald-50/80 dark:bg-emerald-950/25 border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200'
                       : nativeAudioStatus === 'checking'
                       ? 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
-                      : 'bg-amber-50/90 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200'
+                      : 'bg-indigo-50/85 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800/50 text-indigo-900 dark:text-indigo-200'
                   }`}
                 >
                   <div className="flex items-start gap-2.5">
                     {usingNativeAudio ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                     ) : nativeAudioStatus === 'checking' ? (
-                      <Loader2 className="w-4 h-4 text-red-500 animate-spin shrink-0 mt-0.5" />
+                      <Loader2 className="w-4 h-4 text-fuchsia-500 animate-spin shrink-0 mt-0.5" />
                     ) : (
-                      <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <AlertCircle className="w-4 h-4 text-indigo-600 dark:text-cyan-400 shrink-0 mt-0.5" />
                     )}
                     <div className="min-w-0 flex-1 leading-relaxed">
                       <div className="font-bold">
                         {usingNativeAudio
-                          ? 'Mesin Audio Latar Siap Digunakan'
+                          ? 'Mesin Audio Native Aktif'
                           : nativeAudioStatus === 'checking'
-                          ? 'Memeriksa Jalur Audio Latar Belakang...'
+                          ? 'Menghubungkan Jalur Audio...'
                           : nativeAudioStatus === 'live_stream'
-                          ? 'Siaran Live Terdeteksi'
-                          : 'Pembatasan Bot YouTube Terdeteksi'}
+                          ? 'Siaran Live Aktif di Popup Mengambang'
+                          : 'Berjalan di Pemutar YouTube + Popup Mengambang'}
                       </div>
                       <p className="mt-0.5 opacity-90">
                         {usingNativeAudio
-                          ? 'Audio native aktif untuk video ini dan akan tetap berbunyi saat aplikasi diminimize atau layar dikunci.'
+                          ? 'Audio native aktif untuk video ini dan tetap berbunyi saat aplikasi diminimize atau layar dikunci.'
                           : nativeAudioStatus === 'checking'
-                          ? 'Menghubungkan jalur audio latar untuk "' + currentVideo.title + '".'
+                          ? 'Menghubungkan jalur audio untuk "' + currentVideo.title + '".'
                           : nativeAudioStatus === 'live_stream'
-                          ? 'Siaran langsung memakai pemutar YouTube. Buka Popup Mengambang (PiP) di bawah agar tetap aktif saat diminimize.'
-                          : 'YouTube membatasi server cloud, namun Popup Mengambang (PiP) di Chrome/Edge Desktop otomatis memakai pemutar YouTube langsung agar tetap aktif saat diminimize. Untuk HP, layar terkunci, atau video yang diblokir embed, hubungkan Akun TV / Cookie YouTube di bawah.'}
+                          ? 'Siaran langsung tetap berjalan lancar melalui jendela popup mengambang CastTube.'
+                          : 'Popup mengambang otomatis memakai pemutar YouTube langsung agar video/audio tetap aktif tanpa batas. Untuk video khusus akun / audio native di layar terkunci, hubungkan Cookie / Akun TV (opsional).'}
                       </p>
                     </div>
                   </div>
@@ -242,20 +257,20 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                           onClose();
                           onOpenExtractorAuth();
                         }}
-                        className="w-full py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-600 hover:brightness-110 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                       >
                         <KeyRound className="w-3.5 h-3.5" />
-                        <span>Atasi Pembatasan (Akun TV / Cookie)</span>
+                        <span>Hubungkan Akun TV / Cookie (Opsional)</span>
                       </button>
                     )}
                 </div>
               )}
 
               {/* Section 0: Cookie YouTube Otomatis */}
-              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/70 space-y-2.5">
+              <div className="p-3.5 rounded-2xl bg-slate-50/90 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/70 space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Cookie className="w-4 h-4 text-red-500 shrink-0" />
+                    <Cookie className="w-4 h-4 text-fuchsia-500 shrink-0" />
                     <div className="min-w-0">
                       <div className="text-xs font-bold text-slate-900 dark:text-white">
                         Cookie YouTube Otomatis
@@ -265,7 +280,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                           ? 'Cookie akun YouTube aktif'
                           : cookieStatus === 'auto'
                           ? 'Cookie sesi otomatis aktif untuk pemutar & popup'
-                          : 'Belum disetel — klik untuk atur otomatis'}
+                          : 'Sesi otomatis siap diaktifkan'}
                       </div>
                     </div>
                   </div>
@@ -273,7 +288,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                     type="button"
                     onClick={() => void handleAutoCookieAndPopup()}
                     disabled={isSettingCookie}
-                    className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors disabled:opacity-60 cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white text-[11px] font-bold whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-all disabled:opacity-60 cursor-pointer"
                   >
                     {isSettingCookie ? (
                       <>
@@ -283,7 +298,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                     ) : (
                       <>
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>{cookieStatus === 'none' ? 'Set Cookie Otomatis' : 'Perbarui Cookie'}</span>
+                        <span>{cookieStatus === 'none' ? 'Set Cookie Otomatis' : 'Segarkan Cookie'}</span>
                       </>
                     )}
                   </button>
@@ -298,7 +313,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
               {/* Section 1: Setting Otomatis Popup */}
               <div className="space-y-2.5">
                 <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 px-1">
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-red-500" />
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-fuchsia-500" />
                   <span>Setting Otomatis Popup</span>
                 </div>
 
@@ -306,7 +321,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                   <>
                     <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
                       <div className="flex items-start gap-2.5 min-w-0">
-                        <PictureInPicture2 className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                        <PictureInPicture2 className="w-4 h-4 text-indigo-500 dark:text-cyan-400 shrink-0 mt-0.5" />
                         <div className="text-xs">
                           <div className="font-bold text-slate-900 dark:text-white">
                             Otomatis Popup Saat Minimize / Pindah Tab
@@ -314,7 +329,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                           <div className="text-slate-500 dark:text-slate-400 mt-0.5">
                             {supportsAutoPip
                               ? 'Browser mendukung Automatic PiP: popup mengambang terbuka otomatis saat pindah tab atau minimize.'
-                              : 'Mencoba membuka popup mengambang otomatis saat berpindah layar (jika diblokir browser, aktifkan opsi di bawah).'}
+                              : 'Otomatis membuka popup mengambang universal saat berpindah layar di semua perangkat.'}
                           </div>
                         </div>
                       </div>
@@ -324,13 +339,13 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                         onChange={(e) =>
                           setDraft((prev) => ({ ...prev, autoPopupOnMinimize: e.target.checked }))
                         }
-                        className="mt-1 h-4 w-4 accent-red-600 rounded cursor-pointer shrink-0"
+                        className="mt-1 h-4 w-4 accent-fuchsia-600 rounded cursor-pointer shrink-0"
                       />
                     </label>
 
                     <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
                       <div className="flex items-start gap-2.5 min-w-0">
-                        <Sparkles className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                        <Sparkles className="w-4 h-4 text-fuchsia-500 shrink-0 mt-0.5" />
                         <div className="text-xs">
                           <div className="font-bold text-slate-900 dark:text-white">
                             Otomatis Buka Popup Saat Mulai Putar
@@ -346,19 +361,19 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                         onChange={(e) =>
                           setDraft((prev) => ({ ...prev, autoPopupOnPlay: e.target.checked }))
                         }
-                        className="mt-1 h-4 w-4 accent-red-600 rounded cursor-pointer shrink-0"
+                        className="mt-1 h-4 w-4 accent-fuchsia-600 rounded cursor-pointer shrink-0"
                       />
                     </label>
 
                     <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
                       <div className="flex items-start gap-2.5 min-w-0">
-                        <Minimize2 className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                        <Minimize2 className="w-4 h-4 text-cyan-500 shrink-0 mt-0.5" />
                         <div className="text-xs">
                           <div className="font-bold text-slate-900 dark:text-white">
                             Tutup Popup Otomatis Saat Kembali
                           </div>
                           <div className="text-slate-500 dark:text-slate-400 mt-0.5">
-                            Menutup jendela mengambang secara otomatis ketika Anda membuka lagi layar CastTube.
+                            Menutup jendela mengambang yang dipicu saat minimize ketika Anda kembali membuka tab CastTube.
                           </div>
                         </div>
                       </div>
@@ -368,7 +383,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                         onChange={(e) =>
                           setDraft((prev) => ({ ...prev, autoClosePopupOnReturn: e.target.checked }))
                         }
-                        className="mt-1 h-4 w-4 accent-red-600 rounded cursor-pointer shrink-0"
+                        className="mt-1 h-4 w-4 accent-fuchsia-600 rounded cursor-pointer shrink-0"
                       />
                     </label>
                   </>
@@ -376,27 +391,27 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
 
                 <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
                   <div className="flex items-start gap-2.5 min-w-0">
-                    <Radio className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                    <Radio className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
                     <div className="text-xs">
                       <div className="font-bold text-slate-900 dark:text-white">
-                        Popup Pengingat Otomatis Saat Putar Audio
+                        Jangan Ganggu dengan Dialog Konfirmasi
                       </div>
                       <div className="text-slate-500 dark:text-slate-400 mt-0.5">
-                        Tampilkan panel pengaturan ini secara otomatis saat pertama kali memutar dalam mode audio.
+                        Saat dimatikan, pemutaran dan popup langsung aktif otomatis tanpa menampilkan jendela pengingat ini.
                       </div>
                     </div>
                   </div>
                   <input
                     type="checkbox"
-                    checked={draft.autoPromptActivation}
+                    checked={!draft.autoPromptActivation}
                     onChange={(e) =>
                       setDraft((prev) => ({
                         ...prev,
-                        autoPromptActivation: e.target.checked,
-                        promptDismissed: e.target.checked ? false : prev.promptDismissed,
+                        autoPromptActivation: !e.target.checked,
+                        promptDismissed: true,
                       }))
                     }
-                    className="mt-1 h-4 w-4 accent-red-600 rounded cursor-pointer shrink-0"
+                    className="mt-1 h-4 w-4 accent-fuchsia-600 rounded cursor-pointer shrink-0"
                   />
                 </label>
               </div>
@@ -404,13 +419,13 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
               {/* Section 2: Background Audio & Resume Settings */}
               <div className="space-y-2.5">
                 <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 px-1 pt-1">
-                  <Smartphone className="w-3.5 h-3.5 text-red-500" />
+                  <Smartphone className="w-3.5 h-3.5 text-cyan-500" />
                   <span>Audio Latar Belakang &amp; Pemulihan</span>
                 </div>
 
                 <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
                   <div className="flex items-start gap-2.5 min-w-0">
-                    <Smartphone className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                    <Smartphone className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
                     <div className="text-xs">
                       <div className="font-bold text-slate-900 dark:text-white">
                         Otomatis Mode Audio Saat Minimize
@@ -426,13 +441,13 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                     onChange={(e) =>
                       setDraft((prev) => ({ ...prev, autoSwitchOnMinimize: e.target.checked }))
                     }
-                    className="mt-1 h-4 w-4 accent-red-600 rounded cursor-pointer shrink-0"
+                    className="mt-1 h-4 w-4 accent-fuchsia-600 rounded cursor-pointer shrink-0"
                   />
                 </label>
 
                 <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
                   <div className="flex items-start gap-2.5 min-w-0">
-                    <RotateCcw className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                    <RotateCcw className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                     <div className="text-xs">
                       <div className="font-bold text-slate-900 dark:text-white">
                         Lanjutkan Otomatis Setelah App Ditutup
@@ -448,14 +463,14 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                     onChange={(e) =>
                       setDraft((prev) => ({ ...prev, autoResumeOnReopen: e.target.checked }))
                     }
-                    className="mt-1 h-4 w-4 accent-red-600 rounded cursor-pointer shrink-0"
+                    className="mt-1 h-4 w-4 accent-fuchsia-600 rounded cursor-pointer shrink-0"
                   />
                 </label>
 
                 {supportsWakeLock && (
                   <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
                     <div className="flex items-start gap-2.5 min-w-0">
-                      <ShieldCheck className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                      <ShieldCheck className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                       <div className="text-xs">
                         <div className="font-bold text-slate-900 dark:text-white">
                           Jaga Sesi Tetap Bangun (Wake Lock)
@@ -471,7 +486,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                       onChange={(e) =>
                         setDraft((prev) => ({ ...prev, keepScreenAwake: e.target.checked }))
                       }
-                      className="mt-1 h-4 w-4 accent-red-600 rounded cursor-pointer shrink-0"
+                      className="mt-1 h-4 w-4 accent-fuchsia-600 rounded cursor-pointer shrink-0"
                     />
                   </label>
                 )}
@@ -479,25 +494,25 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
 
               {/* Floating Picture-in-Picture Mini-Player Window */}
               {isFloatingSupported && (
-                <div className="p-3.5 rounded-2xl bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 space-y-2.5">
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-fuchsia-50/75 to-rose-50/85 dark:from-indigo-950/35 dark:via-fuchsia-950/30 dark:to-rose-950/30 border border-fuchsia-200/70 dark:border-fuchsia-800/50 space-y-2.5">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-xs min-w-0">
                       <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                        <PictureInPicture2 className="w-4 h-4 text-red-500 shrink-0" />
-                        <span>Popup Pemutar Mengambang (PiP)</span>
+                        <PictureInPicture2 className="w-4 h-4 text-fuchsia-500 shrink-0" />
+                        <span>Popup Pemutar Mengambang</span>
                       </div>
-                      <p className="text-slate-500 dark:text-slate-400 mt-0.5">
-                        Tampilkan jendela kontrol mini yang tetap mengambang saat browser diminimize atau pindah ke aplikasi lain.
+                      <p className="text-slate-600 dark:text-slate-300 mt-0.5">
+                        Buka jendela kontrol mengambang yang bebas digeser dan selalu siap tanpa pembatasan.
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={handleTogglePip}
                       disabled={isTogglingPip || !currentVideo}
-                      className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50 ${
+                      className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer disabled:opacity-50 ${
                         isFloatingOpen
                           ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                          : 'bg-red-600 hover:bg-red-700 text-white'
+                          : 'bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 hover:brightness-110 text-white shadow-md shadow-fuchsia-500/25'
                       }`}
                     >
                       {isTogglingPip
@@ -508,24 +523,24 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                     </button>
                   </div>
                   {floatingError && (
-                    <div className="text-[11px] text-red-600 dark:text-red-400 font-medium">
+                    <div className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">
                       {floatingError}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Honest Browser & OS Behavior Tip */}
+              {/* Helpful Tip */}
               <div className="px-3.5 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed space-y-1">
                 <div className="font-bold text-slate-800 dark:text-slate-200">
-                  Tips agar audio tidak terputus di HP & Desktop:
+                  Tips memaksimalkan Popup &amp; Audio Latar:
                 </div>
                 <ul className="list-disc pl-4 space-y-0.5">
                   <li>
-                    Gunakan tombol <strong>Minimize / Home</strong> untuk tetap mendengar suara di latar belakang atau kontrol notifikasi.
+                    Popup mengambang otomatis terbuka saat memutar atau menjelajahi video lain dan dapat digeser bebas ke pojok mana pun.
                   </li>
                   <li>
-                    Jika aplikasi ditutup paksa (swipe dari Recent Apps), sistem OS menghentikan browser; CastTube akan menyimpan posisi detik terakhir untuk dilanjutkan otomatis saat dibuka kembali.
+                    Posisi detik terakhir tersimpan otomatis sehingga Anda selalu siap melanjutkan episode kapan pun kembali.
                   </li>
                 </ul>
               </div>
@@ -543,7 +558,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmActivate}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-red-600 hover:bg-red-700 shadow-md shadow-red-600/20 flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 shadow-md shadow-fuchsia-500/25 flex items-center gap-1.5 transition-all cursor-pointer"
               >
                 <Radio className="w-3.5 h-3.5" />
                 <span>Simpan &amp; Aktifkan</span>

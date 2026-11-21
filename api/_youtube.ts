@@ -1541,6 +1541,36 @@ export async function generateAutoYouTubeCookies(): Promise<{
   };
 }
 
+let cachedAutoGuestCookies: { cookies: string; visitorData?: string; expiresAt: number } | null = null;
+let pendingAutoGuestCookiePromise: Promise<{ cookies: string; visitorData?: string }> | null = null;
+
+async function getCachedAutoYouTubeCookies(): Promise<{ cookies: string; visitorData?: string }> {
+  if (cachedAutoGuestCookies && cachedAutoGuestCookies.expiresAt > Date.now()) {
+    return {
+      cookies: cachedAutoGuestCookies.cookies,
+      visitorData: cachedAutoGuestCookies.visitorData,
+    };
+  }
+  if (pendingAutoGuestCookiePromise) {
+    return pendingAutoGuestCookiePromise;
+  }
+  pendingAutoGuestCookiePromise = generateAutoYouTubeCookies()
+    .then((res) => {
+      if (res.cookies) {
+        cachedAutoGuestCookies = {
+          cookies: res.cookies,
+          visitorData: res.visitorData,
+          expiresAt: Date.now() + 30 * 60 * 1000,
+        };
+      }
+      return res;
+    })
+    .finally(() => {
+      pendingAutoGuestCookiePromise = null;
+    });
+  return pendingAutoGuestCookiePromise;
+}
+
 export function encodeExtractorCookieValue(config: ExtractorAuthConfig): string {
   return Buffer.from(JSON.stringify(config), 'utf8').toString('base64url');
 }
@@ -2289,9 +2319,19 @@ export async function resolveAudioStreamInfo(
     return { stream: null, status: 'unavailable', reason: 'Video ID tidak valid' };
   }
 
-  const effectiveCookies =
+  let effectiveCookies =
     normalizeYouTubeCookies(authConfig?.cookies) ||
     normalizeYouTubeCookies(process.env.YOUTUBE_COOKIES);
+  if (!effectiveCookies && !authConfig?.oauthTokens) {
+    try {
+      const autoGuest = await getCachedAutoYouTubeCookies();
+      if (autoGuest.cookies) {
+        effectiveCookies = autoGuest.cookies;
+      }
+    } catch {
+      // non-fatal fallback without guest cookies
+    }
+  }
   const effectiveAuth: ExtractorAuthConfig = {
     oauthTokens: authConfig?.oauthTokens,
     cookies: effectiveCookies || undefined,

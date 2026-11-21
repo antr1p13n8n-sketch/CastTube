@@ -569,7 +569,7 @@ export function saveLastFeedSyncAt(timestampMs: number = Date.now()) {
   }
 }
 
-const AUTO_COOKIE_POPUP_MIGRATION_KEY = 'casttube_auto_cookie_popup_v1';
+const AUTO_COOKIE_POPUP_MIGRATION_KEY = 'casttube_auto_popup_unrestricted_v2';
 
 export const DEFAULT_BG_AUDIO_SETTINGS: BackgroundAudioSettings = {
   enabled: true,
@@ -580,7 +580,7 @@ export const DEFAULT_BG_AUDIO_SETTINGS: BackgroundAudioSettings = {
   autoPopupOnPlay: true,
   autoClosePopupOnReturn: true,
   autoPromptActivation: false,
-  promptDismissed: false,
+  promptDismissed: true,
 };
 
 export function loadBackgroundAudioSettings(): BackgroundAudioSettings {
@@ -597,20 +597,27 @@ export function loadBackgroundAudioSettings(): BackgroundAudioSettings {
           autoResumeOnReopen: parsed.autoResumeOnReopen !== false,
           keepScreenAwake: Boolean(parsed.keepScreenAwake),
           autoPopupOnMinimize: parsed.autoPopupOnMinimize !== false,
-          autoPopupOnPlay: Boolean(parsed.autoPopupOnPlay),
+          autoPopupOnPlay: parsed.autoPopupOnPlay !== false,
           autoClosePopupOnReturn: parsed.autoClosePopupOnReturn !== false,
-          autoPromptActivation: parsed.autoPromptActivation !== false,
-          promptDismissed: Boolean(parsed.promptDismissed),
-          activatedAt: typeof parsed.activatedAt === 'string' ? parsed.activatedAt : undefined,
+          autoPromptActivation: Boolean(parsed.autoPromptActivation),
+          promptDismissed: parsed.promptDismissed !== false,
+          activatedAt:
+            typeof parsed.activatedAt === 'string'
+              ? parsed.activatedAt
+              : new Date().toISOString(),
         };
         if (!hasMigrated) {
           const upgraded: BackgroundAudioSettings = {
             ...loaded,
             enabled: true,
+            autoSwitchOnMinimize: true,
+            autoResumeOnReopen: true,
             autoPopupOnMinimize: true,
             autoPopupOnPlay: true,
             autoClosePopupOnReturn: true,
             autoPromptActivation: false,
+            promptDismissed: true,
+            activatedAt: loaded.activatedAt || new Date().toISOString(),
           };
           localStorage.setItem(AUTO_COOKIE_POPUP_MIGRATION_KEY, '1');
           localStorage.setItem(STORAGE_KEYS.BG_AUDIO, JSON.stringify(upgraded));

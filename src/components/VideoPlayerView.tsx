@@ -138,11 +138,11 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
   }
 
   return (
-    <div className="w-full max-w-5xl mx-auto rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden p-4 sm:p-6 md:p-8 transition-colors duration-200">
+    <div className="w-full max-w-5xl mx-auto rounded-3xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl border border-slate-200/90 dark:border-slate-800/90 shadow-2xl shadow-indigo-950/10 overflow-hidden p-4 sm:p-6 md:p-8 transition-colors duration-200">
       {/* Top action strip */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
+          <span className="text-xs font-extrabold uppercase tracking-wider bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500 bg-clip-text text-transparent">
             Mode Video Aktif
           </span>
           <span className="text-xs text-slate-400">· 1080p HD Ready</span>
@@ -155,12 +155,12 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
               onClick={onOpenBackgroundAudioPopup}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${
                 backgroundAudioEnabled
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300/60 dark:border-emerald-700/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
                   : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
-              title="Aktifkan atau atur audio tetap menyala saat minimize/close"
+              title="Pengaturan Popup Otomatis & Audio Latar"
             >
-              <Radio className="w-3.5 h-3.5 text-red-500" />
+              <Radio className="w-3.5 h-3.5 text-fuchsia-500" />
               <span>Audio Latar</span>
             </motion.button>
           )}
@@ -169,14 +169,14 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={onToggleFloatingPopup}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
                 isFloatingOpen
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                  : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  ? 'bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 text-white shadow-md shadow-fuchsia-500/25'
+                  : 'text-indigo-700 dark:text-cyan-300 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
               }`}
-              title={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Buka Popup Mengambang (PiP)'}
+              title={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Buka Popup Mengambang'}
             >
-              <PictureInPicture2 className="w-3.5 h-3.5 text-red-500" />
+              <PictureInPicture2 className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{isFloatingOpen ? 'Tutup Popup' : 'Popup'}</span>
             </motion.button>
           )}
@@ -185,7 +185,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.95 }}
             onClick={onSwitchToAudio}
-            className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-sm transition-colors cursor-pointer"
+            className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 rounded-xl shadow-md shadow-fuchsia-500/25 transition-all cursor-pointer"
             title="Dengarkan sebagai podcast dengan visualizer frekuensi"
           >
             <Headphones className="w-4 h-4 animate-pulse" />
@@ -199,7 +199,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
         {/* Left / Main column: Video Container & Metadata */}
         <div className="lg:col-span-8 flex flex-col gap-4">
           {/* 16:9 Video Player Container */}
-          <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black shadow-lg">
+          <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black shadow-xl ring-1 ring-fuchsia-500/25">
             {playerSlot}
           </div>
 
@@ -213,7 +213,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
               <div className="flex items-center gap-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-bold text-slate-900 dark:text-white">
+                    <span className="text-sm font-bold text-indigo-700 dark:text-cyan-300">
                       {currentVideo.channelTitle}
                     </span>
                     {!isChannelSubscribed && onSubscribeChannel && currentVideo.channelId && (
@@ -221,7 +221,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                         type="button"
                         disabled={isSubscribingChannel}
                         onClick={() => onSubscribeChannel(currentVideo)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200/80 dark:border-red-800/60 hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-50 transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-gradient-to-r from-rose-500 to-fuchsia-600 text-white hover:brightness-110 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
                         title="Tambahkan channel ini ke langganan Anda"
                       >
                         {isSubscribingChannel ? (
@@ -233,7 +233,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                       </button>
                     )}
                   </div>
-                  <div className="text-xs text-slate-500">
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
                     {formatRelativeTime(currentVideo.publishedAt)}
                     {currentVideo.views && ` · ${currentVideo.views} views`}
                   </div>
@@ -245,10 +245,10 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                   <button
                     type="button"
                     onClick={() => onAddToPlaylist(currentVideo)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-fuchsia-700 dark:text-fuchsia-300 bg-fuchsia-50 dark:bg-fuchsia-950/40 hover:bg-fuchsia-100 dark:hover:bg-fuchsia-900/50 rounded-lg transition-colors cursor-pointer"
                     title="Simpan ke Playlist"
                   >
-                    <ListPlus className="w-3.5 h-3.5 text-red-500" />
+                    <ListPlus className="w-3.5 h-3.5" />
                     <span>Playlist</span>
                   </button>
                 )}
@@ -259,7 +259,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                     onClick={() => onTogglePlayed(currentVideo.id)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                       isPlayed
-                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                         : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
                     }`}
                     title={isPlayed ? 'Sudah Diputar' : 'Tandai Sudah Diputar'}
@@ -276,8 +276,8 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                       downloadState?.status === 'completed'
                         ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
                         : downloadState?.status === 'preparing' || downloadState?.status === 'downloading'
-                        ? 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400'
-                        : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        ? 'bg-fuchsia-50 dark:bg-fuchsia-950/40 text-fuchsia-600 dark:text-fuchsia-400'
+                        : 'text-indigo-700 dark:text-cyan-300 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
                     }`}
                     title={
                       downloadState?.status === 'downloading' || downloadState?.status === 'preparing'
@@ -303,7 +303,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                       </>
                     ) : (
                       <>
-                        <Download className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+                        <Download className="w-3.5 h-3.5" />
                         <span>Unduh Audio</span>
                       </>
                     )}
@@ -315,7 +315,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
                   title="Salin Link Video"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Share2 className="w-3.5 h-3.5" />}
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Share2 className="w-3.5 h-3.5 text-amber-500" />}
                   <span>{copied ? 'Tersalin' : 'Bagikan'}</span>
                 </button>
 
@@ -323,7 +323,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
                   href={`https://www.youtube.com/watch?v=${currentVideo.id}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30 dark:hover:text-rose-400 rounded-lg transition-colors"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   <span>YouTube</span>
@@ -333,13 +333,13 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
 
             {/* Description accordion */}
             {currentVideo.description && (
-              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-700 dark:text-slate-300">
+              <div className="p-3.5 rounded-xl bg-slate-50/90 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/50 text-xs text-slate-700 dark:text-slate-300">
                 <p className={`${descExpanded ? '' : 'line-clamp-2'} whitespace-pre-line leading-relaxed`}>
                   {currentVideo.description}
                 </p>
                 <button
                   onClick={() => setDescExpanded(!descExpanded)}
-                  className="mt-2 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1 cursor-pointer"
+                  className="mt-2 text-xs font-semibold text-indigo-600 dark:text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   {descExpanded ? (
                     <>
@@ -362,7 +362,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
         <div className="lg:col-span-4 flex flex-col text-left">
           <div className="flex items-center justify-between gap-2 mb-3">
             <div className="flex items-center gap-2">
-              <ListMusic className="w-4 h-4 text-red-600 dark:text-red-400" />
+              <ListMusic className="w-4 h-4 text-fuchsia-500" />
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 Video Berikutnya ({queue.length})
               </h3>

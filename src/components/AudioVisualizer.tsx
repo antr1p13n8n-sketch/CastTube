@@ -113,10 +113,45 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 };
 
 const WAVE_LAYER_CONFIGS = [
-  { freq: 0.02, speed: 1.0, baseAmp: 26, darkColor: 'rgba(239, 68, 68, 0.45)', lightColor: 'rgba(220, 38, 38, 0.35)', width: 2 },
-  { freq: 0.035, speed: -0.8, baseAmp: 20, darkColor: 'rgba(249, 115, 22, 0.6)', lightColor: 'rgba(234, 88, 12, 0.5)', width: 2.5 },
-  { freq: 0.015, speed: 1.4, baseAmp: 34, darkColor: 'rgba(255, 255, 255, 0.9)', lightColor: 'rgba(15, 23, 42, 0.85)', width: 3 },
+  {
+    freq: 0.02,
+    speed: 1.0,
+    baseAmp: 26,
+    darkStops: ['rgba(6, 182, 212, 0.55)', 'rgba(99, 102, 241, 0.6)', 'rgba(217, 70, 239, 0.55)'],
+    lightStops: ['rgba(8, 145, 178, 0.4)', 'rgba(79, 70, 229, 0.45)', 'rgba(192, 38, 211, 0.4)'],
+    width: 2.2,
+  },
+  {
+    freq: 0.035,
+    speed: -0.8,
+    baseAmp: 20,
+    darkStops: ['rgba(244, 63, 94, 0.65)', 'rgba(245, 158, 11, 0.65)', 'rgba(16, 185, 129, 0.65)'],
+    lightStops: ['rgba(225, 29, 72, 0.5)', 'rgba(217, 119, 6, 0.5)', 'rgba(5, 150, 105, 0.5)'],
+    width: 2.6,
+  },
+  {
+    freq: 0.015,
+    speed: 1.4,
+    baseAmp: 34,
+    darkStops: ['#22d3ee', '#818cf8', '#e879f9', '#fb7185'],
+    lightStops: ['#0284c7', '#4f46e5', '#c026d3', '#e11d48'],
+    width: 3.2,
+  },
 ];
+
+function createSpectrumGradient(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  stops: string[]
+) {
+  const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+  const count = Math.max(stops.length - 1, 1);
+  stops.forEach((color, idx) => grad.addColorStop(idx / count, color));
+  return grad;
+}
 
 function renderWave(
   ctx: CanvasRenderingContext2D,
@@ -133,7 +168,14 @@ function renderWave(
     const amp = layer.baseAmp * energy;
     ctx.beginPath();
     ctx.lineWidth = layer.width;
-    ctx.strokeStyle = isDark ? layer.darkColor : layer.lightColor;
+    ctx.strokeStyle = createSpectrumGradient(
+      ctx,
+      0,
+      0,
+      width,
+      0,
+      isDark ? layer.darkStops : layer.lightStops
+    );
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -169,16 +211,16 @@ function renderBars(
   const centerY = height / 2;
   const maxAmp = (height / 2) * 0.85;
 
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  if (isDark) {
-    gradient.addColorStop(0, '#f87171');
-    gradient.addColorStop(0.5, '#ef4444');
-    gradient.addColorStop(1, '#b91c1c');
-  } else {
-    gradient.addColorStop(0, '#ef4444');
-    gradient.addColorStop(0.5, '#dc2626');
-    gradient.addColorStop(1, '#991b1b');
-  }
+  const gradient = createSpectrumGradient(
+    ctx,
+    0,
+    0,
+    width,
+    height,
+    isDark
+      ? ['#22d3ee', '#818cf8', '#e879f9', '#fb7185', '#fbbf24']
+      : ['#0284c7', '#4f46e5', '#c026d3', '#e11d48', '#d97706']
+  );
   ctx.fillStyle = gradient;
 
   for (let i = 0; i < barCount; i++) {
@@ -226,7 +268,14 @@ function renderRadar(
     else ctx.lineTo(x, y);
   }
   ctx.closePath();
-  ctx.strokeStyle = isDark ? '#ef4444' : '#dc2626';
+  ctx.strokeStyle = createSpectrumGradient(
+    ctx,
+    centerX - baseRadius,
+    centerY - baseRadius,
+    centerX + baseRadius,
+    centerY + baseRadius,
+    isDark ? ['#22d3ee', '#a855f7', '#f43f5e'] : ['#0284c7', '#7c3aed', '#e11d48']
+  );
   ctx.lineWidth = 3;
   ctx.stroke();
 
@@ -234,7 +283,7 @@ function renderRadar(
   const pulseR = baseRadius + 18 + (Math.sin(phase * 2) * 6 * energy);
   ctx.beginPath();
   ctx.arc(centerX, centerY, Math.max(pulseR, 10), 0, Math.PI * 2);
-  ctx.strokeStyle = isDark ? 'rgba(239, 68, 68, 0.3)' : 'rgba(220, 38, 38, 0.25)';
+  ctx.strokeStyle = isDark ? 'rgba(168, 85, 247, 0.35)' : 'rgba(99, 102, 241, 0.3)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 }
@@ -254,13 +303,23 @@ function renderMinimal(
   const totalWidth = barCount * barWidth + (barCount - 1) * gap;
   const startX = (width - totalWidth) / 2;
 
+  ctx.fillStyle = createSpectrumGradient(
+    ctx,
+    startX,
+    0,
+    startX + totalWidth,
+    0,
+    isDark
+      ? ['#22d3ee', '#818cf8', '#e879f9', '#fb7185']
+      : ['#0284c7', '#4f46e5', '#c026d3', '#e11d48']
+  );
+
   for (let i = 0; i < barCount; i++) {
     const x = startX + i * (barWidth + gap);
     const wave = Math.sin(i * 0.8 + phase * 2.2);
     const h = Math.max(Math.abs(wave) * 32 * energy, 6);
     const y = centerY - h / 2;
 
-    ctx.fillStyle = isDark ? '#f87171' : '#dc2626';
     ctx.beginPath();
     ctx.roundRect(x, y, barWidth, h, 3);
     ctx.fill();
