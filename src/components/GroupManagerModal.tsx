@@ -79,7 +79,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-rose-500 via-fuchsia-500 to-indigo-600 text-white shadow-md shadow-fuchsia-500/25 shrink-0">
+            <div className="p-2.5 rounded-xl casttube-gradient-btn shrink-0">
               <Layers className="w-5 h-5" />
             </div>
             <div className="min-w-0">
@@ -107,13 +107,13 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
               placeholder="Nama grup baru (misal: Berita, Gaming)..."
               value={newGroupName}
               onChange={(e) => setNewGroupName(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-fuchsia-500"
+              className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 casttube-accent-input"
             />
           </div>
           <button
             type="submit"
             disabled={!newGroupName.trim()}
-            className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-md shadow-fuchsia-500/25 transition-all cursor-pointer shrink-0"
+            className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold casttube-gradient-btn hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4" />
             <span>Tambah</span>
@@ -136,7 +136,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
             return (
               <div
                 key={group.id}
-                className="flex items-center justify-between gap-2.5 p-3 rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 hover:border-fuchsia-300 dark:hover:border-fuchsia-700/60 transition-all"
+                className="flex items-center justify-between gap-2.5 p-3 rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 casttube-card-hover transition-all"
               >
                 <div className="flex items-center gap-2.5 sm:gap-3 flex-1 min-w-0">
                   <Folder className="w-4 h-4 text-amber-500 shrink-0" />
@@ -152,7 +152,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
                           if (e.key === 'Enter') handleSaveRename(group.id);
                           if (e.key === 'Escape') setEditingGroupId(null);
                         }}
-                        className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white dark:bg-slate-700 border border-fuchsia-500 text-slate-900 dark:text-white w-full focus:outline-hidden"
+                        className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white dark:bg-slate-700 border casttube-accent-border text-slate-900 dark:text-white w-full casttube-accent-input"
                       />
                       <button
                         onClick={() => handleSaveRename(group.id)}
@@ -201,7 +201,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
                       <>
                         <button
                           onClick={() => handleStartRename(group)}
-                          className="p-2 rounded-lg text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors cursor-pointer"
+                          className="p-2 rounded-lg text-slate-500 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-200/70 dark:hover:bg-slate-700/70 transition-colors cursor-pointer"
                           title="Ganti Nama Grup"
                         >
                           <Edit2 className="w-3.5 h-3.5" />

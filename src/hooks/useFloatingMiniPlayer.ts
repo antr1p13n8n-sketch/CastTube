@@ -6,6 +6,10 @@ import {
   setPlaybackClock,
   subscribePlaybackClock,
 } from '../utils/playbackClock';
+import {
+  getActiveCssThemeColors,
+  THEME_COLORS_CHANGED_EVENT,
+} from '../utils/themeColors';
 
 interface DocumentPictureInPictureAPI {
   requestWindow: (options?: { width?: number; height?: number }) => Promise<Window>;
@@ -322,7 +326,20 @@ export function useFloatingMiniPlayer({
   ]);
 
   useEffect(() => {
+    const syncPipTheme = () => {
+      const pipWin = pipWindowRef.current;
+      if (!pipWin || pipWin.closed) return;
+      const colors = getActiveCssThemeColors();
+      const rootStyle = pipWin.document.documentElement.style;
+      rootStyle.setProperty('--ct-start', colors.startHex);
+      rootStyle.setProperty('--ct-mid', colors.midHex);
+      rootStyle.setProperty('--ct-end', colors.endHex);
+      rootStyle.setProperty('--ct-glow', colors.glowHex);
+      rootStyle.setProperty('--ct-btn-text', colors.btnText);
+    };
+    window.addEventListener(THEME_COLORS_CHANGED_EVENT, syncPipTheme);
     return () => {
+      window.removeEventListener(THEME_COLORS_CHANGED_EVENT, syncPipTheme);
       cleanupResources();
     };
   }, [cleanupResources]);
@@ -363,12 +380,19 @@ export function useFloatingMiniPlayer({
 
           const doc = pipWin.document;
           doc.title = 'CastTube · Pemutar Mengambang';
+          const themeColors = getActiveCssThemeColors();
+          const pipRootStyle = doc.documentElement.style;
+          pipRootStyle.setProperty('--ct-start', themeColors.startHex);
+          pipRootStyle.setProperty('--ct-mid', themeColors.midHex);
+          pipRootStyle.setProperty('--ct-end', themeColors.endHex);
+          pipRootStyle.setProperty('--ct-glow', themeColors.glowHex);
+          pipRootStyle.setProperty('--ct-btn-text', themeColors.btnText);
           const style = doc.createElement('style');
           style.textContent = `
             * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
             body {
-              background: radial-gradient(circle at 0% 0%, rgba(244,63,94,0.22), transparent 55%),
-                          radial-gradient(circle at 100% 100%, rgba(6,182,212,0.22), transparent 55%),
+              background: radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--ct-start) 26%, transparent), transparent 55%),
+                          radial-gradient(circle at 100% 100%, color-mix(in srgb, var(--ct-glow) 24%, transparent), transparent 55%),
                           #090d1a;
               color: #f8fafc; padding: 12px; display: flex;
               flex-direction: column; justify-content: space-between; height: 100vh; overflow: hidden; gap: 10px;
@@ -381,12 +405,12 @@ export function useFloatingMiniPlayer({
             .channel { font-size: 11px; color: #94a3b8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .embed-wrap {
               display: none; position: relative; width: 100%; flex: 1; min-height: 180px;
-              border-radius: 14px; overflow: hidden; background: #000; border: 1px solid rgba(217,70,239,0.35);
+              border-radius: 14px; overflow: hidden; background: #000; border: 1px solid color-mix(in srgb, var(--ct-mid) 45%, transparent);
             }
             .embed-wrap iframe { width: 100%; height: 100%; border: 0; }
             .progress-wrap { margin-top: 4px; }
             .bar { width: 100%; height: 6px; border-radius: 999px; background: rgba(148,163,184,0.2); overflow: hidden; }
-            .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #f43f5e, #d946ef, #6366f1, #06b6d4); transition: width 0.2s linear; }
+            .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--ct-start), var(--ct-mid), var(--ct-end), var(--ct-glow)); transition: width 0.2s linear; }
             .time { margin-top: 5px; font-size: 11px; color: #cbd5e1; font-family: ui-monospace, monospace; display: flex; justify-content: space-between; }
             .controls { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
             .embed-controls { display: none; align-items: center; justify-content: space-between; gap: 6px; }
@@ -395,9 +419,9 @@ export function useFloatingMiniPlayer({
               cursor: pointer; background: rgba(30,41,59,0.85); color: #e2e8f0; transition: transform 0.15s, background 0.15s; white-space: nowrap;
             }
             button:hover { background: rgba(51,65,85,0.95); }
-            button.primary { background: linear-gradient(135deg, #f43f5e, #d946ef, #6366f1); color: #fff; flex: 1; border: 0; }
+            button.primary { background: linear-gradient(135deg, var(--ct-start), var(--ct-mid), var(--ct-end)); color: var(--ct-btn-text); flex: 1; border: 0; }
             button.primary:hover { filter: brightness(1.08); }
-            button.cyan { background: linear-gradient(135deg, #06b6d4, #6366f1); color: #fff; border: 0; }
+            button.cyan { background: linear-gradient(135deg, var(--ct-end), var(--ct-glow)); color: var(--ct-btn-text); border: 0; }
             button:disabled { cursor: not-allowed; }
           `;
           doc.head.appendChild(style);

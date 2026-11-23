@@ -50,10 +50,10 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         delay: shouldStagger ? index * 0.015 : 0,
         ease: [0.16, 1, 0.3, 1],
       }}
-      className={`video-card-auto group relative flex flex-col rounded-2xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border transition-[transform,colors,shadow] duration-200 overflow-hidden hover:-translate-y-0.5 hover:shadow-xl hover:shadow-fuchsia-500/10 ${
+      className={`video-card-auto group relative flex flex-col rounded-2xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border transition-[transform,colors,shadow] duration-200 overflow-hidden hover:-translate-y-0.5 ${
         isCurrentlyPlaying
-          ? 'border-fuchsia-500 ring-2 ring-fuchsia-500/30 shadow-lg shadow-fuchsia-500/15'
-          : 'border-slate-200/90 dark:border-slate-800/90 hover:border-fuchsia-400/60 dark:hover:border-fuchsia-500/45'
+          ? 'casttube-card-active'
+          : 'border-slate-200/90 dark:border-slate-800/90 casttube-card-hover'
       }`}
     >
       {/* Thumbnail area with overlay controls */}
@@ -84,22 +84,22 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
 
         {/* Currently playing badge */}
         {isCurrentlyPlaying && (
-          <div className="absolute top-2.5 left-2.5 px-2.5 py-0.5 rounded-md bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 text-white text-[10px] font-bold tracking-wide uppercase shadow-md shadow-fuchsia-500/30 flex items-center gap-1.5">
+          <div className="absolute top-2.5 left-2.5 px-2.5 py-0.5 rounded-md casttube-gradient-btn text-[10px] font-bold tracking-wide uppercase flex items-center gap-1.5">
             <span className="flex items-end gap-0.5 h-2.5" aria-hidden="true">
               <motion.span
                 animate={{ scaleY: [0.35, 1, 0.45, 0.9, 0.35] }}
                 transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }}
-                className="w-0.5 h-full bg-cyan-300 rounded-full origin-bottom"
+                className="w-0.5 h-full bg-current rounded-full origin-bottom opacity-80"
               />
               <motion.span
                 animate={{ scaleY: [0.85, 0.35, 1, 0.5, 0.85] }}
                 transition={{ duration: 0.75, repeat: Infinity, ease: 'easeInOut' }}
-                className="w-0.5 h-full bg-white rounded-full origin-bottom"
+                className="w-0.5 h-full bg-current rounded-full origin-bottom"
               />
               <motion.span
                 animate={{ scaleY: [0.5, 0.95, 0.35, 0.8, 0.5] }}
                 transition={{ duration: 1.05, repeat: Infinity, ease: 'easeInOut' }}
-                className="w-0.5 h-full bg-amber-300 rounded-full origin-bottom"
+                className="w-0.5 h-full bg-current rounded-full origin-bottom opacity-85"
               />
             </span>
             Sedang Diputar
@@ -122,10 +122,10 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
               e.stopPropagation();
               onPlayVideo(video);
             }}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-rose-500 to-orange-500 hover:brightness-110 rounded-xl shadow-lg shadow-rose-500/30 transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold casttube-gradient-btn hover:brightness-110 rounded-xl transition-transform hover:scale-105 active:scale-95 cursor-pointer"
             title="Putar Video"
           >
-            <Play className="w-3.5 h-3.5 fill-white" />
+            <Play className="w-3.5 h-3.5 fill-current" />
             <span>Video</span>
           </button>
           <button
@@ -134,7 +134,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
               e.stopPropagation();
               onPlayAudio(video);
             }}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-indigo-500 to-cyan-500 hover:brightness-110 rounded-xl shadow-lg shadow-indigo-500/30 transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-slate-900/90 hover:bg-slate-800 border border-white/25 rounded-xl shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
             title="Dengarkan Audio Podcast"
           >
             <Headphones className="w-3.5 h-3.5 text-white" />
@@ -143,8 +143,8 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         </div>
 
         {/* Subtle mobile/tablet touch tap-to-play indicator */}
-        <div className="flex sm:[@media(hover:hover)]:hidden absolute bottom-2 left-2 w-7 h-7 rounded-full bg-gradient-to-tr from-rose-500 to-fuchsia-600 text-white items-center justify-center shadow-md pointer-events-none">
-          <Play className="w-3.5 h-3.5 fill-white ml-0.5" />
+        <div className="flex sm:[@media(hover:hover)]:hidden absolute bottom-2 left-2 w-7 h-7 rounded-full casttube-gradient-btn items-center justify-center pointer-events-none">
+          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
         </div>
 
         {/* Duration / Live info bottom right */}
@@ -170,7 +170,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         <div>
           <h3
             onClick={() => onPlayVideo(video)}
-            className="text-sm font-bold text-slate-900 dark:text-white line-clamp-2 leading-snug cursor-pointer hover:text-fuchsia-600 dark:hover:text-fuchsia-400 transition-colors"
+            className="text-sm font-bold text-slate-900 dark:text-white line-clamp-2 leading-snug cursor-pointer hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] transition-colors"
             title={video.title}
           >
             {video.title}
@@ -178,7 +178,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
 
           {/* Clean unboxed metadata with dot separators */}
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-            <span className="font-semibold text-indigo-700 dark:text-cyan-300 truncate max-w-[150px]">
+            <span className="font-semibold casttube-accent-secondary-text truncate max-w-[150px]">
               {video.channelTitle}
             </span>
             <span aria-hidden="true">·</span>
@@ -192,7 +192,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
             {progress && progress.currentTime > 5 && (
               <>
                 <span aria-hidden="true">·</span>
-                <span className="font-mono tabular-nums text-fuchsia-600 dark:text-fuchsia-400 font-medium">
+                <span className="font-mono tabular-nums casttube-accent-text font-medium">
                   Lanjut {formatTime(progress.currentTime)}
                 </span>
               </>
@@ -206,7 +206,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
             <button
               type="button"
               onClick={() => onPlayAudio(video)}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 dark:text-cyan-300 bg-indigo-50/90 dark:bg-indigo-950/40 hover:bg-gradient-to-r hover:from-indigo-500 hover:to-cyan-500 hover:text-white rounded-lg transition-all active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold casttube-soft-surface casttube-accent-secondary-text border hover:brightness-95 dark:hover:brightness-110 rounded-lg transition-all active:scale-95 cursor-pointer"
               title="Dengarkan Mode Podcast"
             >
               <Headphones className="w-3.5 h-3.5" />
@@ -231,7 +231,7 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
               <button
                 type="button"
                 onClick={() => onAddToPlaylist(video)}
-                className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100/90 dark:bg-slate-800 hover:bg-fuchsia-50 hover:text-fuchsia-700 dark:hover:bg-fuchsia-950/40 dark:hover:text-fuchsia-300 rounded-lg transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100/90 dark:bg-slate-800 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] rounded-lg transition-all active:scale-95 cursor-pointer"
                 title="Simpan ke Playlist"
               >
                 <ListPlus className="w-3.5 h-3.5" />
@@ -249,8 +249,8 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
                   downloadState?.status === 'completed'
                     ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
                     : downloadState?.status === 'preparing' || downloadState?.status === 'downloading'
-                    ? 'text-fuchsia-600 dark:text-fuchsia-400 bg-fuchsia-50 dark:bg-fuchsia-950/30'
-                    : 'text-slate-400 hover:text-indigo-600 dark:hover:text-cyan-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30'
+                    ? 'casttube-soft-surface casttube-accent-text'
+                    : 'text-slate-400 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
                 title={
                   downloadState?.status === 'preparing' || downloadState?.status === 'downloading'

@@ -46,7 +46,14 @@ import {
   PendingSyncTask,
   Playlist,
   BackgroundAudioSettings,
+  PrimaryThemeConfig,
 } from './types';
+import {
+  applyPrimaryThemeColors,
+  loadPrimaryThemeConfig,
+  savePrimaryThemeConfig,
+} from './utils/themeColors';
+import type { SettingsModalTab } from './components/BackgroundAudioModal';
 import {
   loadGroups,
   saveGroups,
@@ -120,14 +127,6 @@ const BackgroundAudioModal = lazy(() =>
 );
 
 const FEED_PAGE_SIZE = 36;
-const GROUP_TAB_GRADIENTS = [
-  'bg-gradient-to-r from-rose-500 to-orange-500 shadow-md shadow-rose-500/25',
-  'bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md shadow-indigo-500/25',
-  'bg-gradient-to-r from-cyan-500 to-blue-600 shadow-md shadow-cyan-500/25',
-  'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-md shadow-emerald-500/25',
-  'bg-gradient-to-r from-fuchsia-500 to-pink-600 shadow-md shadow-fuchsia-500/25',
-  'bg-gradient-to-r from-amber-500 to-rose-500 shadow-md shadow-amber-500/25',
-];
 
 export default function App() {
   // Firebase Auth State
@@ -135,8 +134,10 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
 
-  // Theme State (System, Dark, Light)
+  // Theme State (System, Dark, Light) & Primary Color Palette
   const [themePreference, setThemePreference] = useState<ThemeMode>(loadThemePreference);
+  const [primaryTheme, setPrimaryTheme] = useState<PrimaryThemeConfig>(loadPrimaryThemeConfig);
+  const [settingsModalTab, setSettingsModalTab] = useState<SettingsModalTab>('popup');
 
   // Single-pass initial localStorage hydration to avoid repeated JSON.parse on startup
   const initialBootRef = useRef<{
@@ -2563,8 +2564,21 @@ export default function App() {
 
   const handleOpenBackgroundAudioPopup = useCallback(() => {
     nativeAudioRef.current?.unlock();
+    setSettingsModalTab('popup');
     setHasOpenedBgAudioModal(true);
     setIsBgAudioModalOpen(true);
+  }, []);
+
+  const handleOpenThemeSettings = useCallback(() => {
+    setSettingsModalTab('theme');
+    setHasOpenedBgAudioModal(true);
+    setIsBgAudioModalOpen(true);
+  }, []);
+
+  const handlePrimaryThemeChange = useCallback((next: PrimaryThemeConfig) => {
+    setPrimaryTheme(next);
+    savePrimaryThemeConfig(next);
+    applyPrimaryThemeColors(next);
   }, []);
 
   const handleQuickSubscribeFromPlayer = useCallback(
@@ -2785,11 +2799,12 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-    <div className="min-h-screen flex flex-col casttube-app-bg text-slate-900 dark:text-slate-100 selection:bg-fuchsia-500 selection:text-white transition-colors duration-200 pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
+    <div className="min-h-screen flex flex-col casttube-app-bg text-slate-900 dark:text-slate-100 transition-colors duration-200 pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
       {/* Top Bar Header */}
       <Header
         theme={themePreference}
         onThemeChange={handleThemeChange}
+        onOpenThemeSettings={handleOpenThemeSettings}
         onOpenAddModal={handleOpenAddFromHeader}
         onOpenGroupModal={handleOpenGroupFromHeader}
         onOpenChannelDrawer={handleOpenDrawerFromHeader}
@@ -2884,7 +2899,7 @@ export default function App() {
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
                   : isPlaying && !useNativeAudio && !isCheckingNativeAudio && !floatingMiniPlayer.isOpen
-                  ? 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 sm:w-64 aspect-video rounded-2xl overflow-hidden shadow-2xl border-2 border-fuchsia-400/70 dark:border-fuchsia-500/60 z-40 bg-black transition-all'
+                  ? 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 sm:w-64 aspect-video rounded-2xl overflow-hidden shadow-2xl border-2 casttube-accent-border z-40 bg-black transition-all'
                   : 'fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-3 w-44 aspect-video pointer-events-none opacity-0 -z-50 overflow-hidden'
               }
             >
@@ -2948,12 +2963,11 @@ export default function App() {
         {/* Group Navigation Bar & Filter Strip */}
         <section className="mb-8 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            {/* Group Tabs (Segmented interactive colorful buttons) */}
+            {/* Group Tabs (Segmented interactive buttons synced to custom primary theme) */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
-              {groups.map((group, idx) => {
+              {groups.map((group) => {
                 const isActive = activeGroupId === group.id && !selectedChannelId;
                 const count = groupChannelCounts.get(group.id) || 0;
-                const activeGrad = GROUP_TAB_GRADIENTS[idx % GROUP_TAB_GRADIENTS.length];
 
                 return (
                   <motion.button
@@ -2965,22 +2979,22 @@ export default function App() {
                     }}
                     className={`relative flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                       isActive
-                        ? 'text-white'
-                        : 'bg-white/85 dark:bg-slate-900/85 backdrop-blur-sm text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800 hover:border-fuchsia-300 dark:hover:border-fuchsia-700/60'
+                        ? 'text-[var(--ct-btn-text)]'
+                        : 'bg-white/85 dark:bg-slate-900/85 backdrop-blur-sm text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800 casttube-card-hover'
                     }`}
                   >
                     {isActive && (
                       <motion.span
                         layoutId="activeGroupIndicator"
                         transition={{ type: 'spring', stiffness: 480, damping: 35 }}
-                        className={`absolute inset-0 rounded-xl ${activeGrad}`}
+                        className="absolute inset-0 rounded-xl casttube-gradient-btn"
                       />
                     )}
                     <span className="relative z-10">{group.name}</span>
                     <span
                       className={`relative z-10 text-[10px] px-1.5 py-0.2 rounded-full tabular-nums ${
                         isActive
-                          ? 'bg-white/25 text-white'
+                          ? 'bg-black/15 text-current'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
                       }`}
                     >
@@ -2994,7 +3008,7 @@ export default function App() {
               <motion.button
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setIsGroupModalOpen(true)}
-                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50/80 dark:hover:bg-indigo-950/30 rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium casttube-accent-secondary-text hover:bg-slate-100/80 dark:hover:bg-slate-800/70 rounded-xl whitespace-nowrap shrink-0 transition-colors cursor-pointer"
                 title="Kelola & Ganti Nama Grup"
               >
                 <Layers className="w-3.5 h-3.5" />
@@ -3008,7 +3022,7 @@ export default function App() {
                 whileHover={{ y: -1 }}
                 whileTap={{ scale: 0.96 }}
                 onClick={() => openUnifiedAddModal(searchQuery.trim())}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white shadow-md shadow-fuchsia-500/20 transition-all whitespace-nowrap shrink-0 cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl casttube-gradient-btn hover:brightness-110 transition-all whitespace-nowrap shrink-0 cursor-pointer"
                 title="Cari video YouTube, cari channel, atau tempel link dalam satu kolom"
               >
                 <Search className="w-3.5 h-3.5" />
@@ -3020,10 +3034,10 @@ export default function App() {
                 whileTap={{ scale: 0.96 }}
                 onClick={handleRefreshFeeds}
                 disabled={isRefreshing}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-sm border border-slate-200/80 dark:border-slate-800 hover:border-cyan-400 dark:hover:border-cyan-600 text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-sm border border-slate-200/80 dark:border-slate-800 casttube-card-hover text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 title="Perbarui Video Terbaru dari YouTube"
               >
-                <RefreshCw className={`w-3.5 h-3.5 text-cyan-500 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 casttube-accent-secondary-text ${isRefreshing ? 'animate-spin' : ''}`} />
                 <span>{isRefreshing ? 'Memperbarui...' : 'Sinkron Feed'}</span>
               </motion.button>
             </div>
@@ -3064,7 +3078,7 @@ export default function App() {
                     {selectedChannelId && (
                       <button
                         onClick={() => setSelectedChannelId(null)}
-                        className="text-fuchsia-600 dark:text-fuchsia-400 hover:underline cursor-pointer"
+                        className="casttube-accent-text hover:underline cursor-pointer"
                       >
                         Tampilkan Semua
                       </button>
@@ -3078,7 +3092,7 @@ export default function App() {
                     onClick={() => setSelectedChannelId(null)}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 transition-all cursor-pointer ${
                       !selectedChannelId
-                        ? 'bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-sm shadow-indigo-500/20'
+                        ? 'casttube-gradient-btn'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                     }`}
                   >
@@ -3095,8 +3109,8 @@ export default function App() {
                         whileHover={{ y: -1 }}
                         className={`group flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 text-xs font-medium rounded-xl whitespace-nowrap shrink-0 transition-all border ${
                           isSelected
-                            ? 'bg-gradient-to-r from-fuchsia-50 to-indigo-50 dark:from-fuchsia-950/50 dark:to-indigo-950/50 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-300 dark:border-fuchsia-700 shadow-xs'
-                            : 'bg-slate-50/90 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/70 hover:border-indigo-300 dark:hover:border-indigo-700/60'
+                            ? 'casttube-soft-surface casttube-accent-text casttube-card-active'
+                            : 'bg-slate-50/90 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/70 casttube-card-hover'
                         }`}
                       >
                         <button
@@ -3118,7 +3132,7 @@ export default function App() {
                           <span
                             className={`text-[10px] px-1.5 py-0.2 rounded-full tabular-nums ${
                               isSelected
-                                ? 'bg-fuchsia-200/70 dark:bg-fuchsia-900/70 text-fuchsia-800 dark:text-fuchsia-200'
+                                ? 'bg-black/10 dark:bg-white/15 casttube-accent-text'
                                 : 'bg-slate-200/80 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
                             }`}
                           >
@@ -3148,7 +3162,7 @@ export default function App() {
             {/* Search Input */}
             <div className="flex items-center gap-2 flex-1 max-w-xl">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400" />
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 casttube-accent-secondary-text" />
                 <input
                   ref={searchInputRef}
                   type="text"
@@ -3180,7 +3194,7 @@ export default function App() {
                       }
                     }
                   }}
-                  className="w-full pl-9 pr-10 py-1.5 text-xs rounded-xl bg-slate-50/90 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-fuchsia-500"
+                  className="w-full pl-9 pr-10 py-1.5 text-xs rounded-xl bg-slate-50/90 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 casttube-accent-input"
                 />
                 {searchQuery && (
                   <button
@@ -3196,7 +3210,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => openUnifiedAddModal(searchQuery.trim())}
-                  className="px-3 py-1.5 text-xs font-bold rounded-xl bg-gradient-to-r from-fuchsia-500 to-indigo-600 text-white hover:brightness-110 shadow-sm whitespace-nowrap shrink-0 transition-all cursor-pointer"
+                  className="px-3 py-1.5 text-xs font-bold rounded-xl casttube-gradient-btn hover:brightness-110 whitespace-nowrap shrink-0 transition-all cursor-pointer"
                   title={`Cari "${searchQuery.trim()}" atau tambahkan di YouTube`}
                 >
                   Cari di YouTube
@@ -3213,7 +3227,7 @@ export default function App() {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.92 }}
                   transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                  className="flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-xl bg-gradient-to-r from-fuchsia-50 to-indigo-50 dark:from-fuchsia-950/40 dark:to-indigo-950/40 border border-fuchsia-200 dark:border-fuchsia-800/60 text-xs text-fuchsia-700 dark:text-fuchsia-300"
+                  className="flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-xl casttube-soft-surface border casttube-accent-border text-xs casttube-accent-text"
                 >
                   <span className="font-semibold truncate">Fokus Channel: {selectedChannel.title}</span>
                   <button
@@ -3226,7 +3240,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setSelectedChannelId(null)}
-                    className="p-1.5 min-w-[30px] min-h-[30px] flex items-center justify-center rounded-lg font-bold hover:text-fuchsia-900 dark:hover:text-white hover:bg-fuchsia-200/60 dark:hover:bg-fuchsia-900/50 cursor-pointer shrink-0"
+                    className="p-1.5 min-w-[30px] min-h-[30px] flex items-center justify-center rounded-lg font-bold hover:bg-black/10 dark:hover:bg-white/15 cursor-pointer shrink-0"
                     title="Hapus filter channel"
                     aria-label="Hapus filter channel"
                   >
@@ -3252,7 +3266,7 @@ export default function App() {
                     onClick={() => setPlayStatusFilter(opt.id)}
                     className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-all cursor-pointer ${
                       playStatusFilter === opt.id
-                        ? 'bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white shadow-xs'
+                        ? 'casttube-gradient-btn'
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                     }`}
                   >
@@ -3262,13 +3276,13 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-1.5 shrink-0">
-                <Filter className="w-3.5 h-3.5 text-fuchsia-500" />
+                <Filter className="w-3.5 h-3.5 casttube-accent-icon" />
                 <span className="text-xs text-slate-400 hidden sm:inline">Urutkan:</span>
                 <select
                   aria-label="Urutkan video"
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as any)}
-                  className="px-2.5 py-1 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-fuchsia-500 cursor-pointer"
+                  className="px-2.5 py-1 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 casttube-accent-input cursor-pointer"
                 >
                   <option value="newest">Terbaru</option>
                   <option value="oldest">Terlama</option>
@@ -3294,7 +3308,7 @@ export default function App() {
             {activeTab !== 'player' && currentVideo && (
               <button
                 onClick={() => setActiveTab('player')}
-                className="text-xs font-bold text-fuchsia-600 dark:text-fuchsia-400 hover:underline flex items-center gap-1 cursor-pointer"
+                className="text-xs font-bold casttube-accent-text hover:underline flex items-center gap-1 cursor-pointer"
               >
                 {playerMode === 'audio' ? <Radio className="w-3.5 h-3.5" /> : <Tv className="w-3.5 h-3.5" />}
                 <span>Buka Pemutar Sekarang</span>
@@ -3313,7 +3327,7 @@ export default function App() {
                 <div className="flex items-center gap-2 min-w-0">
                   {catalogState?.loading ? (
                     <>
-                      <Loader2 className="w-4 h-4 text-fuchsia-500 animate-spin shrink-0" />
+                      <Loader2 className="w-4 h-4 casttube-accent-icon animate-spin shrink-0" />
                       <span className="text-slate-700 dark:text-slate-200 font-medium">
                         Memuat semua video dari {selectedChannel.title}...{' '}
                         <strong className="tabular-nums text-slate-900 dark:text-white">
@@ -3337,14 +3351,14 @@ export default function App() {
                     </>
                   ) : catalogState?.hasMore ? (
                     <>
-                      <RefreshCw className="w-4 h-4 text-cyan-500 shrink-0" />
+                      <RefreshCw className="w-4 h-4 casttube-accent-secondary-text shrink-0" />
                       <span className="text-slate-600 dark:text-slate-300 font-medium">
                         {loadedLabelCount} video dimuat (masih tersedia lebih banyak di YouTube)
                       </span>
                     </>
                   ) : (
                     <>
-                      <Tv className="w-4 h-4 text-indigo-500 shrink-0" />
+                      <Tv className="w-4 h-4 casttube-accent-secondary-text shrink-0" />
                       <span className="text-slate-600 dark:text-slate-300 font-medium">
                         Menampilkan {totalForSelected} video dari {selectedChannel.title}
                       </span>
@@ -3368,7 +3382,7 @@ export default function App() {
                           type="button"
                           onClick={() => void loadChannelAllVideos(selectedChannel.id, { resume: true })}
                           disabled={!isOnline}
-                          className="px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 disabled:opacity-50 text-white shadow-sm transition-all cursor-pointer"
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold casttube-gradient-btn hover:brightness-110 disabled:opacity-50 transition-all cursor-pointer"
                         >
                           Lanjutkan Muat
                         </button>
@@ -3379,7 +3393,7 @@ export default function App() {
                         disabled={!isOnline}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
                       >
-                        <RefreshCw className="w-3.5 h-3.5 text-cyan-500" />
+                        <RefreshCw className="w-3.5 h-3.5 casttube-accent-secondary-text" />
                         <span>
                           {catalogState?.fullyLoaded ? 'Muat Ulang Semua' : 'Muat Semua Video'}
                         </span>
@@ -3392,8 +3406,8 @@ export default function App() {
           })()}
 
           {filteredVideos.length === 0 ? (
-            <div className="p-12 text-center rounded-3xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border border-dashed border-fuchsia-200 dark:border-fuchsia-900/50">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-rose-500/15 via-fuchsia-500/15 to-indigo-500/15 text-fuchsia-600 dark:text-fuchsia-400 flex items-center justify-center mx-auto mb-3">
+            <div className="p-12 text-center rounded-3xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border border-dashed casttube-accent-border">
+              <div className="w-12 h-12 rounded-2xl casttube-soft-surface border casttube-accent-icon flex items-center justify-center mx-auto mb-3">
                 <Search className="w-6 h-6" />
               </div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
@@ -3407,7 +3421,7 @@ export default function App() {
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button
                   onClick={() => openUnifiedAddModal(searchQuery.trim())}
-                  className="px-4 py-2 text-xs font-bold text-white bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 rounded-xl shadow-md shadow-fuchsia-500/20 transition-all cursor-pointer"
+                  className="px-4 py-2 text-xs font-bold casttube-gradient-btn hover:brightness-110 rounded-xl transition-all cursor-pointer"
                 >
                   {searchQuery.trim()
                     ? `Cari "${searchQuery.trim()}" di YouTube`
@@ -3453,14 +3467,14 @@ export default function App() {
                     onClick={() =>
                       setVisibleCount((prev) => Math.min(filteredVideos.length, prev + FEED_PAGE_SIZE))
                     }
-                    className="px-5 py-2.5 text-xs font-bold rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 hover:border-fuchsia-300 dark:hover:border-fuchsia-700 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
+                    className="px-5 py-2.5 text-xs font-bold rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 casttube-card-hover text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
                   >
                     Muat Lebih Banyak ({filteredVideos.length - visibleCount} video tersisa)
                   </button>
                   <button
                     type="button"
                     onClick={() => setVisibleCount(filteredVideos.length)}
-                    className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-fuchsia-500 to-indigo-600 text-white hover:brightness-110 shadow-sm shadow-fuchsia-500/20 transition-all cursor-pointer"
+                    className="px-4 py-2.5 text-xs font-bold rounded-xl casttube-gradient-btn hover:brightness-110 transition-all cursor-pointer"
                   >
                     Tampilkan Semua ({filteredVideos.length})
                   </button>
@@ -3474,7 +3488,7 @@ export default function App() {
         <section className="mt-16 p-6 sm:p-8 rounded-3xl bg-white/80 dark:bg-slate-900/75 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
             <div className="flex gap-3">
-              <div className="p-2.5 rounded-2xl bg-gradient-to-br from-rose-500 to-fuchsia-600 text-white shadow-md shadow-rose-500/20 shrink-0 h-fit">
+              <div className="p-2.5 rounded-2xl casttube-gradient-btn shrink-0 h-fit">
                 <Radio className="w-5 h-5" />
               </div>
               <div>
@@ -3488,7 +3502,7 @@ export default function App() {
             </div>
 
             <div className="flex gap-3">
-              <div className="p-2.5 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-500 text-white shadow-md shadow-indigo-500/20 shrink-0 h-fit">
+              <div className="p-2.5 rounded-2xl casttube-gradient-btn shrink-0 h-fit">
                 <Folder className="w-5 h-5" />
               </div>
               <div>
@@ -3677,6 +3691,9 @@ export default function App() {
           <BackgroundAudioModal
             isOpen={isBgAudioModalOpen}
             onClose={() => setIsBgAudioModalOpen(false)}
+            initialTab={settingsModalTab}
+            primaryTheme={primaryTheme}
+            onPrimaryThemeChange={handlePrimaryThemeChange}
             settings={bgAudioSettings}
             onActivateNow={handleActivateBgAudio}
             onDismissPrompt={handleDismissBgAudio}
@@ -3876,15 +3893,15 @@ export default function App() {
               transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
               className="pointer-events-auto"
             >
-              <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-slate-900/95 border-fuchsia-500/40 text-white">
-                <Radio className="w-4 h-4 text-fuchsia-400 shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md text-xs bg-slate-900/95 casttube-accent-border text-white">
+                <Radio className="w-4 h-4 casttube-accent-icon shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0 text-left">
                   <div className="font-bold">Lanjutkan Pemutaran Terakhir?</div>
                   <div className="opacity-85 truncate">{pendingReopenResume.title}</div>
                   <button
                     type="button"
                     onClick={handleResumeLastPlayback}
-                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white font-bold text-[11px] transition-all cursor-pointer"
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg casttube-gradient-btn hover:brightness-110 font-bold text-[11px] transition-all cursor-pointer"
                   >
                     <Play className="w-3 h-3" />
                     <span>Lanjutkan Audio</span>

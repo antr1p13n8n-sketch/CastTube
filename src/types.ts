@@ -37,6 +37,23 @@ export type VisualizerStyle = 'bars' | 'wave' | 'radar' | 'minimal';
 
 export type ThemeMode = 'system' | 'dark' | 'light';
 
+export type PrimaryThemePresetId =
+  | 'prism'
+  | 'ocean'
+  | 'sunset'
+  | 'emerald'
+  | 'violet'
+  | 'amber'
+  | 'custom';
+
+export interface PrimaryThemeConfig {
+  presetId: PrimaryThemePresetId;
+  startHex: string;
+  midHex: string;
+  endHex: string;
+  glowHex: string;
+}
+
 export interface PlayerState {
   currentVideo: Video | null;
   isPlaying: boolean;

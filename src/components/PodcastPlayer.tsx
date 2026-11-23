@@ -98,9 +98,9 @@ const PodcastScrubber: React.FC<{
           max={duration || 100}
           value={currentTime}
           onChange={(e) => onSeek(Number(e.target.value))}
-          className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-fuchsia-600 focus:outline-hidden"
+          className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer casttube-range-accent focus:outline-hidden"
           style={{
-            background: `linear-gradient(to right, #f43f5e 0%, #d946ef ${Math.max(progressPercent * 0.5, 0)}%, #06b6d4 ${progressPercent}%, rgba(148, 163, 184, 0.35) ${progressPercent}%, rgba(148, 163, 184, 0.35) 100%)`,
+            background: `linear-gradient(to right, var(--ct-start) 0%, var(--ct-mid) ${Math.max(progressPercent * 0.5, 0)}%, var(--ct-glow) ${progressPercent}%, rgba(148, 163, 184, 0.35) ${progressPercent}%, rgba(148, 163, 184, 0.35) 100%)`,
           }}
         />
       </div>
@@ -342,7 +342,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             isPlaying ? 'opacity-30' : 'opacity-18'
           }`}
           style={{
-            background: 'radial-gradient(circle, #ec4899 0%, #f43f5e 50%, transparent 100%)',
+            background: 'radial-gradient(circle, var(--ct-mid) 0%, var(--ct-start) 50%, transparent 100%)',
           }}
         />
         <div
@@ -350,7 +350,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             isPlaying ? 'opacity-28' : 'opacity-15'
           }`}
           style={{
-            background: 'radial-gradient(circle, #06b6d4 0%, #6366f1 65%, transparent 100%)',
+            background: 'radial-gradient(circle, var(--ct-glow) 0%, var(--ct-end) 65%, transparent 100%)',
           }}
         />
       </div>
@@ -358,7 +358,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
       {/* Top Header inside Player: Mode Switcher & Actions */}
       <div className="relative z-10 flex flex-wrap items-center justify-between gap-3 pb-4 sm:pb-6 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2.5">
-          <div className="p-2.5 rounded-xl bg-gradient-to-tr from-rose-500/15 via-fuchsia-500/15 to-indigo-500/15 text-fuchsia-600 dark:text-fuchsia-400">
+          <div className="p-2.5 rounded-xl casttube-soft-surface border casttube-accent-icon">
             <Radio className={`w-5 h-5 ${isPlaying ? 'animate-pulse' : ''}`} />
           </div>
           <div>
@@ -386,7 +386,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                 backgroundAudioEnabled
                   ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300/60 dark:border-emerald-700/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
-                  : 'bg-gradient-to-r from-rose-500 to-fuchsia-600 text-white shadow-xs'
+                  : 'casttube-gradient-btn'
               }`}
               title="Pengaturan Popup Otomatis & Audio Latar"
             >
@@ -402,8 +402,8 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
               onClick={onToggleFloatingPopup}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 isFloatingOpen
-                  ? 'bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 text-white shadow-md shadow-fuchsia-500/25'
-                  : 'text-indigo-700 dark:text-cyan-300 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
+                  ? 'casttube-gradient-btn'
+                  : 'casttube-soft-surface casttube-accent-secondary-text border hover:brightness-95 dark:hover:brightness-110'
               }`}
               title={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Buka Popup Mengambang'}
             >
@@ -422,7 +422,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                 downloadState?.status === 'completed'
                   ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
                   : downloadState?.status === 'preparing' || downloadState?.status === 'downloading'
-                  ? 'bg-fuchsia-50 dark:bg-fuchsia-950/40 text-fuchsia-600 dark:text-fuchsia-400'
+                  ? 'casttube-soft-surface casttube-accent-text border'
                   : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
               title={
@@ -451,7 +451,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                 </>
               ) : (
                 <>
-                  <Download className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  <Download className="w-4 h-4 casttube-accent-secondary-text" />
                   <span className="hidden sm:inline">Unduh Audio</span>
                 </>
               )}
@@ -462,10 +462,10 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
           <motion.button
             whileTap={{ scale: 0.95 }}
             onClick={onSwitchToVideo}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40 dark:hover:text-rose-300 rounded-lg transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
             title="Beralih ke Pemutar Video"
           >
-            <Tv className="w-4 h-4 text-rose-500" />
+            <Tv className="w-4 h-4 casttube-accent-icon" />
             <span className="hidden sm:inline">Mode Video</span>
           </motion.button>
 
@@ -475,7 +475,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             onClick={() => setShowQueue(!showQueue)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               showQueue
-                ? 'bg-gradient-to-r from-fuchsia-500 to-indigo-600 text-white shadow-sm'
+                ? 'casttube-gradient-btn'
                 : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
             title="Daftar Antrean"
@@ -488,10 +488,10 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
 
       {/* Helpful frosted info strip when using iframe fallback */}
       {!usingNativeAudio && nativeAudioStatus !== 'checking' && (
-        <div className="relative z-10 mt-4 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-fuchsia-50/75 to-cyan-50/90 dark:from-indigo-950/35 dark:via-fuchsia-950/25 dark:to-cyan-950/35 border border-indigo-200/80 dark:border-indigo-800/50 px-3.5 sm:px-4 py-3 text-left">
+        <div className="relative z-10 mt-4 rounded-2xl casttube-soft-surface border casttube-accent-border px-3.5 sm:px-4 py-3 text-left">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-start gap-2.5 text-xs text-indigo-950 dark:text-indigo-100 leading-relaxed">
-              <Radio className="w-4 h-4 text-indigo-600 dark:text-cyan-400 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2.5 text-xs text-slate-800 dark:text-slate-100 leading-relaxed">
+              <Radio className="w-4 h-4 casttube-accent-secondary-text shrink-0 mt-0.5" />
               <div>
                 <span className="font-bold">Popup Mengambang Otomatis Aktif: </span>
                 {nativeAudioStatus === 'live_stream'
@@ -504,7 +504,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                 <button
                   type="button"
                   onClick={onToggleFloatingPopup}
-                  className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 text-white hover:brightness-110 shadow-sm transition-all whitespace-nowrap cursor-pointer"
+                  className="text-[11px] font-bold px-3 py-1.5 rounded-lg casttube-gradient-btn hover:brightness-110 transition-all whitespace-nowrap cursor-pointer"
                 >
                   {isFloatingOpen ? 'Popup Aktif' : 'Buka Popup'}
                 </button>
@@ -513,7 +513,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                 <button
                   type="button"
                   onClick={onOpenAudioExtractorSettings}
-                  className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/80 dark:bg-slate-800/80 text-indigo-700 dark:text-cyan-300 border border-indigo-200/80 dark:border-indigo-700/60 hover:bg-white dark:hover:bg-slate-800 transition-colors whitespace-nowrap cursor-pointer"
+                  className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/85 dark:bg-slate-800/85 casttube-accent-secondary-text border casttube-accent-border hover:bg-white dark:hover:bg-slate-800 transition-colors whitespace-nowrap cursor-pointer"
                 >
                   Audio Latar Opsional
                 </button>
@@ -521,7 +521,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
               <button
                 type="button"
                 onClick={() => setShowMobileTips(!showMobileTips)}
-                className="flex items-center gap-1 text-[11px] font-bold text-indigo-700 dark:text-cyan-300 hover:underline whitespace-nowrap cursor-pointer"
+                className="flex items-center gap-1 text-[11px] font-bold casttube-accent-secondary-text hover:underline whitespace-nowrap cursor-pointer"
               >
                 <span>Tips</span>
                 {showMobileTips ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -538,7 +538,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                 transition={{ duration: 0.18 }}
                 className="overflow-hidden"
               >
-                <ul className="mt-2.5 pt-2.5 border-t border-indigo-200/70 dark:border-indigo-800/50 space-y-1 text-[11px] text-indigo-900/85 dark:text-indigo-200/85 list-disc pl-4">
+                <ul className="mt-2.5 pt-2.5 border-t casttube-accent-border space-y-1 text-[11px] text-slate-700 dark:text-slate-200 list-disc pl-4">
                   <li>Popup mengambang selalu aktif otomatis dan bisa digeser bebas ke seluruh layar saat menjelajah beranda atau membuka aplikasi.</li>
                   <li>Ingin suara tetap jalan meski layar HP dikunci? Opsional: tambahkan cookie/akun TV melalui tombol <strong>Audio Latar Opsional</strong>.</li>
                 </ul>
@@ -587,7 +587,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                 isHoveringArt ? 'opacity-100' : 'opacity-0'
               }`}
             >
-              <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-600 text-white flex items-center justify-center shadow-lg transform transition-transform group-hover:scale-110">
+              <div className="w-14 h-14 rounded-full casttube-gradient-btn flex items-center justify-center transform transition-transform group-hover:scale-110">
                 {isPlaying ? <Pause className="w-7 h-7" /> : <Play className="w-7 h-7 ml-0.5" />}
               </div>
             </div>
@@ -760,7 +760,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
               whileHover={{ scale: 1.06 }}
               whileTap={{ scale: 0.92 }}
               onClick={onPlayPause}
-              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white flex items-center justify-center shadow-xl shadow-fuchsia-500/35 transition-all cursor-pointer"
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full casttube-gradient-btn hover:brightness-110 flex items-center justify-center transition-all cursor-pointer"
               title={isPlaying ? 'Jeda' : 'Putar'}
             >
               {isPlaying ? (
@@ -898,7 +898,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                   max={100}
                   value={isMuted ? 0 : volume}
                   onChange={(e) => onVolumeChange(Number(e.target.value))}
-                  className="w-20 sm:w-24 h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-fuchsia-600 focus:outline-hidden"
+                  className="w-20 sm:w-24 h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer casttube-range-accent focus:outline-hidden"
                 />
               </div>
             </div>

@@ -62,12 +62,12 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
             exit={{ x: '100%' }}
             transition={{ type: 'spring', stiffness: 380, damping: 36 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md h-[100dvh] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-l border-fuchsia-200/70 dark:border-fuchsia-900/40 shadow-2xl p-4 sm:p-6 pb-[calc(1rem+env(safe-area-inset-bottom))] flex flex-col text-left transition-colors duration-200"
+            className="relative w-full max-w-md h-[100dvh] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-l casttube-accent-border shadow-2xl p-4 sm:p-6 pb-[calc(1rem+env(safe-area-inset-bottom))] flex flex-col text-left transition-colors duration-200"
           >
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="p-2 rounded-xl bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-600 text-white shadow-md shadow-fuchsia-500/25 shrink-0">
+            <div className="p-2 rounded-xl casttube-gradient-btn shrink-0">
               <Youtube className="w-5 h-5" />
             </div>
             <div className="min-w-0">
@@ -97,7 +97,7 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
                 value={filterQuery}
                 onChange={(e) => setFilterQuery(e.target.value)}
                 placeholder="Cari channel langganan..."
-                className="w-full pl-8 pr-8 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-fuchsia-500"
+                className="w-full pl-8 pr-8 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 casttube-accent-input"
               />
               {filterQuery && (
                 <button
@@ -133,7 +133,7 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
                   initial={{ opacity: 0, x: 16 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.2, delay: Math.min(idx, 10) * 0.025, ease: [0.16, 1, 0.3, 1] }}
-                  className="p-3.5 rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 hover:border-fuchsia-300 dark:hover:border-fuchsia-700/60 space-y-2.5 transition-colors"
+                  className="p-3.5 rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 casttube-card-hover space-y-2.5 transition-colors"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div
@@ -153,13 +153,13 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
                           const fallback = `https://avatar.vercel.sh/${channel.id}?size=100`;
                           if (img.src !== fallback) img.src = fallback;
                         }}
-                        className="w-10 h-10 rounded-full object-cover shrink-0 border border-fuchsia-300/60 dark:border-fuchsia-700/60"
+                        className="w-10 h-10 rounded-full object-cover shrink-0 border casttube-accent-border"
                       />
                       <div className="min-w-0">
-                        <div className="text-xs font-bold text-slate-900 dark:text-white truncate hover:text-fuchsia-600 dark:hover:text-fuchsia-400 transition-colors">
+                        <div className="text-xs font-bold text-slate-900 dark:text-white truncate hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] transition-colors">
                           {channel.title}
                         </div>
-                        <div className="text-[11px] text-indigo-600 dark:text-cyan-400 truncate">
+                        <div className="text-[11px] casttube-accent-secondary-text truncate">
                           {channel.handle || channel.id}
                         </div>
                       </div>
@@ -193,7 +193,7 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
                               href={channel.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-cyan-300 transition-colors"
+                              className="p-2 rounded-lg text-slate-400 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] transition-colors"
                               title="Buka Channel di YouTube"
                             >
                               <ExternalLink className="w-4 h-4" />
@@ -219,7 +219,7 @@ export const ChannelDrawer: React.FC<ChannelDrawerProps> = ({
                       <select
                         value={channel.groupId}
                         onChange={(e) => onChangeChannelGroup(channel.id, e.target.value)}
-                        className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 text-xs focus:outline-hidden focus:ring-2 focus:ring-fuchsia-500"
+                        className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 text-xs casttube-accent-input"
                       >
                       {groups
                         .filter((g) => g.id !== 'all')

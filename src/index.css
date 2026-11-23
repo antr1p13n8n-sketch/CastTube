@@ -6,6 +6,36 @@
   :root {
     --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
+    --ct-start: #f43f5e;
+    --ct-mid: #d946ef;
+    --ct-end: #6366f1;
+    --ct-glow: #06b6d4;
+    --ct-btn-text: #ffffff;
+    --ct-text-light: #a21caf;
+    --ct-text-dark: #f0abfc;
+    --ct-end-light: #4338ca;
+    --ct-end-dark: #67e8f9;
+    --ct-shadow: rgba(217, 70, 239, 0.28);
+    --ct-border-light: rgba(217, 70, 239, 0.34);
+    --ct-border-dark: rgba(217, 70, 239, 0.44);
+    --ct-soft-from: rgba(244, 63, 94, 0.1);
+    --ct-soft-mid: rgba(217, 70, 239, 0.09);
+    --ct-soft-to: rgba(99, 102, 241, 0.1);
+    --ct-soft-from-dark: rgba(244, 63, 94, 0.19);
+    --ct-soft-mid-dark: rgba(217, 70, 239, 0.17);
+    --ct-soft-to-dark: rgba(99, 102, 241, 0.2);
+    --ct-blob-1-light: rgba(244, 63, 94, 0.11);
+    --ct-blob-2-light: rgba(6, 182, 212, 0.11);
+    --ct-blob-3-light: rgba(99, 102, 241, 0.09);
+    --ct-blob-4-light: rgba(217, 70, 239, 0.08);
+    --ct-blob-1-dark: rgba(244, 63, 94, 0.16);
+    --ct-blob-2-dark: rgba(6, 182, 212, 0.14);
+    --ct-blob-3-dark: rgba(99, 102, 241, 0.16);
+    --ct-blob-4-dark: rgba(217, 70, 239, 0.11);
+    --ct-scroll-start: rgba(244, 63, 94, 0.48);
+    --ct-scroll-end: rgba(99, 102, 241, 0.48);
+    --ct-scroll-start-hover: rgba(244, 63, 94, 0.78);
+    --ct-scroll-end-hover: rgba(99, 102, 241, 0.78);
   }
 
   html {
@@ -18,9 +48,14 @@
     font-family: var(--font-sans);
     overflow-x: clip;
   }
+
+  ::selection {
+    background-color: var(--ct-mid);
+    color: var(--ct-btn-text);
+  }
 }
 
-/* Custom slick colorful scrollbars */
+/* Custom slick theme-aware scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -29,39 +64,146 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(244, 63, 94, 0.45), rgba(99, 102, 241, 0.45));
+  background: linear-gradient(180deg, var(--ct-scroll-start), var(--ct-scroll-end));
   border-radius: 9999px;
 }
-.dark ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(236, 72, 153, 0.55), rgba(6, 182, 212, 0.55));
-}
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, rgba(244, 63, 94, 0.75), rgba(99, 102, 241, 0.75));
+  background: linear-gradient(180deg, var(--ct-scroll-start-hover), var(--ct-scroll-end-hover));
 }
 
 @layer utilities {
   .casttube-app-bg {
     background-color: #f8f9ff;
     background-image:
-      radial-gradient(at 0% 0%, rgba(244, 63, 94, 0.11) 0px, transparent 42%),
-      radial-gradient(at 100% 0%, rgba(6, 182, 212, 0.12) 0px, transparent 42%),
-      radial-gradient(at 85% 45%, rgba(139, 92, 246, 0.09) 0px, transparent 44%),
-      radial-gradient(at 15% 85%, rgba(245, 158, 11, 0.08) 0px, transparent 42%);
+      radial-gradient(at 0% 0%, var(--ct-blob-1-light) 0px, transparent 42%),
+      radial-gradient(at 100% 0%, var(--ct-blob-2-light) 0px, transparent 42%),
+      radial-gradient(at 85% 45%, var(--ct-blob-3-light) 0px, transparent 44%),
+      radial-gradient(at 15% 85%, var(--ct-blob-4-light) 0px, transparent 42%);
     background-attachment: fixed;
   }
 
   .dark .casttube-app-bg {
     background-color: #070a14;
     background-image:
-      radial-gradient(at 0% 0%, rgba(244, 63, 94, 0.16) 0px, transparent 44%),
-      radial-gradient(at 100% 0%, rgba(6, 182, 212, 0.14) 0px, transparent 44%),
-      radial-gradient(at 80% 50%, rgba(99, 102, 241, 0.16) 0px, transparent 48%),
-      radial-gradient(at 15% 90%, rgba(217, 70, 239, 0.11) 0px, transparent 44%);
+      radial-gradient(at 0% 0%, var(--ct-blob-1-dark) 0px, transparent 44%),
+      radial-gradient(at 100% 0%, var(--ct-blob-2-dark) 0px, transparent 44%),
+      radial-gradient(at 80% 50%, var(--ct-blob-3-dark) 0px, transparent 48%),
+      radial-gradient(at 15% 90%, var(--ct-blob-4-dark) 0px, transparent 44%);
     background-attachment: fixed;
   }
 
   .casttube-gradient-bar {
-    background: linear-gradient(90deg, #f43f5e 0%, #d946ef 35%, #6366f1 70%, #06b6d4 100%);
+    background: linear-gradient(
+      90deg,
+      var(--ct-start) 0%,
+      var(--ct-mid) 36%,
+      var(--ct-end) 70%,
+      var(--ct-glow) 100%
+    );
+  }
+
+  .casttube-gradient-btn {
+    background-image: linear-gradient(
+      135deg,
+      var(--ct-start) 0%,
+      var(--ct-mid) 52%,
+      var(--ct-end) 100%
+    );
+    color: var(--ct-btn-text);
+    box-shadow: 0 8px 20px -6px var(--ct-shadow);
+  }
+
+  .casttube-gradient-text {
+    background-image: linear-gradient(90deg, var(--ct-text-light) 0%, var(--ct-end-light) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .dark .casttube-gradient-text {
+    background-image: linear-gradient(90deg, var(--ct-text-dark) 0%, var(--ct-end-dark) 100%);
+  }
+
+  .casttube-accent-text {
+    color: var(--ct-text-light);
+  }
+
+  .dark .casttube-accent-text {
+    color: var(--ct-text-dark);
+  }
+
+  .casttube-accent-secondary-text {
+    color: var(--ct-end-light);
+  }
+
+  .dark .casttube-accent-secondary-text {
+    color: var(--ct-end-dark);
+  }
+
+  .casttube-accent-icon {
+    color: var(--ct-mid);
+  }
+
+  .dark .casttube-accent-icon {
+    color: var(--ct-text-dark);
+  }
+
+  .casttube-soft-surface {
+    background-image: linear-gradient(
+      120deg,
+      var(--ct-soft-from) 0%,
+      var(--ct-soft-mid) 50%,
+      var(--ct-soft-to) 100%
+    );
+    border-color: var(--ct-border-light);
+  }
+
+  .dark .casttube-soft-surface {
+    background-image: linear-gradient(
+      120deg,
+      var(--ct-soft-from-dark) 0%,
+      var(--ct-soft-mid-dark) 50%,
+      var(--ct-soft-to-dark) 100%
+    );
+    border-color: var(--ct-border-dark);
+  }
+
+  .casttube-accent-border {
+    border-color: var(--ct-border-light);
+  }
+
+  .dark .casttube-accent-border {
+    border-color: var(--ct-border-dark);
+  }
+
+  .casttube-card-active {
+    border-color: var(--ct-mid);
+    box-shadow: 0 0 0 2px var(--ct-border-light), 0 12px 26px -8px var(--ct-shadow);
+  }
+
+  .dark .casttube-card-active {
+    border-color: var(--ct-text-dark);
+    box-shadow: 0 0 0 2px var(--ct-border-dark), 0 12px 26px -8px var(--ct-shadow);
+  }
+
+  .casttube-card-hover:hover {
+    border-color: var(--ct-border-light);
+    box-shadow: 0 18px 34px -14px var(--ct-shadow);
+  }
+
+  .dark .casttube-card-hover:hover {
+    border-color: var(--ct-border-dark);
+  }
+
+  .casttube-accent-input:focus,
+  .casttube-accent-input:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--ct-mid);
+    border-color: var(--ct-mid);
+  }
+
+  .casttube-range-accent {
+    accent-color: var(--ct-mid);
   }
 
   .video-card-auto {

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { VisualizerStyle } from '../types';
+import { getActiveCssThemeColors, THEME_COLORS_CHANGED_EVENT } from '../utils/themeColors';
 
 interface AudioVisualizerProps {
   isPlaying: boolean;
@@ -7,6 +8,13 @@ interface AudioVisualizerProps {
   style?: VisualizerStyle;
   playbackRate?: number;
   className?: string;
+}
+
+interface PaletteStops {
+  startHex: string;
+  midHex: string;
+  endHex: string;
+  glowHex: string;
 }
 
 export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
@@ -29,6 +37,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     if (!ctx) return;
 
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let palette: PaletteStops = getActiveCssThemeColors();
 
     const resize = () => {
       if (!canvas) return;
@@ -49,6 +58,11 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
       attributes: true,
       attributeFilter: ['class'],
     });
+
+    const handlePaletteChange = () => {
+      palette = getActiveCssThemeColors();
+    };
+    window.addEventListener(THEME_COLORS_CHANGED_EVENT, handlePaletteChange);
 
     let stopped = false;
 
@@ -71,13 +85,13 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
       const phase = phaseRef.current;
 
       if (style === 'wave') {
-        renderWave(ctx, width, height, phase, energy, isDarkMode);
+        renderWave(ctx, width, height, phase, energy, isDarkMode, palette);
       } else if (style === 'bars') {
-        renderBars(ctx, width, height, phase, energy, isDarkMode);
+        renderBars(ctx, width, height, phase, energy, isDarkMode, palette);
       } else if (style === 'radar') {
-        renderRadar(ctx, width, height, phase, energy, isDarkMode);
+        renderRadar(ctx, width, height, phase, energy, isDarkMode, palette);
       } else {
-        renderMinimal(ctx, width, height, phase, energy, isDarkMode);
+        renderMinimal(ctx, width, height, phase, energy, isDarkMode, palette);
       }
 
       ctx.restore();
@@ -96,6 +110,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     return () => {
       stopped = true;
       themeObserver.disconnect();
+      window.removeEventListener(THEME_COLORS_CHANGED_EVENT, handlePaletteChange);
       window.removeEventListener('resize', resize);
       if (animFrameIdRef.current) {
         cancelAnimationFrame(animFrameIdRef.current);
@@ -111,33 +126,6 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     />
   );
 };
-
-const WAVE_LAYER_CONFIGS = [
-  {
-    freq: 0.02,
-    speed: 1.0,
-    baseAmp: 26,
-    darkStops: ['rgba(6, 182, 212, 0.55)', 'rgba(99, 102, 241, 0.6)', 'rgba(217, 70, 239, 0.55)'],
-    lightStops: ['rgba(8, 145, 178, 0.4)', 'rgba(79, 70, 229, 0.45)', 'rgba(192, 38, 211, 0.4)'],
-    width: 2.2,
-  },
-  {
-    freq: 0.035,
-    speed: -0.8,
-    baseAmp: 20,
-    darkStops: ['rgba(244, 63, 94, 0.65)', 'rgba(245, 158, 11, 0.65)', 'rgba(16, 185, 129, 0.65)'],
-    lightStops: ['rgba(225, 29, 72, 0.5)', 'rgba(217, 119, 6, 0.5)', 'rgba(5, 150, 105, 0.5)'],
-    width: 2.6,
-  },
-  {
-    freq: 0.015,
-    speed: 1.4,
-    baseAmp: 34,
-    darkStops: ['#22d3ee', '#818cf8', '#e879f9', '#fb7185'],
-    lightStops: ['#0284c7', '#4f46e5', '#c026d3', '#e11d48'],
-    width: 3.2,
-  },
-];
 
 function createSpectrumGradient(
   ctx: CanvasRenderingContext2D,
@@ -159,23 +147,45 @@ function renderWave(
   height: number,
   phase: number,
   energy: number,
-  isDark: boolean
+  isDark: boolean,
+  palette: PaletteStops
 ) {
   const centerY = height / 2;
+  const layers = [
+    {
+      freq: 0.02,
+      speed: 1.0,
+      baseAmp: 26,
+      alpha: isDark ? 0.58 : 0.45,
+      stops: [palette.glowHex, palette.endHex, palette.midHex],
+      width: 2.2,
+    },
+    {
+      freq: 0.035,
+      speed: -0.8,
+      baseAmp: 20,
+      alpha: isDark ? 0.65 : 0.5,
+      stops: [palette.startHex, palette.midHex, palette.glowHex],
+      width: 2.6,
+    },
+    {
+      freq: 0.015,
+      speed: 1.4,
+      baseAmp: 34,
+      alpha: 1,
+      stops: [palette.glowHex, palette.endHex, palette.midHex, palette.startHex],
+      width: 3.2,
+    },
+  ];
 
-  for (let l = 0; l < WAVE_LAYER_CONFIGS.length; l++) {
-    const layer = WAVE_LAYER_CONFIGS[l];
+  for (let l = 0; l < layers.length; l++) {
+    const layer = layers[l];
     const amp = layer.baseAmp * energy;
+    ctx.save();
+    ctx.globalAlpha = layer.alpha;
     ctx.beginPath();
     ctx.lineWidth = layer.width;
-    ctx.strokeStyle = createSpectrumGradient(
-      ctx,
-      0,
-      0,
-      width,
-      0,
-      isDark ? layer.darkStops : layer.lightStops
-    );
+    ctx.strokeStyle = createSpectrumGradient(ctx, 0, 0, width, 0, layer.stops);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -193,6 +203,7 @@ function renderWave(
       }
     }
     ctx.stroke();
+    ctx.restore();
   }
 }
 
@@ -202,7 +213,8 @@ function renderBars(
   height: number,
   phase: number,
   energy: number,
-  isDark: boolean
+  _isDark: boolean,
+  palette: PaletteStops
 ) {
   const barCount = 36;
   const gap = 3;
@@ -211,16 +223,12 @@ function renderBars(
   const centerY = height / 2;
   const maxAmp = (height / 2) * 0.85;
 
-  const gradient = createSpectrumGradient(
-    ctx,
-    0,
-    0,
-    width,
-    height,
-    isDark
-      ? ['#22d3ee', '#818cf8', '#e879f9', '#fb7185', '#fbbf24']
-      : ['#0284c7', '#4f46e5', '#c026d3', '#e11d48', '#d97706']
-  );
+  const gradient = createSpectrumGradient(ctx, 0, 0, width, height, [
+    palette.glowHex,
+    palette.endHex,
+    palette.midHex,
+    palette.startHex,
+  ]);
   ctx.fillStyle = gradient;
 
   for (let i = 0; i < barCount; i++) {
@@ -249,7 +257,8 @@ function renderRadar(
   height: number,
   phase: number,
   energy: number,
-  isDark: boolean
+  _isDark: boolean,
+  palette: PaletteStops
 ) {
   const centerX = width / 2;
   const centerY = height / 2;
@@ -274,18 +283,21 @@ function renderRadar(
     centerY - baseRadius,
     centerX + baseRadius,
     centerY + baseRadius,
-    isDark ? ['#22d3ee', '#a855f7', '#f43f5e'] : ['#0284c7', '#7c3aed', '#e11d48']
+    [palette.glowHex, palette.midHex, palette.startHex]
   );
   ctx.lineWidth = 3;
   ctx.stroke();
 
   // Outer pulse ring
-  const pulseR = baseRadius + 18 + (Math.sin(phase * 2) * 6 * energy);
+  const pulseR = baseRadius + 18 + Math.sin(phase * 2) * 6 * energy;
+  ctx.save();
+  ctx.globalAlpha = 0.36;
   ctx.beginPath();
   ctx.arc(centerX, centerY, Math.max(pulseR, 10), 0, Math.PI * 2);
-  ctx.strokeStyle = isDark ? 'rgba(168, 85, 247, 0.35)' : 'rgba(99, 102, 241, 0.3)';
+  ctx.strokeStyle = palette.midHex;
   ctx.lineWidth = 1.5;
   ctx.stroke();
+  ctx.restore();
 }
 
 function renderMinimal(
@@ -294,7 +306,8 @@ function renderMinimal(
   height: number,
   phase: number,
   energy: number,
-  isDark: boolean
+  _isDark: boolean,
+  palette: PaletteStops
 ) {
   const barCount = 12;
   const centerY = height / 2;
@@ -303,16 +316,12 @@ function renderMinimal(
   const totalWidth = barCount * barWidth + (barCount - 1) * gap;
   const startX = (width - totalWidth) / 2;
 
-  ctx.fillStyle = createSpectrumGradient(
-    ctx,
-    startX,
-    0,
-    startX + totalWidth,
-    0,
-    isDark
-      ? ['#22d3ee', '#818cf8', '#e879f9', '#fb7185']
-      : ['#0284c7', '#4f46e5', '#c026d3', '#e11d48']
-  );
+  ctx.fillStyle = createSpectrumGradient(ctx, startX, 0, startX + totalWidth, 0, [
+    palette.glowHex,
+    palette.endHex,
+    palette.midHex,
+    palette.startHex,
+  ]);
 
   for (let i = 0; i < barCount; i++) {
     const x = startX + i * (barWidth + gap);

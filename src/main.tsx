@@ -2,7 +2,10 @@ import {createRoot} from 'react-dom/client';
 import {registerSW} from 'virtual:pwa-register';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { applyPrimaryThemeColors, loadPrimaryThemeConfig } from './utils/themeColors.ts';
 import './index.css';
+
+applyPrimaryThemeColors(loadPrimaryThemeConfig());
 
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   if (import.meta.env.DEV) {

@@ -695,7 +695,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
             {/* Header */}
             <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="p-2.5 rounded-xl bg-gradient-to-br from-rose-500 via-fuchsia-500 to-indigo-600 text-white shadow-md shadow-fuchsia-500/25 shrink-0">
+                <div className="p-2.5 rounded-xl casttube-gradient-btn shrink-0">
                   <Youtube className="w-5 h-5" />
                 </div>
                 <div className="min-w-0">
@@ -718,13 +718,13 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
             </div>
 
             {/* Unified Search + Link Input & Group Bar */}
-            <div className="px-4 sm:px-6 pt-3.5 sm:pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 space-y-2.5 shrink-0 bg-gradient-to-b from-indigo-50/50 via-fuchsia-50/30 to-white dark:from-indigo-950/20 dark:via-fuchsia-950/10 dark:to-slate-900">
+            <div className="px-4 sm:px-6 pt-3.5 sm:pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 space-y-2.5 shrink-0 casttube-soft-surface">
               <form onSubmit={handleUnifiedSubmit} className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-1 min-w-0">
                   {isDirectLinkMode ? (
-                    <Link2 className="w-4 h-4 absolute left-3.5 top-3 text-fuchsia-500 pointer-events-none" />
+                    <Link2 className="w-4 h-4 absolute left-3.5 top-3 casttube-accent-icon pointer-events-none" />
                   ) : (
-                    <Search className="w-4 h-4 absolute left-3.5 top-3 text-indigo-400 pointer-events-none" />
+                    <Search className="w-4 h-4 absolute left-3.5 top-3 casttube-accent-secondary-text pointer-events-none" />
                   )}
                   <textarea
                     ref={inputRef}
@@ -753,7 +753,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                     placeholder="Ketik judul video, nama channel, @handle, atau tempel link YouTube..."
                     className={`w-full pl-10 ${
                       unifiedInput ? 'pr-9' : 'pr-3.5'
-                    } py-2.5 text-xs rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-fuchsia-500 resize-none leading-relaxed ${
+                    } py-2.5 text-xs rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 casttube-accent-input resize-none leading-relaxed ${
                       isDirectLinkMode ? 'font-mono' : ''
                     }`}
                   />
@@ -777,7 +777,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                     className={`flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-xl border transition-colors cursor-pointer shrink-0 ${
                       hasPasted
                         ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
-                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-fuchsia-300 dark:hover:border-fuchsia-700'
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 casttube-card-hover'
                     }`}
                     title="Tempel link atau kata kunci dari clipboard"
                   >
@@ -788,7 +788,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                       </>
                     ) : (
                       <>
-                        <Clipboard className="w-4 h-4 text-fuchsia-500" />
+                        <Clipboard className="w-4 h-4 casttube-accent-icon" />
                         <span>Tempel</span>
                       </>
                     )}
@@ -797,7 +797,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   <button
                     type="submit"
                     disabled={isSearching || isAddingLinks || !unifiedInput.trim()}
-                    className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-md shadow-fuchsia-500/25 transition-all cursor-pointer shrink-0"
+                    className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold casttube-gradient-btn hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all cursor-pointer shrink-0"
                   >
                     {isAddingLinks || isSearching ? (
                       <>
@@ -831,7 +831,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                   <select
                     value={selectedGroupId}
                     onChange={(e) => setSelectedGroupId(e.target.value)}
-                    className="px-2.5 py-1 text-xs font-medium rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-fuchsia-500 cursor-pointer"
+                    className="px-2.5 py-1 text-xs font-medium rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white casttube-accent-input cursor-pointer"
                   >
                     {groups
                       .filter((g) => g.id !== 'all')
@@ -849,10 +849,10 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
             <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
               {/* Direct Link Preview Action Banner when links or @handles are in the box */}
               {isDirectLinkMode && (
-                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-fuchsia-50/90 via-rose-50/75 to-indigo-50/90 dark:from-fuchsia-950/30 dark:via-rose-950/20 dark:to-indigo-950/30 border border-fuchsia-200/80 dark:border-fuchsia-800/50 space-y-2.5">
+                <div className="p-3.5 rounded-2xl casttube-soft-surface border casttube-accent-border space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
-                      <Link2 className="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400 shrink-0" />
+                      <Link2 className="w-4 h-4 casttube-accent-text shrink-0" />
                       <span>
                         {detectedDirectLinks.length} Link / Handle YouTube Siap Ditambahkan
                       </span>
@@ -863,7 +863,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                           type="button"
                           onClick={() => void executeUnifiedSearch(detectedDirectLinks[0])}
                           disabled={isSearching || isAddingLinks}
-                          className="px-2.5 py-1.5 text-[11px] font-semibold rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-fuchsia-400 hover:text-fuchsia-600 dark:hover:text-fuchsia-300 transition-colors cursor-pointer"
+                          className="px-2.5 py-1.5 text-[11px] font-semibold rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] transition-colors cursor-pointer"
                         >
                           Cari Terkait
                         </button>
@@ -872,7 +872,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                         type="button"
                         onClick={() => void handleSubmitLinks(detectedDirectLinks)}
                         disabled={isAddingLinks}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white shadow-sm shadow-fuchsia-500/25 transition-all disabled:opacity-60 cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl casttube-gradient-btn hover:brightness-110 transition-all disabled:opacity-60 cursor-pointer"
                       >
                         {isAddingLinks ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -945,7 +945,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
               {/* Loading State */}
               {isSearching ? (
                 <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-slate-500">
-                  <Loader2 className="w-6 h-6 animate-spin text-fuchsia-500" />
+                  <Loader2 className="w-6 h-6 animate-spin casttube-accent-icon" />
                   <span>Mencari video &amp; channel di YouTube...</span>
                 </div>
               ) : hasSearched &&
@@ -961,7 +961,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                     <button
                       type="button"
                       onClick={() => void handleSubmitLinks([unifiedInput.trim()])}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:bg-fuchsia-50 hover:text-fuchsia-600 cursor-pointer transition-colors"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] cursor-pointer transition-colors"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Coba Tambah sebagai Channel</span>
@@ -985,7 +985,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                               <button
                                 type="button"
                                 onClick={() => setShowAllChannels((prev) => !prev)}
-                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-fuchsia-600 dark:text-fuchsia-400 hover:underline cursor-pointer"
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold casttube-accent-text hover:underline cursor-pointer"
                               >
                                 <span>
                                   {showAllChannels
@@ -1071,11 +1071,11 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                                     type="button"
                                     disabled={isAlreadyAdded || Boolean(addingChannelId)}
                                     onClick={() => void handleAddFromSearch(item)}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl whitespace-nowrap shrink-0 transition-all cursor-pointer ${
-                                      isAlreadyAdded
-                                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 cursor-default'
-                                        : 'bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 text-white shadow-sm shadow-fuchsia-500/20 disabled:opacity-50'
-                                    }`}
+                                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                                        isAlreadyAdded
+                                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 cursor-default'
+                                          : 'casttube-gradient-btn hover:brightness-110 disabled:opacity-50'
+                                      }`}
                                   >
                                     {isAddingThis ? (
                                       <>
@@ -1105,7 +1105,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                       {videoResults.length > 0 && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-100">
-                            <Film className="w-4 h-4 text-indigo-500" />
+                            <Film className="w-4 h-4 casttube-accent-secondary-text" />
                             <span>Video YouTube ({videoResults.length})</span>
                           </div>
 
@@ -1212,7 +1212,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                                             onPlayVideo(video);
                                             onClose();
                                           }}
-                                          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl bg-gradient-to-r from-rose-500 to-orange-500 hover:brightness-110 text-white shadow-sm transition-all cursor-pointer"
+                                          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl casttube-gradient-btn hover:brightness-110 transition-all cursor-pointer"
                                         >
                                           <Play className="w-3 h-3" />
                                           <span>Putar Video</span>
@@ -1225,7 +1225,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                                             onPlayAudio(video);
                                             onClose();
                                           }}
-                                          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:brightness-110 text-white shadow-sm transition-all cursor-pointer"
+                                          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-xl casttube-soft-surface casttube-accent-secondary-text border hover:brightness-95 dark:hover:brightness-110 transition-all cursor-pointer"
                                         >
                                           <Radio className="w-3 h-3" />
                                           <span>Audio</span>
@@ -1334,7 +1334,7 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                                   return merged.join('\n');
                                 })
                               }
-                              className="px-2.5 py-1 text-[11px] font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-fuchsia-50 hover:text-fuchsia-700 dark:hover:bg-fuchsia-950/40 dark:hover:text-fuchsia-300 border border-transparent hover:border-fuchsia-200 dark:hover:border-fuchsia-800/60 rounded-lg transition-colors cursor-pointer"
+                              className="px-2.5 py-1 text-[11px] font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] border border-transparent casttube-card-hover rounded-lg transition-colors cursor-pointer"
                             >
                               + {p.name}
                             </button>
@@ -1342,8 +1342,8 @@ export const AddChannelModal: React.FC<AddChannelModalProps> = ({
                         </div>
                       </div>
 
-                      <div className="p-3 rounded-2xl bg-gradient-to-r from-indigo-50/70 via-fuchsia-50/50 to-cyan-50/70 dark:from-indigo-950/25 dark:via-fuchsia-950/20 dark:to-cyan-950/25 border border-indigo-200/70 dark:border-indigo-800/50 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                        Tips: Anda bisa mengetik kata kunci apa saja, menempel banyak link sekaligus (URL video, Shorts, Playlist, link channel), atau memasukkan <span className="font-mono font-semibold text-fuchsia-600 dark:text-fuchsia-400">@handle</span> YouTube langsung di satu kolom atas.
+                      <div className="p-3 rounded-2xl casttube-soft-surface border casttube-accent-border text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                        Tips: Anda bisa mengetik kata kunci apa saja, menempel banyak link sekaligus (URL video, Shorts, Playlist, link channel), atau memasukkan <span className="font-mono font-semibold casttube-accent-text">@handle</span> YouTube langsung di satu kolom atas.
                       </div>
                     </div>
                   )}

@@ -13,6 +13,7 @@ import {
   Cloud,
   ListMusic,
   PictureInPicture2,
+  Palette,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { ThemeMode, PlayerMode } from '../types';
@@ -21,6 +22,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface HeaderProps {
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
+  onOpenThemeSettings?: () => void;
   onOpenAddModal: () => void;
   onOpenGroupModal: () => void;
   onOpenChannelDrawer: () => void;
@@ -45,6 +47,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = React.memo(({
   theme,
   onThemeChange,
+  onOpenThemeSettings,
   onOpenAddModal,
   onOpenGroupModal,
   onOpenChannelDrawer,
@@ -80,13 +83,11 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               whileHover={{ rotate: -8, scale: 1.06 }}
               whileTap={{ scale: 0.94 }}
               transition={{ type: 'spring', stiffness: 450, damping: 24 }}
-              className="w-8 h-8 rounded-xl bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-fuchsia-500/25"
+              className="w-8 h-8 rounded-xl casttube-gradient-btn flex items-center justify-center"
             >
               <Radio className="w-4 h-4" />
             </motion.div>
-            <span className="bg-gradient-to-r from-slate-900 via-fuchsia-700 to-indigo-700 dark:from-white dark:via-fuchsia-300 dark:to-cyan-300 bg-clip-text text-transparent">
-              CastTube
-            </span>
+            <span className="casttube-gradient-text">CastTube</span>
           </a>
         </div>
 
@@ -97,7 +98,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             onClick={() => onSelectTab('feed')}
             className={`relative py-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
               activeTab === 'feed'
-                ? 'text-fuchsia-600 dark:text-fuchsia-400 font-bold'
+                ? 'casttube-accent-text font-bold'
                 : 'hover:text-slate-900 dark:hover:text-white'
             }`}
           >
@@ -116,14 +117,14 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             onClick={() => onSelectTab('player')}
             className={`relative py-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'player'
-                ? 'text-indigo-600 dark:text-cyan-300 font-bold'
+                ? 'casttube-accent-secondary-text font-bold'
                 : 'hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             {playerMode === 'audio' ? (
-              <Radio className="w-4 h-4 text-fuchsia-500" />
+              <Radio className="w-4 h-4 casttube-accent-icon" />
             ) : (
-              <Tv className="w-4 h-4 text-indigo-500 dark:text-cyan-400" />
+              <Tv className="w-4 h-4 casttube-accent-secondary-text" />
             )}
             <span>Pemutar {playerMode === 'audio' ? 'Podcast' : 'Video'}</span>
             {activeTab === 'player' && (
@@ -138,7 +139,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           <motion.button
             whileTap={{ scale: 0.96 }}
             onClick={onOpenChannelDrawer}
-            className="whitespace-nowrap shrink-0 hover:text-indigo-600 dark:hover:text-cyan-300 transition-colors cursor-pointer"
+            className="whitespace-nowrap shrink-0 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
           >
             Kelola Channel
           </motion.button>
@@ -155,9 +156,9 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           <motion.button
             whileTap={{ scale: 0.96 }}
             onClick={onOpenPlaylistModal}
-            className="whitespace-nowrap shrink-0 hover:text-fuchsia-600 dark:hover:text-fuchsia-300 transition-colors cursor-pointer flex items-center gap-1.5"
+            className="whitespace-nowrap shrink-0 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
           >
-            <ListMusic className="w-4 h-4 text-fuchsia-500" />
+            <ListMusic className="w-4 h-4 casttube-accent-icon" />
             <span>Playlist{playlistCount > 0 ? ` (${playlistCount})` : ''}</span>
           </motion.button>
         </nav>
@@ -170,15 +171,15 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               onClick={onToggleFloatingPopup || onOpenBackgroundAudioPopup}
               className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                 isFloatingOpen
-                  ? 'bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 text-white shadow-md shadow-fuchsia-500/25'
+                  ? 'casttube-gradient-btn'
                   : backgroundAudioEnabled
-                  ? 'bg-gradient-to-r from-emerald-500/15 via-cyan-500/15 to-indigo-500/15 text-emerald-700 dark:text-cyan-300 border border-emerald-400/50 dark:border-cyan-500/40 hover:brightness-105'
+                  ? 'casttube-soft-surface casttube-accent-text border hover:brightness-105'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
               title={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Aktifkan Popup Pemutar Mengambang'}
               aria-label={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Aktifkan Popup Pemutar Mengambang'}
             >
-              <PictureInPicture2 className={`w-3.5 h-3.5 ${isFloatingOpen ? 'text-white' : 'text-fuchsia-500'}`} />
+              <PictureInPicture2 className={`w-3.5 h-3.5 ${isFloatingOpen ? '' : 'casttube-accent-icon'}`} />
               <span className="hidden lg:inline">{isFloatingOpen ? 'Popup Aktif' : 'Popup'}</span>
             </button>
           )}
@@ -194,7 +195,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                     src={user.photoURL}
                     alt={user.displayName || 'Profil'}
                     referrerPolicy="no-referrer"
-                    className="w-5 h-5 rounded-full object-cover shrink-0 ring-2 ring-fuchsia-400/50"
+                    className="w-5 h-5 rounded-full object-cover shrink-0 border casttube-accent-border"
                   />
                 ) : (
                   <Cloud className="w-4 h-4 text-emerald-500 shrink-0" />
@@ -214,25 +215,26 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             ) : (
               <button
                 onClick={onSignIn}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700/60 hover:border-indigo-400/60 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700/60 hover:bg-slate-200/80 dark:hover:bg-slate-700/80 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 title="Masuk dengan Google untuk menyimpan database di Firebase Cloud"
               >
-                <LogIn className="w-3.5 h-3.5 text-indigo-500 dark:text-cyan-400" />
+                <LogIn className="w-3.5 h-3.5 casttube-accent-icon" />
                 <span className="hidden sm:inline">Masuk Google</span>
               </button>
             )
           )}
 
-          {/* Theme Selector (Automatic System / Dark / Light) */}
+          {/* Theme Mode + Custom Primary Theme Color Picker Trigger */}
           <div className="flex items-center bg-slate-100/90 dark:bg-slate-800/90 rounded-xl p-0.5 border border-slate-200/70 dark:border-slate-700/70">
             <button
               onClick={() => onThemeChange('system')}
               className={`relative p-1.5 rounded-lg transition-colors cursor-pointer ${
                 theme === 'system'
-                  ? 'text-indigo-600 dark:text-cyan-300'
+                  ? 'casttube-accent-secondary-text'
                   : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
               }`}
               title="Otomatis Sesuai Tema Sistem"
+              aria-label="Tema Sistem"
             >
               {theme === 'system' && (
                 <motion.span
@@ -251,6 +253,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
               }`}
               title="Mode Terang (Light)"
+              aria-label="Mode Terang"
             >
               {theme === 'light' && (
                 <motion.span
@@ -265,10 +268,11 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               onClick={() => onThemeChange('dark')}
               className={`relative p-1.5 rounded-lg transition-colors cursor-pointer ${
                 theme === 'dark'
-                  ? 'text-fuchsia-400'
+                  ? 'casttube-accent-icon'
                   : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
               }`}
               title="Mode Gelap (Dark)"
+              aria-label="Mode Gelap"
             >
               {theme === 'dark' && (
                 <motion.span
@@ -279,6 +283,17 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               )}
               <Moon className="relative z-10 w-3.5 h-3.5" />
             </button>
+            {onOpenThemeSettings && (
+              <button
+                type="button"
+                onClick={onOpenThemeSettings}
+                className="p-1.5 ml-0.5 rounded-lg casttube-accent-icon hover:bg-white dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                title="Pilih Warna Tema Utama"
+                aria-label="Pilih Warna Tema Utama"
+              >
+                <Palette className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Primary Action Button */}
@@ -286,7 +301,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.95 }}
             onClick={onOpenAddModal}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-600 hover:brightness-110 rounded-xl shadow-lg shadow-fuchsia-500/25 transition-all whitespace-nowrap shrink-0 cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold casttube-gradient-btn hover:brightness-110 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer"
             title="Cari Video, Cari Channel, atau Tempel Link YouTube"
           >
             <Plus className="w-4 h-4" />
@@ -302,7 +317,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           onClick={() => onSelectTab('feed')}
           className={`relative flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
             activeTab === 'feed'
-              ? 'text-fuchsia-700 dark:text-fuchsia-300 font-bold'
+              ? 'casttube-accent-text font-bold'
               : 'hover:bg-slate-100 dark:hover:bg-slate-800'
           }`}
         >
@@ -310,7 +325,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             <motion.span
               layoutId="headerMobileActiveTab"
               transition={{ type: 'spring', stiffness: 480, damping: 35 }}
-              className="absolute inset-0 rounded-lg bg-gradient-to-r from-rose-500/15 via-fuchsia-500/15 to-indigo-500/15"
+              className="absolute inset-0 rounded-lg casttube-soft-surface border"
             />
           )}
           <span className="relative z-10">Beranda</span>
@@ -321,7 +336,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           onClick={() => onSelectTab('player')}
           className={`relative flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
             activeTab === 'player'
-              ? 'text-indigo-700 dark:text-cyan-300 font-bold'
+              ? 'casttube-accent-secondary-text font-bold'
               : 'hover:bg-slate-100 dark:hover:bg-slate-800'
           }`}
         >
@@ -329,14 +344,14 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             <motion.span
               layoutId="headerMobileActiveTab"
               transition={{ type: 'spring', stiffness: 480, damping: 35 }}
-              className="absolute inset-0 rounded-lg bg-gradient-to-r from-indigo-500/15 to-cyan-500/15"
+              className="absolute inset-0 rounded-lg casttube-soft-surface border"
             />
           )}
           <span className="relative z-10 flex items-center gap-1">
             {playerMode === 'audio' ? (
-              <Radio className="w-3.5 h-3.5 text-fuchsia-500" />
+              <Radio className="w-3.5 h-3.5 casttube-accent-icon" />
             ) : (
-              <Tv className="w-3.5 h-3.5 text-indigo-500 dark:text-cyan-400" />
+              <Tv className="w-3.5 h-3.5 casttube-accent-secondary-text" />
             )}
             <span>Pemutar</span>
           </span>
@@ -345,7 +360,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={onOpenChannelDrawer}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors cursor-pointer"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
         >
           <span>Channel</span>
         </motion.button>
@@ -362,9 +377,9 @@ export const Header: React.FC<HeaderProps> = React.memo(({
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={onOpenPlaylistModal}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 hover:bg-fuchsia-50 dark:hover:bg-fuchsia-950/30 transition-colors cursor-pointer"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
         >
-          <ListMusic className="w-3.5 h-3.5 text-fuchsia-500" />
+          <ListMusic className="w-3.5 h-3.5 casttube-accent-icon" />
           <span>Playlist{playlistCount > 0 ? ` (${playlistCount})` : ''}</span>
         </motion.button>
 
@@ -374,11 +389,11 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             onClick={onToggleFloatingPopup || onOpenBackgroundAudioPopup}
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 transition-all cursor-pointer ${
               isFloatingOpen
-                ? 'bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-rose-500 text-white font-bold shadow-sm shadow-fuchsia-500/20'
-                : 'hover:bg-cyan-50 dark:hover:bg-cyan-950/30'
+                ? 'casttube-gradient-btn font-bold'
+                : 'hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <PictureInPicture2 className={`w-3.5 h-3.5 ${isFloatingOpen ? 'text-white' : 'text-cyan-500'}`} />
+            <PictureInPicture2 className={`w-3.5 h-3.5 ${isFloatingOpen ? '' : 'casttube-accent-icon'}`} />
             <span>{isFloatingOpen ? 'Popup Aktif' : 'Popup'}</span>
           </motion.button>
         )}
