@@ -1028,6 +1028,9 @@ export default function App() {
   const floatingMiniPlayer = useFloatingMiniPlayer({
     currentVideo,
     isPlaying,
+    playbackRate,
+    volume,
+    isMuted,
     usingNativeAudio: useNativeAudio,
     nativeAudioStatus: currentAudioStatus,
     hasNext: queue.length > 0,
@@ -2684,6 +2687,13 @@ export default function App() {
   }, [currentVideo]);
   openAudioExtractorRef.current = handleOpenAudioExtractorSettings;
   const handleSeekHandled = useCallback(() => setSeekCommand(null), []);
+  const handleCyclePlaybackRate = useCallback(() => {
+    const steps = [0.75, 1, 1.25, 1.5, 1.75, 2];
+    setPlaybackRate((prev) => {
+      const idx = steps.findIndex((s) => Math.abs(s - prev) < 0.05);
+      return steps[(idx + 1) % steps.length];
+    });
+  }, []);
   const handleExpandPlayerTab = useCallback(() => setActiveTab('player'), []);
 
   // Lock resume seek timestamp per active track so 10s progress saves don't churn player props
@@ -3560,6 +3570,12 @@ export default function App() {
         isPlaying={isPlaying}
         playerMode={playerMode}
         usingNativeAudio={useNativeAudio}
+        playbackRate={playbackRate}
+        volume={volume}
+        isMuted={isMuted}
+        seekCommand={isPopupEmbedActive ? seekCommand : null}
+        onSeekHandled={handleSeekHandled}
+        hasPrev={Boolean(currentVideo)}
         hasNext={queue.length > 0}
         embedHost={floatingMiniPlayer.pipEmbedHost}
         canOpenOsPip={floatingMiniPlayer.canOpenOsPip}
@@ -3567,13 +3583,16 @@ export default function App() {
           void floatingMiniPlayer.openOsPipWindow({ manual: true });
         }}
         onOpenSettings={handleOpenBackgroundAudioPopup}
+        onOpenExtractorAuth={handleOpenAudioExtractorSettings}
         onToggleEmbedHost={floatingMiniPlayer.togglePipEmbedHost}
         onFallbackStandardHost={floatingMiniPlayer.fallbackToStandardEmbedHost}
         onPlayPause={handlePlayPause}
         onSkipBack={handleSkipBack}
         onSkipForward={handleSkipForward}
         onSeek={handleSeek}
+        onPrev={handlePrevTrack}
         onNext={handleNextTrack}
+        onCycleSpeed={handleCyclePlaybackRate}
         onToggleMode={handleTogglePlayerModeFromHeader}
         onExpand={handleExpandInAppPopup}
         onClose={floatingMiniPlayer.closePopup}

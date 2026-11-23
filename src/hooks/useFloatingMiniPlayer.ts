@@ -15,6 +15,9 @@ interface DocumentPictureInPictureAPI {
 interface UseFloatingMiniPlayerOptions {
   currentVideo: Video | null;
   isPlaying: boolean;
+  playbackRate?: number;
+  volume?: number;
+  isMuted?: boolean;
   usingNativeAudio: boolean;
   nativeAudioStatus?: NativeAudioStatus;
   hasNext: boolean;
@@ -36,127 +39,12 @@ export interface OpenFloatingPopupOptions {
 
 export type FloatingPopupMode = 'document' | 'video' | 'inapp' | null;
 
-function renderCanvasCard(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  video: Video | null,
-  isPlaying: boolean,
-  usingNativeAudio: boolean,
-  _nativeAudioStatus: NativeAudioStatus,
-  currentTime: number,
-  duration: number
-) {
-  const grad = ctx.createLinearGradient(0, 0, width, height);
-  grad.addColorStop(0, '#090d1a');
-  grad.addColorStop(0.5, '#1e1b4b');
-  grad.addColorStop(1, '#4c0519');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, width, height);
-
-  const glow = ctx.createRadialGradient(
-    width * 0.85,
-    height * 0.2,
-    10,
-    width * 0.85,
-    height * 0.2,
-    180
-  );
-  glow.addColorStop(0, 'rgba(217, 70, 239, 0.35)');
-  glow.addColorStop(1, 'rgba(6, 182, 212, 0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.fillStyle = '#ec4899';
-  ctx.beginPath();
-  ctx.roundRect(24, 22, 12, 12, 6);
-  ctx.fill();
-
-  ctx.fillStyle = '#f8fafc';
-  ctx.font = 'bold 15px system-ui, -apple-system, sans-serif';
-  ctx.fillText('CastTube', 44, 33);
-
-  ctx.fillStyle = usingNativeAudio ? '#34d399' : '#38bdf8';
-  ctx.font = '600 12px system-ui, -apple-system, sans-serif';
-  const statusLabel = usingNativeAudio
-    ? isPlaying
-      ? 'Audio Latar Aktif'
-      : 'Dijeda'
-    : 'Popup Mengambang Aktif';
-  ctx.fillText(statusLabel, width - ctx.measureText(statusLabel).width - 24, 33);
-
-  const title = video?.title || 'Tidak ada pemutaran';
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 20px system-ui, -apple-system, sans-serif';
-  const words = title.split(/\s+/);
-  const lines: string[] = [];
-  let currentLine = '';
-  const maxWidth = width - 48;
-
-  for (const w of words) {
-    const test = currentLine ? `${currentLine} ${w}` : w;
-    if (ctx.measureText(test).width > maxWidth && currentLine) {
-      lines.push(currentLine);
-      currentLine = w;
-      if (lines.length === 2) break;
-    } else {
-      currentLine = test;
-    }
-  }
-  if (lines.length < 2 && currentLine) {
-    lines.push(currentLine);
-  }
-  if (lines.length === 2 && words.length > 0 && lines.join(' ').length < title.length) {
-    lines[1] = `${lines[1].slice(0, Math.max(0, lines[1].length - 3))}...`;
-  }
-
-  lines.forEach((line, idx) => {
-    ctx.fillText(line, 24, 92 + idx * 28);
-  });
-
-  ctx.fillStyle = '#cbd5e1';
-  ctx.font = '500 15px system-ui, -apple-system, sans-serif';
-  ctx.fillText(video?.channelTitle || 'CastTube Audio', 24, 158);
-
-  const baseEqY = 205;
-  const phase = Date.now() / 160;
-  const barColors = ['#f43f5e', '#d946ef', '#8b5cf6', '#6366f1', '#06b6d4'];
-  for (let b = 0; b < 5; b++) {
-    const h = isPlaying ? 8 + Math.abs(Math.sin(phase + b * 0.9)) * 18 : 6;
-    ctx.fillStyle = barColors[b % barColors.length];
-    ctx.beginPath();
-    ctx.roundRect(24 + b * 9, baseEqY - h, 5, h, 2);
-    ctx.fill();
-  }
-
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '600 13px ui-monospace, SFMono-Regular, Menlo, monospace';
-  const timeText = `${formatTime(currentTime)} / ${formatTime(duration)}`;
-  ctx.fillText(timeText, width - ctx.measureText(timeText).width - 24, 204);
-
-  const barY = 226;
-  const barW = width - 48;
-  ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
-  ctx.beginPath();
-  ctx.roundRect(24, barY, barW, 6, 3);
-  ctx.fill();
-
-  const pct = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
-  if (pct > 0) {
-    const barGrad = ctx.createLinearGradient(24, 0, 24 + barW, 0);
-    barGrad.addColorStop(0, '#f43f5e');
-    barGrad.addColorStop(0.5, '#d946ef');
-    barGrad.addColorStop(1, '#06b6d4');
-    ctx.fillStyle = barGrad;
-    ctx.beginPath();
-    ctx.roundRect(24, barY, Math.max(8, barW * pct), 6, 3);
-    ctx.fill();
-  }
-}
-
 export function useFloatingMiniPlayer({
   currentVideo,
   isPlaying,
+  playbackRate = 1,
+  volume = 85,
+  isMuted = false,
   usingNativeAudio,
   nativeAudioStatus = 'checking',
   hasNext,
@@ -176,8 +64,7 @@ export function useFloatingMiniPlayer({
   const [pipEmbedHost, setPipEmbedHost] = useState<'nocookie' | 'standard'>('nocookie');
 
   const pipWindowRef = useRef<Window | null>(null);
-  const pipVideoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const handshakeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const clockUnsubRef = useRef<(() => void) | null>(null);
   const isOpenRef = useRef(isOpen);
   isOpenRef.current = isOpen;
@@ -195,6 +82,9 @@ export function useFloatingMiniPlayer({
   const propsRef = useRef({
     currentVideo,
     isPlaying,
+    playbackRate,
+    volume,
+    isMuted,
     usingNativeAudio,
     nativeAudioStatus,
     hasNext,
@@ -211,6 +101,9 @@ export function useFloatingMiniPlayer({
   propsRef.current = {
     currentVideo,
     isPlaying,
+    playbackRate,
+    volume,
+    isMuted,
     usingNativeAudio,
     nativeAudioStatus,
     hasNext,
@@ -228,11 +121,6 @@ export function useFloatingMiniPlayer({
   const isTopWindow = typeof window !== 'undefined' && window.self === window.top;
   const supportsDocumentPip =
     typeof window !== 'undefined' && 'documentPictureInPicture' in window;
-  const supportsVideoPip =
-    typeof document !== 'undefined' &&
-    Boolean(document.pictureInPictureEnabled) &&
-    typeof HTMLVideoElement !== 'undefined' &&
-    'requestPictureInPicture' in HTMLVideoElement.prototype;
   const canOpenOsPip = supportsDocumentPip && isTopWindow;
   // Universal popup support: always enabled via unrestricted interactive FloatingInAppPopup
   const isSupported = true;
@@ -246,9 +134,9 @@ export function useFloatingMiniPlayer({
       clockUnsubRef.current();
       clockUnsubRef.current = null;
     }
-    if (canvasTimerRef.current) {
-      clearInterval(canvasTimerRef.current);
-      canvasTimerRef.current = null;
+    if (handshakeTimerRef.current) {
+      clearInterval(handshakeTimerRef.current);
+      handshakeTimerRef.current = null;
     }
     if (pipWindowRef.current && !pipWindowRef.current.closed) {
       try {
@@ -260,22 +148,6 @@ export function useFloatingMiniPlayer({
     pipWindowRef.current = null;
     loadedEmbedKeyRef.current = null;
 
-    if (typeof document !== 'undefined' && document.pictureInPictureElement) {
-      try {
-        void document.exitPictureInPicture().catch(() => {});
-      } catch {
-        // ignore
-      }
-    }
-    if (pipVideoRef.current) {
-      const stream = pipVideoRef.current.srcObject as MediaStream | null;
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
-      }
-      pipVideoRef.current.srcObject = null;
-      pipVideoRef.current.remove();
-      pipVideoRef.current = null;
-    }
     setIsOpen(false);
     setMode(null);
     wasHiddenSinceOpenRef.current = false;
@@ -411,12 +283,37 @@ export function useFloatingMiniPlayer({
   useEffect(() => {
     if (mode === 'document' && pipWindowRef.current && !pipWindowRef.current.closed) {
       renderDocumentPipContents(pipWindowRef.current);
+      const embedFrame = pipWindowRef.current.document.getElementById(
+        'ct-pip-iframe'
+      ) as HTMLIFrameElement | null;
+      if (embedFrame?.contentWindow && !usingNativeAudio) {
+        const sendCmd = (func: string, args: unknown[] = []) => {
+          try {
+            embedFrame.contentWindow?.postMessage(
+              JSON.stringify({ event: 'command', func, args }),
+              '*'
+            );
+          } catch {
+            // ignore
+          }
+        };
+        sendCmd('setPlaybackRate', [playbackRate]);
+        if (isMuted) {
+          sendCmd('mute');
+        } else {
+          sendCmd('unMute');
+          sendCmd('setVolume', [volume]);
+        }
+      }
     }
   }, [
     mode,
     currentVideo?.id,
     currentVideo?.title,
     isPlaying,
+    playbackRate,
+    volume,
+    isMuted,
     usingNativeAudio,
     nativeAudioStatus,
     hasNext,
@@ -551,15 +448,33 @@ export function useFloatingMiniPlayer({
           });
 
           const iframeEl = doc.getElementById('ct-pip-iframe') as HTMLIFrameElement | null;
-          iframeEl?.addEventListener('load', () => {
+          let gotHandshake = false;
+          const sendHandshake = () => {
             try {
-              iframeEl.contentWindow?.postMessage(
+              iframeEl?.contentWindow?.postMessage(
                 JSON.stringify({ event: 'listening', id: 1 }),
                 '*'
               );
             } catch {
               // ignore
             }
+          };
+          iframeEl?.addEventListener('load', () => {
+            gotHandshake = false;
+            sendHandshake();
+            if (handshakeTimerRef.current) clearInterval(handshakeTimerRef.current);
+            let tries = 0;
+            handshakeTimerRef.current = setInterval(() => {
+              tries += 1;
+              if (gotHandshake || tries >= 14 || !pipWindowRef.current || pipWindowRef.current.closed) {
+                if (handshakeTimerRef.current) {
+                  clearInterval(handshakeTimerRef.current);
+                  handshakeTimerRef.current = null;
+                }
+                return;
+              }
+              sendHandshake();
+            }, 350);
           });
 
           const handlePipMessage = (ev: MessageEvent) => {
@@ -572,6 +487,28 @@ export function useFloatingMiniPlayer({
             }
             try {
               const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+              if (payload?.event === 'onReady' || payload?.event === 'infoDelivery') {
+                if (!gotHandshake) {
+                  gotHandshake = true;
+                  try {
+                    const sendCmd = (func: string, args: unknown[] = []) => {
+                      iframeEl?.contentWindow?.postMessage(
+                        JSON.stringify({ event: 'command', func, args }),
+                        '*'
+                      );
+                    };
+                    sendCmd('setPlaybackRate', [propsRef.current.playbackRate]);
+                    if (propsRef.current.isMuted) {
+                      sendCmd('mute');
+                    } else {
+                      sendCmd('unMute');
+                      sendCmd('setVolume', [propsRef.current.volume]);
+                    }
+                  } catch {
+                    // ignore
+                  }
+                }
+              }
               if (payload?.event === 'infoDelivery' && payload?.info) {
                 const vid = propsRef.current.currentVideo;
                 const cur = typeof payload.info.currentTime === 'number' ? payload.info.currentTime : undefined;
@@ -729,7 +666,7 @@ export function useFloatingMiniPlayer({
     if (
       typeof navigator === 'undefined' ||
       !('mediaSession' in navigator) ||
-      !(supportsDocumentPip || supportsVideoPip)
+      !supportsDocumentPip
     ) {
       setSupportsAutoPip(true);
       return;
@@ -766,9 +703,9 @@ export function useFloatingMiniPlayer({
         // ignore
       }
     };
-  }, [autoPopupOnMinimize, currentVideo?.id, isPlaying, openPopup, supportsDocumentPip, supportsVideoPip]);
+  }, [autoPopupOnMinimize, currentVideo?.id, isPlaying, openPopup, supportsDocumentPip]);
 
-  // Auto-open on minimize (without restriction) and clean auto-close on return when appropriate
+  // Auto-open on minimize (without restriction) and clean auto-close on return only when triggered by minimize
   useEffect(() => {
     if (typeof document === 'undefined') return;
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -803,7 +740,7 @@ export function useFloatingMiniPlayer({
           propsRef.current.autoClosePopupOnReturn &&
           isOpenRef.current &&
           wasHiddenSinceOpenRef.current &&
-          (modeRef.current !== 'inapp' || openedByMinimizeRef.current)
+          openedByMinimizeRef.current
         ) {
           cleanupResources();
         }

@@ -176,7 +176,12 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             event.target.setPlaybackRate?.(playbackRateRef.current);
 
             const latestVid = currentVideoRef.current;
-            const startSeconds = Math.floor(initialSeekSecondsRef.current || 0);
+            const snap = getPlaybackClockSnapshot();
+            const clockSec =
+              latestVid && snap.videoId === latestVid.id && snap.currentTime > 0
+                ? Math.floor(snap.currentTime)
+                : 0;
+            const startSeconds = Math.max(clockSec, Math.floor(initialSeekSecondsRef.current || 0));
             if (latestVid && loadedVideoIdRef.current !== latestVid.id) {
               loadedVideoIdRef.current = latestVid.id;
               if (isPlayingRef.current) {
@@ -328,7 +333,10 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       const currentUrl = playerRef.current.getVideoUrl ? playerRef.current.getVideoUrl() : '';
       if (loadedVideoIdRef.current !== currentVideo.id || !currentUrl.includes(currentVideo.id)) {
         loadedVideoIdRef.current = currentVideo.id;
-        const startSeconds = Math.floor(initialSeekSecondsRef.current || 0);
+        const snap = getPlaybackClockSnapshot();
+        const clockSec =
+          snap.videoId === currentVideo.id && snap.currentTime > 0 ? Math.floor(snap.currentTime) : 0;
+        const startSeconds = Math.max(clockSec, Math.floor(initialSeekSecondsRef.current || 0));
         if (isPlayingRef.current) {
           skipNextPlayVideoRef.current = currentVideo.id;
           playerRef.current.loadVideoById({
@@ -423,7 +431,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           } catch {
             // ignore
           }
-        }, 2000);
+        }, 3800);
       } else {
         skipNextPlayVideoRef.current = null;
         playerRef.current.pauseVideo();
