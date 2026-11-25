@@ -982,7 +982,11 @@ export default function App() {
       autoSwitchedToAudioRef.current = false;
       selectVideoForPlayback(video, mode, true);
       setActiveTab('player');
-      if (bgAudioSettingsRef.current.enabled && bgAudioSettingsRef.current.autoPopupOnPlay) {
+      if (
+        bgAudioSettingsRef.current.enabled &&
+        bgAudioSettingsRef.current.autoPopupOnPlay &&
+        (mode === 'audio' || floatingMiniPlayerRef.current.isOpen)
+      ) {
         void floatingMiniPlayerRef.current.openPopup({ silent: true, videoOverride: video });
       }
     },
@@ -2316,7 +2320,11 @@ export default function App() {
     selectVideoForPlayback(first, mode, true);
     setActiveTab('player');
     saveLastVideoId(first.id);
-    if (bgAudioSettingsRef.current.enabled && bgAudioSettingsRef.current.autoPopupOnPlay) {
+    if (
+      bgAudioSettingsRef.current.enabled &&
+      bgAudioSettingsRef.current.autoPopupOnPlay &&
+      (mode === 'audio' || floatingMiniPlayerRef.current.isOpen)
+    ) {
       void floatingMiniPlayerRef.current.openPopup({ silent: true, videoOverride: first });
     }
   };

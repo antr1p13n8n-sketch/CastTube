@@ -179,7 +179,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = React.memo(({
               title={isFloatingOpen ? 'Tutup Popup Mengambang' : 'Buka Popup Mengambang'}
             >
               <PictureInPicture2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{isFloatingOpen ? 'Tutup Popup' : 'Popup'}</span>
+              <span>{isFloatingOpen ? 'Tutup Popup' : 'Popup'}</span>
             </motion.button>
           )}
 

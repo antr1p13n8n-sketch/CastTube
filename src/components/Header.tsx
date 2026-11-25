@@ -357,6 +357,21 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           </span>
         </motion.button>
 
+        {(onToggleFloatingPopup || onOpenBackgroundAudioPopup) && (
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={onToggleFloatingPopup || onOpenBackgroundAudioPopup}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+              isFloatingOpen
+                ? 'casttube-gradient-btn font-bold'
+                : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <PictureInPicture2 className={`w-3.5 h-3.5 ${isFloatingOpen ? '' : 'casttube-accent-icon'}`} />
+            <span>{isFloatingOpen ? 'Popup Aktif' : 'Popup'}</span>
+          </motion.button>
+        )}
+
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={onOpenChannelDrawer}
@@ -382,21 +397,6 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           <ListMusic className="w-3.5 h-3.5 casttube-accent-icon" />
           <span>Playlist{playlistCount > 0 ? ` (${playlistCount})` : ''}</span>
         </motion.button>
-
-        {(onToggleFloatingPopup || onOpenBackgroundAudioPopup) && (
-          <motion.button
-            whileTap={{ scale: 0.95 }}
-            onClick={onToggleFloatingPopup || onOpenBackgroundAudioPopup}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg whitespace-nowrap shrink-0 transition-all cursor-pointer ${
-              isFloatingOpen
-                ? 'casttube-gradient-btn font-bold'
-                : 'hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <PictureInPicture2 className={`w-3.5 h-3.5 ${isFloatingOpen ? '' : 'casttube-accent-icon'}`} />
-            <span>{isFloatingOpen ? 'Popup Aktif' : 'Popup'}</span>
-          </motion.button>
-        )}
       </nav>
     </header>
   );

@@ -92,15 +92,19 @@ function clampPopupOffset(
   el: HTMLElement | null
 ): SavedPopupPos {
   if (typeof window === 'undefined') return { x, y };
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const width = el?.offsetWidth || (compact ? 296 : 352);
-  const height = el?.offsetHeight || (compact ? 190 : 360);
-  // Popup default anchor is bottom-right (~right: 16px, bottom: 92px)
+  const vw = window.visualViewport?.width ?? window.innerWidth;
+  const vh = window.visualViewport?.height ?? window.innerHeight;
+  const isMobile = vw < 640;
+  const defaultWidth = isMobile ? (compact ? 256 : 288) : compact ? 296 : 352;
+  const width = el?.offsetWidth || Math.min(vw - 20, defaultWidth);
+  const height = el?.offsetHeight || (compact ? 176 : isMobile ? 295 : 355);
+  // Reserve top space for sticky Header and bottom space for MiniPlayerBar
+  const topSafe = isMobile ? 112 : 76;
+  const bottomSafe = 78;
   const minX = -Math.max(0, vw - width - 20);
-  const maxX = 8;
-  const minY = -Math.max(0, vh - height - 104);
-  const maxY = 56;
+  const maxX = 4;
+  const minY = -Math.max(0, vh - height - topSafe - bottomSafe);
+  const maxY = 8;
   return {
     x: Math.min(maxX, Math.max(minX, x)),
     y: Math.min(maxY, Math.max(minY, y)),
@@ -208,6 +212,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
 }) => {
   const [compact, setCompact] = useState<boolean>(readSavedCompact);
   const [embedErrorCode, setEmbedErrorCode] = useState<number | null>(null);
+  const [needsDirectTap, setNeedsDirectTap] = useState<boolean>(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const initialPos = useRef<SavedPopupPos>(readSavedPopupPos());
   const dragX = useMotionValue(initialPos.current.x);
@@ -221,6 +226,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   const popupContainerRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const handshakeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoplayWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const embedReadyRef = useRef(false);
   const suppressSeekEchoRef = useRef<number | null>(null);
   const iframeStateRef = useRef<{ videoId: string | null; playing: boolean | null }>({
@@ -264,7 +270,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
     }
   }, [compact]);
 
-  // Clamp saved position on open / compact change / window resize
+  // Clamp saved position on open / compact change / window or visualViewport resize
   const clampCurrentPosition = useCallback(
     (persist = true) => {
       const clamped = clampPopupOffset(
@@ -287,12 +293,17 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
     const handleResize = () => clampCurrentPosition(true);
     window.addEventListener('resize', handleResize);
     window.addEventListener('orientationchange', handleResize);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', handleResize);
+    vv?.addEventListener('scroll', handleResize);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
+      vv?.removeEventListener('resize', handleResize);
+      vv?.removeEventListener('scroll', handleResize);
     };
-  }, [isOpen, clampCurrentPosition]);
+  }, [isOpen, compact, clampCurrentPosition]);
 
   const handleResetPosition = useCallback(() => {
     animate(dragX, 0, { type: 'spring', stiffness: 420, damping: 32 });
@@ -369,15 +380,43 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
     }, 350);
   }, [clearHandshakeTimer, sendListeningHandshake]);
 
+  const clearAutoplayWatchdog = useCallback(() => {
+    if (autoplayWatchdogRef.current) {
+      clearTimeout(autoplayWatchdogRef.current);
+      autoplayWatchdogRef.current = null;
+    }
+  }, []);
+
+  const armAutoplayWatchdog = useCallback(() => {
+    clearAutoplayWatchdog();
+    if (!useEmbed || !propsRef.current.isPlaying) return;
+    autoplayWatchdogRef.current = setTimeout(() => {
+      if (!propsRef.current.isPlaying) return;
+      if (iframeStateRef.current.playing !== true) {
+        setNeedsDirectTap(true);
+      }
+    }, 2000);
+  }, [clearAutoplayWatchdog, useEmbed]);
+
   useEffect(() => {
     setEmbedErrorCode(null);
+    setNeedsDirectTap(false);
     embedReadyRef.current = false;
-    return () => clearHandshakeTimer();
-  }, [currentVideo?.id, embedHost, useEmbed, reloadNonce, clearHandshakeTimer]);
+    return () => {
+      clearHandshakeTimer();
+      clearAutoplayWatchdog();
+    };
+  }, [currentVideo?.id, embedHost, useEmbed, reloadNonce, clearHandshakeTimer, clearAutoplayWatchdog]);
 
   // Sync play/pause commands into the popup iframe without reloading it
   useEffect(() => {
     if (!useEmbed || !currentVideo || !iframeRef.current) return;
+    if (!isPlaying) {
+      setNeedsDirectTap(false);
+      clearAutoplayWatchdog();
+    } else {
+      armAutoplayWatchdog();
+    }
     if (iframeStateRef.current.videoId !== currentVideo.id) {
       iframeStateRef.current = { videoId: currentVideo.id, playing: isPlaying };
       return;
@@ -385,7 +424,14 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
     if (iframeStateRef.current.playing === isPlaying) return;
     iframeStateRef.current.playing = isPlaying;
     sendEmbedCommand(isPlaying ? 'playVideo' : 'pauseVideo');
-  }, [useEmbed, currentVideo?.id, isPlaying, sendEmbedCommand]);
+  }, [
+    useEmbed,
+    currentVideo?.id,
+    isPlaying,
+    sendEmbedCommand,
+    armAutoplayWatchdog,
+    clearAutoplayWatchdog,
+  ]);
 
   // Sync playbackRate reactively into the popup iframe
   useEffect(() => {
@@ -469,6 +515,10 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
             setPlaybackClock(vid.id, cur ?? getPlaybackClockSnapshot().currentTime, dur);
           }
           if (typeof payload.info.playerState === 'number') {
+            if (payload.info.playerState === 1 || payload.info.playerState === 3) {
+              setNeedsDirectTap(false);
+              clearAutoplayWatchdog();
+            }
             if (payload.info.playerState === 1) {
               iframeStateRef.current = { videoId: vid?.id || null, playing: true };
               if (!propsRef.current.isPlaying) {
@@ -484,6 +534,10 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
             }
           }
         } else if (payload?.event === 'onStateChange' && typeof payload?.info === 'number') {
+          if (payload.info === 1 || payload.info === 3) {
+            setNeedsDirectTap(false);
+            clearAutoplayWatchdog();
+          }
           if (payload.info === 1) {
             iframeStateRef.current = { videoId: vid?.id || null, playing: true };
             if (!propsRef.current.isPlaying) {
@@ -560,33 +614,43 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.94 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-            className={`fixed right-3 sm:right-5 bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border casttube-accent-border shadow-2xl overflow-hidden text-left transition-[width] duration-200 ${
-              compact ? 'w-[min(calc(100vw-1.5rem),296px)]' : 'w-[min(calc(100vw-1.5rem),352px)]'
+            className={`fixed right-2.5 sm:right-5 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] sm:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border casttube-accent-border shadow-2xl overflow-hidden text-left transition-[width] duration-200 ${
+              compact
+                ? 'w-[min(calc(100vw-1.25rem),256px)] sm:w-[296px]'
+                : 'w-[min(calc(100vw-1.25rem),288px)] sm:w-[352px]'
             }`}
           >
             {/* Top Rainbow Hairline */}
             <div className="h-1 w-full casttube-gradient-bar" />
 
-            {/* Drag Header Bar */}
+            {/* Drag Header Bar (touch-safe: button clicks never start drag) */}
             <div
-              onPointerDown={(e) => dragControls.start(e)}
+              onPointerDown={(e) => {
+                const target = e.target as HTMLElement | null;
+                if (target?.closest('button, a, input, [data-no-drag="true"]')) return;
+                dragControls.start(e);
+              }}
               onDoubleClick={handleResetPosition}
-              className="flex items-center justify-between gap-2 px-3.5 py-2.5 casttube-soft-surface border-b border-slate-200/70 dark:border-slate-800/80 cursor-grab active:cursor-grabbing select-none touch-none"
+              className="flex items-center justify-between gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 casttube-soft-surface border-b border-slate-200/70 dark:border-slate-800/80 cursor-grab active:cursor-grabbing select-none touch-none"
               title="Geser bebas · Ketuk dua kali untuk kembalikan posisi"
             >
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
                 <GripHorizontal className="w-4 h-4 casttube-accent-icon shrink-0" />
                 <span className="text-[11px] font-extrabold tracking-tight casttube-gradient-text truncate">
-                  Popup Aktif · Geser Bebas
+                  {compact ? 'Popup Mini' : 'Popup · Geser'}
                 </span>
               </div>
 
-              <div className="flex items-center gap-0.5 shrink-0">
+              <div
+                data-no-drag="true"
+                onPointerDown={(e) => e.stopPropagation()}
+                className="flex items-center gap-0.5 shrink-0"
+              >
                 {isDisplaced && (
                   <button
                     type="button"
                     onClick={handleResetPosition}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     title="Kembalikan Posisi Awal Popup"
                     aria-label="Kembalikan Posisi Awal Popup"
                   >
@@ -597,7 +661,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                   <button
                     type="button"
                     onClick={onOpenOsPip}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     title="Lepas ke Jendela OS Mengambang (PiP)"
                     aria-label="Lepas ke Jendela OS Mengambang"
                   >
@@ -608,7 +672,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                   <button
                     type="button"
                     onClick={onOpenSettings}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     title="Setelan Popup & Cookie Otomatis"
                     aria-label="Setelan Popup"
                   >
@@ -618,8 +682,8 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                 <button
                   type="button"
                   onClick={() => setCompact((v) => !v)}
-                  className="p-1.5 rounded-lg text-slate-500 hover:text-[var(--ct-end-light)] dark:text-slate-400 dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                  title={compact ? 'Tampilkan Video / Visualizer' : 'Perkecil Tampilan Popup'}
+                  className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-end-light)] dark:text-slate-400 dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  title={compact ? 'Perbesar Video Popup' : 'Perkecil Tampilan Popup'}
                   aria-label={compact ? 'Tampilkan penuh popup' : 'Perkecil popup'}
                 >
                   <Minimize2 className="w-3.5 h-3.5" />
@@ -627,7 +691,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                 <button
                   type="button"
                   onClick={onExpand}
-                  className="p-1.5 rounded-lg text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                   title="Buka Pemutar Penuh"
                   aria-label="Buka Pemutar Penuh"
                 >
@@ -636,7 +700,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                  className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
                   title="Tutup Popup"
                   aria-label="Tutup Popup"
                 >
@@ -646,67 +710,122 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
             </div>
 
             {/* Media Stage */}
-            <div className="p-3.5 space-y-2.5">
-              {useEmbed && !compact ? (
-                <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black border border-slate-200 dark:border-slate-800 shadow-inner">
-                  <iframe
-                    key={embedKey}
-                    ref={iframeRef}
-                    src={embedSrc}
-                    title={currentVideo.title}
-                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen; web-share"
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    allowFullScreen
-                    onLoad={() => {
-                      iframeStateRef.current = { videoId: currentVideo.id, playing: isPlaying };
-                      startHandshakeRetries();
-                    }}
-                    className="w-full h-full border-0"
-                  />
+            <div className="p-2.5 sm:p-3.5 space-y-2 sm:space-y-2.5">
+              {useEmbed ? (
+                <div className={compact ? 'flex items-center gap-2.5' : 'space-y-2'}>
+                  {/* Single Persistent Iframe (never unmounts when toggling compact vs expanded!) */}
+                  <div
+                    className={
+                      compact
+                        ? 'relative w-20 h-[45px] rounded-xl overflow-hidden bg-black shrink-0 ring-1 ring-[var(--ct-border-light)] dark:ring-[var(--ct-border-dark)]'
+                        : 'relative w-full aspect-video rounded-2xl overflow-hidden bg-black border border-slate-200 dark:border-slate-800 shadow-inner'
+                    }
+                  >
+                    <iframe
+                      key={embedKey}
+                      ref={iframeRef}
+                      src={embedSrc}
+                      title={currentVideo.title}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen; web-share"
+                      referrerPolicy="strict-origin-when-cross-origin"
+                      allowFullScreen
+                      onLoad={() => {
+                        iframeStateRef.current = { videoId: currentVideo.id, playing: null };
+                        startHandshakeRetries();
+                        if (propsRef.current.isPlaying) {
+                          armAutoplayWatchdog();
+                        }
+                      }}
+                      className="w-full h-full border-0"
+                    />
 
-                  {embedErrorCode !== null && (
-                    <div className="absolute inset-0 bg-slate-950/92 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-center gap-2.5">
-                      <AlertCircle className="w-6 h-6 text-amber-400" />
-                      <div className="space-y-0.5">
-                        <p className="text-xs font-bold text-white">
-                          Video embed dibatasi (Kode {embedErrorCode})
-                        </p>
-                        <p className="text-[11px] text-slate-300 leading-snug">
-                          Coba muat ulang, pindah ke Mode Audio Latar, atau buka langsung di YouTube.
-                        </p>
+                    {!compact && needsDirectTap && embedErrorCode === null && (
+                      <div className="pointer-events-none absolute inset-x-2 bottom-2 flex justify-center">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-sm border border-white/15 text-[10px] font-bold text-white shadow-lg">
+                          <Play className="w-3 h-3 fill-current" />
+                          <span>Ketuk video sekali untuk putar di HP</span>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    )}
+
+                    {!compact && embedErrorCode !== null && (
+                      <div className="absolute inset-0 bg-slate-950/92 backdrop-blur-sm flex flex-col items-center justify-center p-3 text-center gap-2">
+                        <AlertCircle className="w-5 h-5 text-amber-400" />
+                        <div className="space-y-0.5">
+                          <p className="text-xs font-bold text-white">
+                            Video embed dibatasi (Kode {embedErrorCode})
+                          </p>
+                          <p className="text-[11px] text-slate-300 leading-snug">
+                            Muat ulang, pindah ke Mode Audio Latar, atau buka YouTube.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEmbedErrorCode(null);
+                              setReloadNonce((n) => n + 1);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                          >
+                            Coba Ulang
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (playerMode !== 'audio') {
+                                onToggleMode();
+                              } else if (onOpenExtractorAuth) {
+                                onOpenExtractorAuth();
+                              }
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl casttube-gradient-btn text-[11px] font-bold hover:brightness-110 transition-all cursor-pointer"
+                          >
+                            Audio Latar
+                          </button>
+                          <a
+                            href={`https://www.youtube.com/watch?v=${encodeURIComponent(currentVideo.id)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white text-[11px] font-bold transition-colors"
+                          >
+                            Buka YouTube
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Metadata & Server Toggle beside/below single iframe */}
+                  {compact ? (
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white line-clamp-2 leading-snug">
+                        {currentVideo.title}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1.5">
+                        <span className="truncate">{currentVideo.channelTitle}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                          Popup Aktif
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">
+                        {currentVideo.title}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span className="truncate">{currentVideo.channelTitle}</span>
                         <button
                           type="button"
-                          onClick={() => {
-                            setEmbedErrorCode(null);
-                            setReloadNonce((n) => n + 1);
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                          onClick={onToggleEmbedHost}
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold casttube-accent-secondary-text hover:underline shrink-0 cursor-pointer"
+                          title="Ganti server pemutar embed YouTube jika video diblokir"
                         >
-                          Coba Ulang
+                          <RefreshCw className="w-3 h-3" />
+                          <span>{embedHost === 'nocookie' ? 'Server Standar' : 'Server Privasi'}</span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (playerMode !== 'audio') {
-                              onToggleMode();
-                            } else if (onOpenExtractorAuth) {
-                              onOpenExtractorAuth();
-                            }
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl casttube-gradient-btn text-[11px] font-bold hover:brightness-110 transition-all cursor-pointer"
-                        >
-                          Audio Latar
-                        </button>
-                        <a
-                          href={`https://www.youtube.com/watch?v=${encodeURIComponent(currentVideo.id)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-2.5 py-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white text-[11px] font-bold transition-colors"
-                        >
-                          Buka YouTube
-                        </a>
                       </div>
                     </div>
                   )}
@@ -747,23 +866,6 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                 </div>
               )}
 
-              {/* Compact mode still keeps a hidden iframe mounted when using embed so audio continues smoothly */}
-              {useEmbed && compact && (
-                <iframe
-                  key={embedKey}
-                  ref={iframeRef}
-                  src={embedSrc}
-                  title={currentVideo.title}
-                  allow="autoplay; encrypted-media; picture-in-picture; fullscreen; web-share"
-                  referrerPolicy="strict-origin-when-cross-origin"
-                  onLoad={() => {
-                    iframeStateRef.current = { videoId: currentVideo.id, playing: isPlaying };
-                    startHandshakeRetries();
-                  }}
-                  className="sr-only w-px h-px opacity-0 pointer-events-none"
-                />
-              )}
-
               {/* Compact Visualizer strip when using native audio */}
               {!compact && usingNativeAudio && (
                 <div className="h-12 rounded-2xl casttube-soft-surface border casttube-accent-border overflow-hidden px-1">
@@ -772,27 +874,6 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                     isVisible={isOpen && usingNativeAudio && !compact}
                     style="wave"
                   />
-                </div>
-              )}
-
-              {/* Video Title in Expanded Embed Mode */}
-              {useEmbed && !compact && (
-                <div className="space-y-0.5">
-                  <div className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">
-                    {currentVideo.title}
-                  </div>
-                  <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                    <span className="truncate">{currentVideo.channelTitle}</span>
-                    <button
-                      type="button"
-                      onClick={onToggleEmbedHost}
-                      className="inline-flex items-center gap-1 text-[10px] font-semibold casttube-accent-secondary-text hover:underline shrink-0 cursor-pointer"
-                      title="Ganti server pemutar embed YouTube jika video diblokir"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                      <span>{embedHost === 'nocookie' ? 'Server Standar' : 'Server Privasi'}</span>
-                    </button>
-                  </div>
                 </div>
               )}
 
@@ -809,7 +890,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                     <button
                       type="button"
                       onClick={onPrev}
-                      className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      className="min-w-[34px] min-h-[36px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                       title="Sebelumnya / Ulangi"
                       aria-label="Sebelumnya"
                     >
@@ -828,7 +909,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                       }
                       onSkipBack(15);
                     }}
-                    className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="min-w-[34px] min-h-[36px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     title="Mundur 15 detik"
                     aria-label="Mundur 15 detik"
                   >
@@ -837,7 +918,13 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
 
                   <button
                     type="button"
-                    onClick={onPlayPause}
+                    onClick={() => {
+                      if (useEmbed && !isPlaying && iframeStateRef.current.playing !== true) {
+                        sendEmbedCommand('playVideo');
+                        armAutoplayWatchdog();
+                      }
+                      onPlayPause();
+                    }}
                     className="w-9 h-9 mx-0.5 rounded-xl casttube-gradient-btn flex items-center justify-center hover:brightness-110 active:scale-95 transition-all cursor-pointer"
                     title={isPlaying ? 'Jeda' : 'Putar'}
                     aria-label={isPlaying ? 'Jeda' : 'Putar'}
@@ -856,7 +943,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                       }
                       onSkipForward(30);
                     }}
-                    className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="min-w-[34px] min-h-[36px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     title="Maju 30 detik"
                     aria-label="Maju 30 detik"
                   >
@@ -867,7 +954,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                     <button
                       type="button"
                       onClick={onNext}
-                      className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      className="min-w-[34px] min-h-[36px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                       title="Episode Berikutnya"
                       aria-label="Episode Berikutnya"
                     >

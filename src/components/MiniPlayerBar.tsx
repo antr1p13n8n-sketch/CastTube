@@ -153,7 +153,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
             <div className="flex items-center gap-0.5 sm:gap-2.5 shrink-0">
               <button
                 onClick={() => onSkipBack(15)}
-                className="p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
+                className="hidden sm:flex p-2 text-slate-600 dark:text-slate-300 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
                 title="Mundur 15 detik"
                 aria-label="Mundur 15 detik"
               >
@@ -162,7 +162,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
 
               <button
                 onClick={onPlayPause}
-                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full casttube-gradient-btn hover:brightness-110 flex items-center justify-center transition-transform hover:scale-105 active:scale-90 cursor-pointer"
+                className="w-10 h-10 rounded-full casttube-gradient-btn hover:brightness-110 flex items-center justify-center transition-transform hover:scale-105 active:scale-90 cursor-pointer"
                 title={isPlaying ? 'Jeda' : 'Putar'}
                 aria-label={isPlaying ? 'Jeda' : 'Putar'}
               >
@@ -171,7 +171,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
 
               <button
                 onClick={() => onSkipForward(30)}
-                className="p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
+                className="hidden sm:flex p-2 text-slate-600 dark:text-slate-300 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
                 title="Maju 30 detik"
                 aria-label="Maju 30 detik"
               >
@@ -181,7 +181,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
               {hasNext && onNext && (
                 <button
                   onClick={onNext}
-                  className="flex p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
+                  className="hidden min-[400px]:flex min-w-[36px] min-h-[36px] items-center justify-center p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:text-[var(--ct-text-light)] dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90 cursor-pointer"
                   title="Putar Episode Berikutnya"
                   aria-label="Putar Episode Berikutnya"
                 >
@@ -195,7 +195,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
               {onOpenBackgroundAudioPopup && (
                 <button
                   onClick={onOpenBackgroundAudioPopup}
-                  className={`flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 text-xs font-semibold rounded-lg transition-colors active:scale-95 cursor-pointer ${
+                  className={`hidden min-[430px]:flex items-center gap-1 p-2 sm:px-2.5 sm:py-1.5 text-xs font-semibold rounded-lg transition-colors active:scale-95 cursor-pointer ${
                     backgroundAudioActive
                       ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-300/50 dark:border-emerald-700/40'
                       : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -211,7 +211,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
               {isFloatingSupported && onToggleFloatingPopup && (
                 <button
                   onClick={onToggleFloatingPopup}
-                  className={`flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-90 cursor-pointer ${
+                  className={`flex items-center justify-center gap-1 min-w-[36px] min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-90 cursor-pointer ${
                     isFloatingOpen
                       ? 'casttube-gradient-btn'
                       : 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:text-[var(--ct-end-light)] dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-200/80 dark:hover:bg-slate-700'
@@ -226,7 +226,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
 
               <button
                 onClick={onToggleMode}
-                className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 rounded-lg transition-colors active:scale-95 cursor-pointer"
+                className="flex items-center justify-center gap-1.5 min-w-[36px] min-h-[36px] px-2 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 rounded-lg transition-colors active:scale-95 cursor-pointer"
                 title={mode === 'audio' ? 'Beralih ke Video' : 'Beralih ke Audio Saja'}
                 aria-label={mode === 'audio' ? 'Beralih ke Video' : 'Beralih ke Audio Saja'}
               >
@@ -249,7 +249,7 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
 
               <button
                 onClick={onExpand}
-                className="p-1.5 sm:p-2 text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors active:scale-90 cursor-pointer"
+                className="min-w-[36px] min-h-[36px] flex items-center justify-center p-1.5 sm:p-2 text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors active:scale-90 cursor-pointer"
                 title="Buka Pemutar Penuh"
                 aria-label="Buka Pemutar Penuh"
               >

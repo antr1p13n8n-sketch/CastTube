@@ -43,6 +43,12 @@ export interface OpenFloatingPopupOptions {
 
 export type FloatingPopupMode = 'document' | 'video' | 'inapp' | null;
 
+interface PipVideoElement extends HTMLVideoElement {
+  webkitSupportsPresentationMode?: (mode: string) => boolean;
+  webkitSetPresentationMode?: (mode: string) => void;
+  webkitPresentationMode?: string;
+}
+
 export function useFloatingMiniPlayer({
   currentVideo,
   isPlaying,
@@ -70,6 +76,21 @@ export function useFloatingMiniPlayer({
   const pipWindowRef = useRef<Window | null>(null);
   const handshakeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const clockUnsubRef = useRef<(() => void) | null>(null);
+  const videoPipStateRef = useRef<{
+    videoEl: PipVideoElement | null;
+    canvasEl: HTMLCanvasElement | null;
+    drawInterval: ReturnType<typeof setInterval> | null;
+    thumbImg: HTMLImageElement | null;
+    thumbVideoId: string | null;
+    cleanupListeners: (() => void) | null;
+  }>({
+    videoEl: null,
+    canvasEl: null,
+    drawInterval: null,
+    thumbImg: null,
+    thumbVideoId: null,
+    cleanupListeners: null,
+  });
   const isOpenRef = useRef(isOpen);
   isOpenRef.current = isOpen;
   const modeRef = useRef<FloatingPopupMode>(mode);
@@ -125,13 +146,61 @@ export function useFloatingMiniPlayer({
   const isTopWindow = typeof window !== 'undefined' && window.self === window.top;
   const supportsDocumentPip =
     typeof window !== 'undefined' && 'documentPictureInPicture' in window;
-  const canOpenOsPip = supportsDocumentPip && isTopWindow;
+  const supportsVideoPip =
+    typeof document !== 'undefined' &&
+    typeof HTMLCanvasElement !== 'undefined' &&
+    typeof HTMLCanvasElement.prototype.captureStream === 'function' &&
+    Boolean(
+      document.pictureInPictureEnabled ||
+        (typeof HTMLVideoElement !== 'undefined' &&
+          'webkitSetPresentationMode' in HTMLVideoElement.prototype)
+    );
+  const canOpenOsPip = (supportsDocumentPip || supportsVideoPip) && isTopWindow;
   // Universal popup support: always enabled via unrestricted interactive FloatingInAppPopup
   const isSupported = true;
 
   const isPopupEmbedActive = Boolean(
     isOpen && (mode === 'document' || mode === 'inapp') && !usingNativeAudio && currentVideo
   );
+
+  const cleanupVideoPip = useCallback(() => {
+    const vp = videoPipStateRef.current;
+    if (vp.drawInterval) {
+      clearInterval(vp.drawInterval);
+      vp.drawInterval = null;
+    }
+    if (vp.cleanupListeners) {
+      vp.cleanupListeners();
+      vp.cleanupListeners = null;
+    }
+    if (typeof document !== 'undefined' && document.pictureInPictureElement === vp.videoEl) {
+      try {
+        void document.exitPictureInPicture().catch(() => {});
+      } catch {
+        // ignore
+      }
+    }
+    if (vp.videoEl) {
+      try {
+        if (vp.videoEl.webkitPresentationMode === 'picture-in-picture') {
+          vp.videoEl.webkitSetPresentationMode?.('inline');
+        }
+        vp.videoEl.pause();
+        const srcObj = vp.videoEl.srcObject as MediaStream | null;
+        if (srcObj) {
+          srcObj.getTracks().forEach((t) => t.stop());
+        }
+        vp.videoEl.srcObject = null;
+        vp.videoEl.remove();
+      } catch {
+        // ignore
+      }
+      vp.videoEl = null;
+    }
+    vp.canvasEl = null;
+    vp.thumbImg = null;
+    vp.thumbVideoId = null;
+  }, []);
 
   const cleanupResources = useCallback(() => {
     if (clockUnsubRef.current) {
@@ -142,6 +211,7 @@ export function useFloatingMiniPlayer({
       clearInterval(handshakeTimerRef.current);
       handshakeTimerRef.current = null;
     }
+    cleanupVideoPip();
     if (pipWindowRef.current && !pipWindowRef.current.closed) {
       try {
         pipWindowRef.current.close();
@@ -156,7 +226,7 @@ export function useFloatingMiniPlayer({
     setMode(null);
     wasHiddenSinceOpenRef.current = false;
     openedByMinimizeRef.current = false;
-  }, []);
+  }, [cleanupVideoPip]);
 
   const renderDocumentPipContents = useCallback((win: Window) => {
     const doc = win.document;
@@ -344,6 +414,157 @@ export function useFloatingMiniPlayer({
     };
   }, [cleanupResources]);
 
+  const drawVideoPipFrame = useCallback(() => {
+    const vp = videoPipStateRef.current;
+    const canvas = vp.canvasEl;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const vid = propsRef.current.currentVideo;
+    const playing = propsRef.current.isPlaying;
+    const colors = getActiveCssThemeColors();
+    const w = canvas.width;
+    const h = canvas.height;
+
+    if (vid && vp.thumbVideoId !== vid.id) {
+      vp.thumbVideoId = vid.id;
+      vp.thumbImg = null;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.referrerPolicy = 'no-referrer';
+      img.onload = () => {
+        if (videoPipStateRef.current.thumbVideoId === vid.id) {
+          videoPipStateRef.current.thumbImg = img;
+        }
+      };
+      img.src = `https://i.ytimg.com/vi/${encodeURIComponent(vid.id)}/mqdefault.jpg`;
+    }
+
+    // Background theme gradient
+    const bgGrad = ctx.createLinearGradient(0, 0, w, h);
+    bgGrad.addColorStop(0, '#090d1a');
+    bgGrad.addColorStop(1, '#111827');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Soft glowing orbs matching selected theme
+    const orb1 = ctx.createRadialGradient(w * 0.15, h * 0.18, 10, w * 0.15, h * 0.18, w * 0.55);
+    orb1.addColorStop(0, `${colors.startHex}44`);
+    orb1.addColorStop(1, 'transparent');
+    ctx.fillStyle = orb1;
+    ctx.fillRect(0, 0, w, h);
+
+    const orb2 = ctx.createRadialGradient(w * 0.88, h * 0.82, 10, w * 0.88, h * 0.82, w * 0.55);
+    orb2.addColorStop(0, `${colors.glowHex}3d`);
+    orb2.addColorStop(1, 'transparent');
+    ctx.fillStyle = orb2;
+    ctx.fillRect(0, 0, w, h);
+
+    // Top rainbow bar
+    const barGrad = ctx.createLinearGradient(0, 0, w, 0);
+    barGrad.addColorStop(0, colors.startHex);
+    barGrad.addColorStop(0.5, colors.midHex);
+    barGrad.addColorStop(1, colors.glowHex);
+    ctx.fillStyle = barGrad;
+    ctx.fillRect(0, 0, w, 6);
+
+    // Artwork card
+    const artX = 28;
+    const artY = 44;
+    const artW = 192;
+    const artH = 144;
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(artX, artY, artW, artH, 18);
+    ctx.clip();
+    if (vp.thumbImg && vp.thumbImg.complete && vp.thumbImg.naturalWidth > 0) {
+      try {
+        ctx.drawImage(vp.thumbImg, artX, artY, artW, artH);
+      } catch {
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(artX, artY, artW, artH);
+      }
+    } else {
+      const artGrad = ctx.createLinearGradient(artX, artY, artX + artW, artY + artH);
+      artGrad.addColorStop(0, colors.startHex);
+      artGrad.addColorStop(1, colors.endHex);
+      ctx.fillStyle = artGrad;
+      ctx.fillRect(artX, artY, artW, artH);
+    }
+    ctx.restore();
+
+    // Animated equalizer bars
+    const eqCount = 12;
+    const nowSec = Date.now() / 160;
+    const eqStartX = 244;
+    const eqBaseY = 236;
+    for (let i = 0; i < eqCount; i++) {
+      const amp = playing ? 0.35 + 0.65 * Math.abs(Math.sin(nowSec + i * 0.65)) : 0.18;
+      const barH = Math.round(10 + amp * 34);
+      const bx = eqStartX + i * 16;
+      ctx.fillStyle = i % 2 === 0 ? colors.midHex : colors.glowHex;
+      ctx.beginPath();
+      ctx.roundRect(bx, eqBaseY - barH, 9, barH, 4);
+      ctx.fill();
+    }
+
+    // Status line
+    ctx.fillStyle = playing ? '#34d399' : '#94a3b8';
+    ctx.font = '700 16px system-ui, -apple-system, sans-serif';
+    ctx.fillText(playing ? 'PIP MENGAMBANG AKTIF' : 'JEDA · KETUK PUTAR', 244, 68);
+
+    // Title (up to 2 lines)
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '700 22px system-ui, -apple-system, sans-serif';
+    const rawTitle = vid?.title || 'CastTube';
+    const words = rawTitle.split(' ');
+    let line1 = '';
+    let line2 = '';
+    for (const word of words) {
+      if ((line1 + ' ' + word).trim().length <= 28 && !line2) {
+        line1 = (line1 + ' ' + word).trim();
+      } else if ((line2 + ' ' + word).trim().length <= 26) {
+        line2 = (line2 + ' ' + word).trim();
+      } else {
+        line2 = line2 ? `${line2.replace(/\s+$/, '')}…` : `${line1}…`;
+        break;
+      }
+    }
+    ctx.fillText(line1, 244, 108);
+    if (line2) {
+      ctx.fillText(line2, 244, 138);
+    }
+
+    // Channel name
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '600 17px system-ui, -apple-system, sans-serif';
+    ctx.fillText((vid?.channelTitle || 'CastTube').slice(0, 34), 244, 174);
+
+    // Progress bar & time
+    const snap = getPlaybackClockSnapshot();
+    const pct = snap.duration > 0 ? Math.min(1, Math.max(0, snap.currentTime / snap.duration)) : 0;
+    const trackX = 28;
+    const trackY = 288;
+    const trackW = w - 56;
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
+    ctx.beginPath();
+    ctx.roundRect(trackX, trackY, trackW, 10, 5);
+    ctx.fill();
+    if (pct > 0) {
+      ctx.fillStyle = barGrad;
+      ctx.beginPath();
+      ctx.roundRect(trackX, trackY, Math.max(12, trackW * pct), 10, 5);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '600 16px ui-monospace, monospace';
+    ctx.fillText(`${formatTime(snap.currentTime)} / ${formatTime(snap.duration)}`, trackX, 326);
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('CastTube HP PiP', w - 166, 326);
+  }, []);
+
   const openOsPipWindow = useCallback(
     async (options?: OpenFloatingPopupOptions): Promise<boolean> => {
       setError(null);
@@ -357,7 +578,7 @@ export function useFloatingMiniPlayer({
         return false;
       }
 
-      if (canOpenOsPip) {
+      if (supportsDocumentPip && isTopWindow) {
         try {
           if (pipWindowRef.current && !pipWindowRef.current.closed) {
             if (!options?.silent) pipWindowRef.current.focus();
@@ -615,12 +836,105 @@ export function useFloatingMiniPlayer({
         }
       }
 
+      // Mobile Android Chrome / iOS Safari OS Picture-in-Picture via live Canvas <video> stream
+      if (supportsVideoPip && isTopWindow) {
+        try {
+          cleanupResources();
+          const canvas = document.createElement('canvas');
+          canvas.width = 640;
+          canvas.height = 360;
+          const videoEl = document.createElement('video') as PipVideoElement;
+          videoEl.muted = true;
+          videoEl.playsInline = true;
+          videoEl.autoplay = true;
+          videoEl.setAttribute('playsinline', '');
+          videoEl.setAttribute('webkit-playsinline', '');
+          videoEl.style.position = 'fixed';
+          videoEl.style.top = '-9999px';
+          videoEl.style.left = '0';
+          videoEl.style.width = '2px';
+          videoEl.style.height = '2px';
+          videoEl.style.opacity = '0.01';
+          videoEl.style.pointerEvents = 'none';
+          document.body.appendChild(videoEl);
+
+          videoPipStateRef.current.canvasEl = canvas;
+          videoPipStateRef.current.videoEl = videoEl;
+
+          drawVideoPipFrame();
+          const stream = canvas.captureStream(10);
+          videoEl.srcObject = stream;
+          videoPipStateRef.current.drawInterval = setInterval(drawVideoPipFrame, 120);
+
+          await videoEl.play();
+
+          let entered = false;
+          if (typeof videoEl.requestPictureInPicture === 'function' && document.pictureInPictureEnabled) {
+            await videoEl.requestPictureInPicture();
+            entered = true;
+          } else if (
+            typeof videoEl.webkitSupportsPresentationMode === 'function' &&
+            videoEl.webkitSupportsPresentationMode('picture-in-picture') &&
+            typeof videoEl.webkitSetPresentationMode === 'function'
+          ) {
+            videoEl.webkitSetPresentationMode('picture-in-picture');
+            entered = true;
+          }
+
+          if (entered) {
+            const onLeavePip = () => cleanupResources();
+            const onWebkitMode = () => {
+              if (videoEl.webkitPresentationMode !== 'picture-in-picture') {
+                cleanupResources();
+              }
+            };
+            const onVideoPlay = () => {
+              if (!propsRef.current.isPlaying) {
+                propsRef.current.onPlayPause();
+              }
+            };
+            const onVideoPause = () => {
+              if (propsRef.current.isPlaying && (document.pictureInPictureElement === videoEl || videoEl.webkitPresentationMode === 'picture-in-picture')) {
+                propsRef.current.onPlayPause();
+              }
+            };
+            videoEl.addEventListener('leavepictureinpicture', onLeavePip);
+            videoEl.addEventListener('webkitpresentationmodechanged', onWebkitMode);
+            videoEl.addEventListener('play', onVideoPlay);
+            videoEl.addEventListener('pause', onVideoPause);
+            videoPipStateRef.current.cleanupListeners = () => {
+              videoEl.removeEventListener('leavepictureinpicture', onLeavePip);
+              videoEl.removeEventListener('webkitpresentationmodechanged', onWebkitMode);
+              videoEl.removeEventListener('play', onVideoPlay);
+              videoEl.removeEventListener('pause', onVideoPause);
+            };
+
+            setIsOpen(true);
+            setMode('video');
+            openedByMinimizeRef.current = false;
+            wasHiddenSinceOpenRef.current =
+              typeof document !== 'undefined' && document.visibilityState === 'hidden';
+            return true;
+          }
+          cleanupResources();
+        } catch {
+          cleanupResources();
+        }
+      }
+
       // Always fall back seamlessly to unrestricted interactive In-App Popup
       setIsOpen(true);
       setMode('inapp');
       return true;
     },
-    [canOpenOsPip, cleanupResources, renderDocumentPipContents]
+    [
+      supportsDocumentPip,
+      supportsVideoPip,
+      isTopWindow,
+      cleanupResources,
+      drawVideoPipFrame,
+      renderDocumentPipContents,
+    ]
   );
 
   // Guaranteed Universal Floating In-App Popup (zero user-activation / about:blank / popup-blocker restrictions)
