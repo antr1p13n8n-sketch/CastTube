@@ -222,6 +222,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   const [nativeVideoFailed, setNativeVideoFailed] = useState<boolean>(false);
   const [preferEmbed, setPreferEmbed] = useState<boolean>(false);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [touchCloseState, setTouchCloseState] = useState<'idle' | 'pressing' | 'closed'>('idle');
   const initialPos = useRef<SavedPopupPos>(readSavedPopupPos());
   const dragX = useMotionValue(initialPos.current.x);
   const dragY = useMotionValue(initialPos.current.y);
@@ -232,6 +233,14 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   const dragControls = useDragControls();
   const viewportBoundsRef = useRef<HTMLDivElement | null>(null);
   const popupContainerRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const touchCloseSessionRef = useRef<{
+    action: 'close';
+    identifier: number | null;
+    startX: number;
+    startY: number;
+  } | null>(null);
+  const closeHandledAtRef = useRef<number>(0);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const nativeVideoRef = useRef<HTMLVideoElement | null>(null);
   const appliedNativeSeekForIdRef = useRef<string | null>(null);
@@ -297,6 +306,133 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
     setPreferEmbed(false);
     appliedNativeSeekForIdRef.current = null;
   }, [currentVideo?.id]);
+
+  // Reset internal touch-close state whenever popup opens/closes cleanly
+  useEffect(() => {
+    setTouchCloseState('idle');
+    touchCloseSessionRef.current = null;
+  }, [isOpen]);
+
+  const triggerCloseAction = useCallback(() => {
+    const now = Date.now();
+    if (now - closeHandledAtRef.current < 450) {
+      return;
+    }
+    closeHandledAtRef.current = now;
+    touchCloseSessionRef.current = null;
+    setTouchCloseState('closed');
+    onClose();
+  }, [onClose]);
+
+  const beginCloseTouchSession = useCallback(
+    (touch: { identifier?: number; clientX?: number; clientY?: number } | undefined) => {
+      touchCloseSessionRef.current = {
+        action: 'close',
+        identifier: typeof touch?.identifier === 'number' ? touch.identifier : null,
+        startX: typeof touch?.clientX === 'number' ? touch.clientX : 0,
+        startY: typeof touch?.clientY === 'number' ? touch.clientY : 0,
+      };
+      setTouchCloseState('pressing');
+    },
+    []
+  );
+
+  const resolveCloseTouchEnd = useCallback(
+    (
+      changedTouches: {
+        length: number;
+        [index: number]: { identifier?: number; clientX?: number; clientY?: number } | undefined;
+      } | null
+    ): boolean => {
+      const session = touchCloseSessionRef.current;
+      if (!session || session.action !== 'close') return false;
+
+      let matchedTouch: { identifier?: number; clientX?: number; clientY?: number } | undefined;
+      if (changedTouches && changedTouches.length > 0) {
+        if (session.identifier !== null) {
+          for (let i = 0; i < changedTouches.length; i++) {
+            if (changedTouches[i]?.identifier === session.identifier) {
+              matchedTouch = changedTouches[i];
+              break;
+            }
+          }
+        }
+        if (!matchedTouch) {
+          matchedTouch = changedTouches[0];
+        }
+      }
+
+      const endX = typeof matchedTouch?.clientX === 'number' ? matchedTouch.clientX : session.startX;
+      const endY = typeof matchedTouch?.clientY === 'number' ? matchedTouch.clientY : session.startY;
+      const dist = Math.hypot(endX - session.startX, endY - session.startY);
+
+      const btnRect = closeButtonRef.current?.getBoundingClientRect();
+      const insideExpandedBtn =
+        Boolean(btnRect) &&
+        endX >= (btnRect?.left ?? 0) - 12 &&
+        endX <= (btnRect?.right ?? 0) + 12 &&
+        endY >= (btnRect?.top ?? 0) - 12 &&
+        endY <= (btnRect?.bottom ?? 0) + 12;
+
+      touchCloseSessionRef.current = null;
+      if (dist <= 28 || insideExpandedBtn) {
+        triggerCloseAction();
+        return true;
+      }
+      setTouchCloseState('idle');
+      return false;
+    },
+    [triggerCloseAction]
+  );
+
+  // Attach native non-passive touchstart/touchend listeners on the close button & popup container
+  // so mobile browsers never swallow or delay the close action during touch-to-click transitions.
+  useEffect(() => {
+    const hasVideo = Boolean(currentVideo);
+    const popupEl = popupContainerRef.current;
+    const closeBtn = closeButtonRef.current;
+    if (!isOpen || !hasVideo || !popupEl) return;
+
+    const handleNativeTouchStart = (ev: TouchEvent) => {
+      const target = ev.target as HTMLElement | null;
+      if (target?.closest('[data-close-action="true"]') || (closeBtn && closeBtn.contains(target))) {
+        beginCloseTouchSession(ev.changedTouches[0] || ev.touches[0]);
+      }
+    };
+
+    const handleNativeTouchEnd = (ev: TouchEvent) => {
+      const target = ev.target as HTMLElement | null;
+      const targetedCloseBtn = Boolean(
+        target?.closest('[data-close-action="true"]') || (closeBtn && closeBtn.contains(target))
+      );
+      if (touchCloseSessionRef.current?.action === 'close' || targetedCloseBtn) {
+        if (!touchCloseSessionRef.current) {
+          beginCloseTouchSession(ev.changedTouches[0]);
+        }
+        const closed = resolveCloseTouchEnd(ev.changedTouches);
+        if (closed && ev.cancelable) {
+          ev.preventDefault();
+        }
+      }
+    };
+
+    const handleNativeTouchCancel = () => {
+      if (touchCloseSessionRef.current) {
+        touchCloseSessionRef.current = null;
+        setTouchCloseState('idle');
+      }
+    };
+
+    popupEl.addEventListener('touchstart', handleNativeTouchStart, { passive: true });
+    popupEl.addEventListener('touchend', handleNativeTouchEnd, { passive: false });
+    popupEl.addEventListener('touchcancel', handleNativeTouchCancel, { passive: true });
+
+    return () => {
+      popupEl.removeEventListener('touchstart', handleNativeTouchStart);
+      popupEl.removeEventListener('touchend', handleNativeTouchEnd);
+      popupEl.removeEventListener('touchcancel', handleNativeTouchCancel);
+    };
+  }, [isOpen, currentVideo, beginCloseTouchSession, resolveCloseTouchEnd]);
 
   // Persist compact preference
   useEffect(() => {
@@ -689,7 +825,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
         aria-hidden="true"
       />
       <AnimatePresence>
-        {isOpen && currentVideo && (
+        {isOpen && touchCloseState !== 'closed' && currentVideo && (
           <motion.div
             ref={popupContainerRef}
             key="floating-inapp-popup"
@@ -699,6 +835,23 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
             dragMomentum={false}
             dragConstraints={viewportBoundsRef}
             dragElastic={0.05}
+            onTouchStart={(e) => {
+              const target = e.target as HTMLElement | null;
+              if (target?.closest('[data-close-action="true"]')) {
+                beginCloseTouchSession(e.changedTouches[0] || e.touches[0]);
+              }
+            }}
+            onTouchEnd={(e) => {
+              if (touchCloseSessionRef.current?.action === 'close') {
+                resolveCloseTouchEnd(e.changedTouches);
+              }
+            }}
+            onTouchCancel={() => {
+              if (touchCloseSessionRef.current) {
+                touchCloseSessionRef.current = null;
+                setTouchCloseState('idle');
+              }
+            }}
             onDragEnd={() => {
               const clamped = clampPopupOffset(
                 dragX.get(),
@@ -754,7 +907,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                   <button
                     type="button"
                     onClick={handleResetPosition}
-                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer touch-manipulation"
                     title="Kembalikan Posisi Awal Popup"
                     aria-label="Kembalikan Posisi Awal Popup"
                   >
@@ -765,7 +918,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                   <button
                     type="button"
                     onClick={onOpenOsPip}
-                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer touch-manipulation"
                     title="Lepas ke Jendela OS Mengambang (PiP)"
                     aria-label="Lepas ke Jendela OS Mengambang"
                   >
@@ -776,7 +929,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                   <button
                     type="button"
                     onClick={onOpenSettings}
-                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer touch-manipulation"
                     title="Setelan Popup & Cookie Otomatis"
                     aria-label="Setelan Popup"
                   >
@@ -786,7 +939,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                 <button
                   type="button"
                   onClick={() => setCompact((v) => !v)}
-                  className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-end-light)] dark:text-slate-400 dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-end-light)] dark:text-slate-400 dark:hover:text-[var(--ct-end-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer touch-manipulation"
                   title={compact ? 'Perbesar Video Popup' : 'Perkecil Tampilan Popup'}
                   aria-label={compact ? 'Tampilkan penuh popup' : 'Perkecil popup'}
                 >
@@ -795,16 +948,38 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                 <button
                   type="button"
                   onClick={onExpand}
-                  className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-[var(--ct-text-light)] dark:text-slate-400 dark:hover:text-[var(--ct-text-dark)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer touch-manipulation"
                   title="Buka Pemutar Penuh"
                   aria-label="Buka Pemutar Penuh"
                 >
                   <Maximize2 className="w-3.5 h-3.5" />
                 </button>
                 <button
+                  ref={closeButtonRef}
                   type="button"
-                  onClick={onClose}
-                  className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                  data-close-action="true"
+                  onTouchStart={(e) => {
+                    e.stopPropagation();
+                    beginCloseTouchSession(e.changedTouches[0] || e.touches[0]);
+                  }}
+                  onTouchEnd={(e) => {
+                    e.stopPropagation();
+                    if (!touchCloseSessionRef.current) {
+                      beginCloseTouchSession(e.changedTouches[0]);
+                    }
+                    resolveCloseTouchEnd(e.changedTouches);
+                  }}
+                  onTouchCancel={(e) => {
+                    e.stopPropagation();
+                    touchCloseSessionRef.current = null;
+                    setTouchCloseState('idle');
+                  }}
+                  onClick={triggerCloseAction}
+                  className={`min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg transition-colors cursor-pointer touch-manipulation ${
+                    touchCloseState === 'pressing'
+                      ? 'text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950/60 scale-95'
+                      : 'text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                  }`}
                   title={isPlaying ? 'Tutup Popup (Audio Tetap Jalan)' : 'Tutup Popup'}
                   aria-label="Tutup Popup"
                 >
