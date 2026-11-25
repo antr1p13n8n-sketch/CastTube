@@ -2185,6 +2185,15 @@ async function tryExternalExtractor(
   }
 }
 
+const INNERTUBE_CLIENT_USER_AGENTS: Record<string, string> = {
+  ANDROID_VR:
+    'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+  IOS: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+  ANDROID_MUSIC:
+    'com.google.android.apps.youtube.music/7.29.52 (Linux; U; Android 14; en_US; Pixel 8) gzip',
+  TV: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+};
+
 async function resolveViaYouTubeJs(
   videoId: string,
   options: {
@@ -2192,6 +2201,7 @@ async function resolveViaYouTubeJs(
     cookies?: string;
     poToken?: string;
     visitorData?: string;
+    media?: 'audio' | 'video';
   }
 ): Promise<{
   stream: ResolvedAudioStream | null;
@@ -2199,6 +2209,7 @@ async function resolveViaYouTubeJs(
   reason?: string;
   refreshedOAuth?: YouTubeOAuthTokens;
 }> {
+  const mediaType = options.media === 'video' ? 'video' : 'audio';
   let detectedStatus: AudioStreamFailureReason = 'unavailable';
   let detectedReason: string | undefined;
   let activeOAuth = options.oauthTokens;
@@ -2230,7 +2241,7 @@ async function resolveViaYouTubeJs(
       ? ['TV', 'ANDROID_VR', 'IOS', 'WEB']
       : hasLoggedInCookies
       ? ['MWEB', 'WEB', 'TV', 'IOS', 'ANDROID_VR']
-      : ['MWEB', 'ANDROID_VR', 'IOS', 'WEB'];
+      : ['ANDROID_VR', 'IOS', 'MWEB', 'WEB'];
 
     for (const client of clientsToTry) {
       try {
@@ -2255,22 +2266,31 @@ async function resolveViaYouTubeJs(
         }
 
         const adaptiveFormats = info.streaming_data?.adaptive_formats || [];
-        const audioFormats = adaptiveFormats.filter((f) =>
-          String(f.mime_type || '').startsWith('audio/')
-        );
+        const muxed = info.streaming_data?.formats || [];
+        let selected: any = null;
 
-        let selected: any =
-          audioFormats.find((f) => f.itag === 140) ||
-          audioFormats.find((f) => f.itag === 139) ||
-          audioFormats.find((f) => String(f.mime_type || '').includes('audio/mp4')) ||
-          audioFormats.find((f) => f.itag === 251) ||
-          audioFormats[0];
-
-        if (!selected) {
-          const muxed = info.streaming_data?.formats || [];
+        if (mediaType === 'video') {
           selected =
             muxed.find((f) => f.itag === 18) ||
-            muxed.find((f) => String(f.mime_type || '').startsWith('video/mp4'));
+            muxed.find((f) => f.itag === 22) ||
+            muxed.find((f) => String(f.mime_type || '').startsWith('video/mp4')) ||
+            muxed[0];
+        } else {
+          const audioFormats = adaptiveFormats.filter((f) =>
+            String(f.mime_type || '').startsWith('audio/')
+          );
+          selected =
+            audioFormats.find((f) => f.itag === 140) ||
+            audioFormats.find((f) => f.itag === 139) ||
+            audioFormats.find((f) => String(f.mime_type || '').includes('audio/mp4')) ||
+            audioFormats.find((f) => f.itag === 251) ||
+            audioFormats[0];
+
+          if (!selected) {
+            selected =
+              muxed.find((f) => f.itag === 18) ||
+              muxed.find((f) => String(f.mime_type || '').startsWith('video/mp4'));
+          }
         }
 
         if (!selected) {
@@ -2284,13 +2304,20 @@ async function resolveViaYouTubeJs(
         const decipheredUrl = await selected.decipher(yt.session.player);
         if (!decipheredUrl) continue;
 
-        const mimeType = String(selected.mime_type || 'audio/mp4').split(';')[0].trim();
+        const mimeType = String(
+          selected.mime_type || (mediaType === 'video' ? 'video/mp4' : 'audio/mp4')
+        )
+          .split(';')[0]
+          .trim();
         return {
           stream: {
             url: decipheredUrl,
             mimeType,
             contentLength: selected.content_length ? String(selected.content_length) : undefined,
-            userAgent: yt.session.context.client.userAgent || DEFAULT_BROWSER_UA,
+            userAgent:
+              INNERTUBE_CLIENT_USER_AGENTS[client] ||
+              yt.session.context.client.userAgent ||
+              DEFAULT_BROWSER_UA,
           },
           status: 'available',
           refreshedOAuth,
@@ -2313,11 +2340,13 @@ async function resolveViaYouTubeJs(
 
 export async function resolveAudioStreamInfo(
   videoId: string,
-  authConfig?: ExtractorAuthConfig
+  authConfig?: ExtractorAuthConfig,
+  options?: { media?: 'audio' | 'video' }
 ): Promise<AudioStreamResolution> {
   if (!videoId || !/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) {
     return { stream: null, status: 'unavailable', reason: 'Video ID tidak valid' };
   }
+  const mediaType: 'audio' | 'video' = options?.media === 'video' ? 'video' : 'audio';
 
   let effectiveCookies =
     normalizeYouTubeCookies(authConfig?.cookies) ||
@@ -2332,13 +2361,16 @@ export async function resolveAudioStreamInfo(
       // non-fatal fallback without guest cookies
     }
   }
+  const hasRealUserAuth = Boolean(
+    authConfig?.oauthTokens || isLoggedInYouTubeCookies(effectiveCookies)
+  );
   const effectiveAuth: ExtractorAuthConfig = {
     oauthTokens: authConfig?.oauthTokens,
     cookies: effectiveCookies || undefined,
     extractorUrl: authConfig?.extractorUrl,
   };
 
-  const cacheKey = `${videoId}::${buildAuthCacheKey(effectiveAuth)}`;
+  const cacheKey = `${videoId}::${mediaType}::${buildAuthCacheKey(effectiveAuth)}`;
   const cached = audioStreamCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.resolution;
@@ -2360,19 +2392,20 @@ export async function resolveAudioStreamInfo(
       return resolution;
     };
 
-    // 1. User-configured external extractor first if custom URL explicitly set
-    if (effectiveAuth.extractorUrl) {
+    // 1. User-configured external extractor first if custom URL explicitly set (audio mode)
+    if (effectiveAuth.extractorUrl && mediaType === 'audio') {
       const customStream = await resolveFromExternalEndpoint(effectiveAuth.extractorUrl, videoId);
       if (customStream) {
         return cacheAndReturn({ stream: customStream, status: 'available' }, 25 * 60 * 1000);
       }
     }
 
-    // 2. If authenticated via YouTube TV OAuth or YouTube Cookies, run youtubei.js authenticated session
-    if (effectiveAuth.oauthTokens || effectiveAuth.cookies) {
+    // 2. If user has explicit YouTube TV OAuth or logged-in cookies, try authenticated session first
+    if (hasRealUserAuth) {
       const authRes = await resolveViaYouTubeJs(videoId, {
         oauthTokens: effectiveAuth.oauthTokens,
         cookies: effectiveAuth.cookies,
+        media: mediaType,
       });
       if (authRes.refreshedOAuth) refreshedOAuth = authRes.refreshedOAuth;
       if (authRes.stream) {
@@ -2387,7 +2420,7 @@ export async function resolveAudioStreamInfo(
       detectedReason = authRes.reason;
     }
 
-    // 3. Fast parallel direct InnerTube audio clients (ANDROID_VR, IOS, ANDROID_MUSIC)
+    // 3. Fast parallel direct InnerTube clients (ANDROID_VR, IOS, ANDROID_MUSIC)
     const clientAttempts = INNERTUBE_AUDIO_CLIENTS.map(async (cfg): Promise<{
       stream: ResolvedAudioStream | null;
       status: AudioStreamFailureReason;
@@ -2398,7 +2431,7 @@ export async function resolveAudioStreamInfo(
           'Content-Type': 'application/json',
           'User-Agent': cfg.userAgent,
         };
-        if (effectiveAuth.cookies) {
+        if (hasRealUserAuth && effectiveAuth.cookies) {
           headers['Cookie'] = effectiveAuth.cookies;
         }
 
@@ -2441,25 +2474,36 @@ export async function resolveAudioStreamInfo(
           return { stream: null, status: 'unavailable', reason: playReason };
         }
 
-        const adaptiveFormats: any[] = data?.streamingData?.adaptiveFormats || [];
-        const audioFormats = adaptiveFormats.filter(
-          (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('audio/') && typeof f.url === 'string'
-        );
+        const muxedFormats: any[] = data?.streamingData?.formats || [];
+        let selected: any = null;
 
-        let selected =
-          audioFormats.find((f) => f.itag === 140) ||
-          audioFormats.find((f) => f.itag === 139) ||
-          audioFormats.find((f) => f.mimeType.startsWith('audio/mp4')) ||
-          audioFormats.find((f) => f.itag === 251) ||
-          audioFormats[0];
-
-        if (!selected) {
-          const muxedFormats: any[] = data?.streamingData?.formats || [];
+        if (mediaType === 'video') {
           selected =
             muxedFormats.find((f) => f.itag === 18 && typeof f.url === 'string') ||
+            muxedFormats.find((f) => f.itag === 22 && typeof f.url === 'string') ||
             muxedFormats.find(
               (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('video/mp4') && typeof f.url === 'string'
             );
+        } else {
+          const adaptiveFormats: any[] = data?.streamingData?.adaptiveFormats || [];
+          const audioFormats = adaptiveFormats.filter(
+            (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('audio/') && typeof f.url === 'string'
+          );
+
+          selected =
+            audioFormats.find((f) => f.itag === 140) ||
+            audioFormats.find((f) => f.itag === 139) ||
+            audioFormats.find((f) => f.mimeType.startsWith('audio/mp4')) ||
+            audioFormats.find((f) => f.itag === 251) ||
+            audioFormats[0];
+
+          if (!selected) {
+            selected =
+              muxedFormats.find((f) => f.itag === 18 && typeof f.url === 'string') ||
+              muxedFormats.find(
+                (f) => typeof f.mimeType === 'string' && f.mimeType.startsWith('video/mp4') && typeof f.url === 'string'
+              );
+          }
         }
 
         if (!selected) {
@@ -2473,7 +2517,9 @@ export async function resolveAudioStreamInfo(
           return { stream: null, status: 'unavailable' };
         }
 
-        const mimeType = String(selected.mimeType).split(';')[0].trim() || 'audio/mp4';
+        const mimeType =
+          String(selected.mimeType).split(';')[0].trim() ||
+          (mediaType === 'video' ? 'video/mp4' : 'audio/mp4');
         return {
           stream: {
             url: selected.url as string,
@@ -2488,7 +2534,7 @@ export async function resolveAudioStreamInfo(
       }
     });
 
-    // Resolve immediately as soon as any client yields a playable audio stream; otherwise collect statuses
+    // Resolve immediately as soon as any client yields a playable stream; otherwise collect statuses
     const fastWinner = await new Promise<ResolvedAudioStream | null>((resolve) => {
       let settledCount = 0;
       let resolved = false;
@@ -2540,6 +2586,7 @@ export async function resolveAudioStreamInfo(
         cookies: detectedStatus === 'login_required' ? undefined : effectiveAuth.cookies,
         poToken: contentPoToken,
         visitorData: bgSession?.visitorData,
+        media: mediaType,
       });
       if (ytRes.stream) {
         return cacheAndReturn(
@@ -2554,12 +2601,14 @@ export async function resolveAudioStreamInfo(
     }
 
     // 5. Fallback to configured environment external extractors (Cobalt / Piped / Invidious)
-    const external = await tryExternalExtractor(videoId, effectiveAuth.extractorUrl);
-    if (external) {
-      return cacheAndReturn(
-        { stream: external, status: 'available', refreshedOAuth },
-        25 * 60 * 1000
-      );
+    if (mediaType === 'audio') {
+      const external = await tryExternalExtractor(videoId, effectiveAuth.extractorUrl);
+      if (external) {
+        return cacheAndReturn(
+          { stream: external, status: 'available', refreshedOAuth },
+          25 * 60 * 1000
+        );
+      }
     }
 
     return cacheAndReturn(
@@ -2581,10 +2630,61 @@ export async function resolveAudioStreamInfo(
 
 export async function resolveAudioStreamUrl(
   videoId: string,
-  authConfig?: ExtractorAuthConfig
+  authConfig?: ExtractorAuthConfig,
+  options?: { media?: 'audio' | 'video' }
 ): Promise<ResolvedAudioStream | null> {
-  const result = await resolveAudioStreamInfo(videoId, authConfig);
+  const result = await resolveAudioStreamInfo(videoId, authConfig, options);
   return result.stream;
+}
+
+export const STREAM_CHUNK_BYTES = 2 * 1024 * 1024; // 2 MiB bounded chunks for googlevideo.com
+
+export function parseIncomingByteRange(
+  rangeHeader: string | undefined,
+  chunkSize = STREAM_CHUNK_BYTES
+): {
+  hasRange: boolean;
+  start: number;
+  boundedEnd: number;
+  upstreamRangeHeader: string;
+} {
+  if (!rangeHeader) {
+    return {
+      hasRange: false,
+      start: 0,
+      boundedEnd: chunkSize - 1,
+      upstreamRangeHeader: `bytes=0-${chunkSize - 1}`,
+    };
+  }
+  const match = /bytes=(\d+)-(\d*)/i.exec(rangeHeader);
+  if (!match) {
+    return {
+      hasRange: true,
+      start: 0,
+      boundedEnd: chunkSize - 1,
+      upstreamRangeHeader: `bytes=0-${chunkSize - 1}`,
+    };
+  }
+  const start = Math.max(0, Number(match[1]) || 0);
+  const rawEnd = match[2] ? Number(match[2]) : NaN;
+  const boundedEnd =
+    Number.isFinite(rawEnd) && rawEnd >= start
+      ? Math.min(rawEnd, start + chunkSize - 1)
+      : start + chunkSize - 1;
+  return {
+    hasRange: true,
+    start,
+    boundedEnd,
+    upstreamRangeHeader: `bytes=${start}-${boundedEnd}`,
+  };
+}
+
+export function parseTotalBytesFromContentRange(contentRange: string | null): number | null {
+  if (!contentRange) return null;
+  const match = /\/(\d+)\s*$/i.exec(contentRange);
+  if (!match) return null;
+  const total = Number(match[1]);
+  return Number.isFinite(total) && total > 0 ? total : null;
 }
 
 export interface ChannelSearchResult {

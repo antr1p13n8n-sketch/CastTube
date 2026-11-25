@@ -13,6 +13,9 @@ import {
   resolveAudioStreamInfo,
   resolveAudioStreamUrl,
   invalidateAudioStreamCache,
+  STREAM_CHUNK_BYTES,
+  parseIncomingByteRange,
+  parseTotalBytesFromContentRange,
   buildAudioDownloadFilename,
   buildContentDispositionHeader,
   extractAuthFromRequest,
@@ -473,7 +476,7 @@ async function startServer() {
     }
   });
 
-  // API: Stream native audio directly (for mobile background / lock-screen playback & downloads)
+  // API: Stream native audio or muxed MP4 video directly (for mobile background, PiP & downloads)
   const handleAudioStream = async (req: Request, res: Response) => {
     try {
       const videoId = typeof req.query.videoId === 'string' ? req.query.videoId.trim() : '';
@@ -482,16 +485,18 @@ async function startServer() {
         return;
       }
 
+      const mediaType: 'audio' | 'video' = req.query.media === 'video' ? 'video' : 'audio';
       const authConfig = extractAuthFromRequest(req.headers);
       let resolution;
       try {
-        resolution = await resolveAudioStreamInfo(videoId, authConfig);
+        resolution = await resolveAudioStreamInfo(videoId, authConfig, { media: mediaType });
       } catch (resolveErr: unknown) {
         if (req.query.check === '1') {
           res.status(200).json({
             available: false,
             status: 'unavailable',
             reason: resolveErr instanceof Error ? resolveErr.message : 'Gagal memeriksa stream',
+            media: mediaType,
           });
           return;
         }
@@ -518,13 +523,17 @@ async function startServer() {
           available: Boolean(resolution.stream),
           status: resolution.status,
           reason: resolution.reason,
+          media: mediaType,
         });
         return;
       }
       let streamInfo = resolution.stream;
       if (!streamInfo || !/^https?:\/\//i.test(streamInfo.url)) {
         res.status(404).json({
-          error: 'Audio stream tidak tersedia untuk video ini',
+          error:
+            mediaType === 'video'
+              ? 'Video stream tidak tersedia untuk video ini'
+              : 'Audio stream tidak tersedia untuk video ini',
           status: resolution.status,
           reason: resolution.reason,
         });
@@ -534,14 +543,21 @@ async function startServer() {
       const controller = new AbortController();
       req.on('close', () => controller.abort());
 
-      const fetchUpstream = async (info: NonNullable<typeof streamInfo>) => {
+      const incomingRange =
+        typeof req.headers.range === 'string' && req.headers.range.trim()
+          ? req.headers.range.trim()
+          : undefined;
+      const rangePlan = parseIncomingByteRange(
+        incomingRange,
+        req.method === 'HEAD' && !incomingRange ? 2 : STREAM_CHUNK_BYTES
+      );
+
+      const fetchChunkWithRange = async (info: NonNullable<typeof streamInfo>, rangeStr: string) => {
         const headers: Record<string, string> = {
           'User-Agent': info.userAgent,
+          Range: rangeStr,
           ...(info.extraHeaders || {}),
         };
-        if (req.headers.range) {
-          headers['Range'] = String(req.headers.range);
-        }
         return fetch(info.url, {
           headers,
           redirect: 'follow',
@@ -551,13 +567,14 @@ async function startServer() {
 
       let upstream: globalThis.Response;
       try {
-        upstream = await fetchUpstream(streamInfo);
+        upstream = await fetchChunkWithRange(streamInfo, rangePlan.upstreamRangeHeader);
         if (upstream.status === 403 || upstream.status === 410) {
+          void upstream.body?.cancel().catch(() => {});
           invalidateAudioStreamCache(videoId);
-          const refreshed = await resolveAudioStreamUrl(videoId, authConfig);
+          const refreshed = await resolveAudioStreamUrl(videoId, authConfig, { media: mediaType });
           if (refreshed && /^https?:\/\//i.test(refreshed.url)) {
             streamInfo = refreshed;
-            upstream = await fetchUpstream(refreshed);
+            upstream = await fetchChunkWithRange(refreshed, rangePlan.upstreamRangeHeader);
           }
         }
       } catch (fetchErr: unknown) {
@@ -566,8 +583,17 @@ async function startServer() {
         return;
       }
 
+      if (upstream.status === 416) {
+        void upstream.body?.cancel().catch(() => {});
+        const cr = upstream.headers.get('content-range');
+        if (cr) res.setHeader('Content-Range', cr);
+        res.status(416).end();
+        return;
+      }
+
       if (!upstream.ok && upstream.status !== 206) {
-        res.status(502).json({ error: `Upstream audio status ${upstream.status}` });
+        void upstream.body?.cancel().catch(() => {});
+        res.status(502).json({ error: `Upstream media status ${upstream.status}` });
         return;
       }
 
@@ -576,7 +602,13 @@ async function startServer() {
         upstreamType.startsWith('audio/') || upstreamType.startsWith('video/')
           ? upstreamType
           : streamInfo.mimeType;
-      res.status(upstream.status);
+
+      const knownTotalBytes =
+        parseTotalBytesFromContentRange(upstream.headers.get('content-range')) ??
+        (streamInfo.contentLength && Number.isFinite(Number(streamInfo.contentLength))
+          ? Number(streamInfo.contentLength)
+          : null);
+
       res.setHeader('Content-Type', resolvedMime);
       res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Cache-Control', 'no-store');
@@ -588,34 +620,133 @@ async function startServer() {
         res.setHeader('X-Suggested-Filename', encodeURIComponent(filename));
       }
 
-      const contentLength = upstream.headers.get('content-length');
-      if (contentLength) res.setHeader('Content-Length', contentLength);
-
-      const contentRange = upstream.headers.get('content-range');
-      if (contentRange) res.setHeader('Content-Range', contentRange);
-
       if (req.method === 'HEAD') {
         void upstream.body?.cancel().catch(() => {});
+        if (incomingRange && knownTotalBytes !== null) {
+          const effectiveEnd = Math.min(rangePlan.boundedEnd, Math.max(0, knownTotalBytes - 1));
+          const partLen = Math.max(0, effectiveEnd - rangePlan.start + 1);
+          res.status(206);
+          res.setHeader('Content-Range', `bytes ${rangePlan.start}-${effectiveEnd}/${knownTotalBytes}`);
+          res.setHeader('Content-Length', String(partLen));
+        } else {
+          res.status(200);
+          if (knownTotalBytes !== null) {
+            res.setHeader('Content-Length', String(knownTotalBytes));
+          }
+        }
         res.end();
         return;
       }
 
       if (!upstream.body) {
-        res.status(502).json({ error: 'Stream audio kosong dari upstream' });
+        res.status(502).json({ error: 'Stream media kosong dari upstream' });
         return;
       }
 
-      const nodeStream = Readable.fromWeb(upstream.body as any);
-      nodeStream.on('error', () => {
+      // Client requested a specific Range: return this bounded 206 chunk directly so <audio>/<video>
+      // native buffering and seeking seamlessly request subsequent ranges as playback advances.
+      if (incomingRange) {
+        res.status(upstream.status);
+        const contentLength = upstream.headers.get('content-length');
+        if (contentLength) res.setHeader('Content-Length', contentLength);
+        const contentRange = upstream.headers.get('content-range');
+        if (contentRange) res.setHeader('Content-Range', contentRange);
+
+        const nodeStream = Readable.fromWeb(upstream.body as any);
+        nodeStream.on('error', () => {
+          if (!res.writableEnded) res.end();
+        });
+        req.on('close', () => {
+          nodeStream.destroy();
+        });
+        nodeStream.pipe(res);
+        return;
+      }
+
+      // Full-file 200 OK request (e.g. direct download or non-ranged client):
+      // Stitch bounded 2 MiB chunks seamlessly into a single 200 OK stream.
+      res.status(200);
+      if (knownTotalBytes !== null) {
+        res.setHeader('Content-Length', String(knownTotalBytes));
+      } else {
+        const contentLength = upstream.headers.get('content-length');
+        if (contentLength) res.setHeader('Content-Length', contentLength);
+      }
+
+      async function* streamBoundedChunks() {
+        const firstChunkLen = Number(upstream.headers.get('content-length') || 0);
+        const firstReader = upstream.body!.getReader();
+        let bytesReadFirst = 0;
+        try {
+          while (!controller.signal.aborted) {
+            const { done, value } = await firstReader.read();
+            if (done) break;
+            if (value && value.byteLength > 0) {
+              bytesReadFirst += value.byteLength;
+              yield value;
+            }
+          }
+        } finally {
+          firstReader.releaseLock();
+        }
+
+        if (
+          controller.signal.aborted ||
+          upstream.status !== 206 ||
+          knownTotalBytes === null
+        ) {
+          return;
+        }
+
+        let offset = bytesReadFirst > 0 ? bytesReadFirst : firstChunkLen;
+        while (offset < knownTotalBytes && !controller.signal.aborted) {
+          const nextEnd = Math.min(offset + STREAM_CHUNK_BYTES - 1, knownTotalBytes - 1);
+          const nextRange = `bytes=${offset}-${nextEnd}`;
+          let nextRes = await fetchChunkWithRange(streamInfo!, nextRange);
+          if (nextRes.status === 403 || nextRes.status === 410) {
+            void nextRes.body?.cancel().catch(() => {});
+            invalidateAudioStreamCache(videoId);
+            const refreshed = await resolveAudioStreamUrl(videoId, authConfig, { media: mediaType });
+            if (refreshed && /^https?:\/\//i.test(refreshed.url)) {
+              streamInfo = refreshed;
+              nextRes = await fetchChunkWithRange(refreshed, nextRange);
+            }
+          }
+          if ((!nextRes.ok && nextRes.status !== 206) || !nextRes.body) {
+            void nextRes.body?.cancel().catch(() => {});
+            break;
+          }
+          const reader = nextRes.body.getReader();
+          let chunkBytes = 0;
+          try {
+            while (!controller.signal.aborted) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (value && value.byteLength > 0) {
+                chunkBytes += value.byteLength;
+                yield value;
+              }
+            }
+          } finally {
+            reader.releaseLock();
+          }
+          if (chunkBytes <= 0) break;
+          offset += chunkBytes;
+        }
+      }
+
+      const stitchedStream = Readable.from(streamBoundedChunks());
+      stitchedStream.on('error', () => {
         if (!res.writableEnded) res.end();
       });
       req.on('close', () => {
-        nodeStream.destroy();
+        controller.abort();
+        stitchedStream.destroy();
       });
-      nodeStream.pipe(res);
+      stitchedStream.pipe(res);
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
-      const message = err instanceof Error ? err.message : 'Gagal memutar stream audio';
+      const message = err instanceof Error ? err.message : 'Gagal memutar stream media';
       if (!res.headersSent) {
         res.status(502).json({ error: message });
       }

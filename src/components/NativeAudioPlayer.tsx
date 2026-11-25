@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { Video } from '../types';
 import { buildExtractorHeaders } from '../utils/extractorConfig';
 import { parseJsonSafely } from '../utils/safeJson';
+import { getPlaybackClockSnapshot } from '../utils/playbackClock';
 
 const SILENT_WAV_DATA_URI =
   'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
@@ -126,16 +127,19 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
           audio.volume = Math.max(0, Math.min(1, volume / 100));
           // Touching play() inside a synchronous user click primes mobile browsers
           // so subsequent async/background play() calls remain authorized.
-          if (activeRef.current && audio.src) {
+          if (activeRef.current && audio.src && !audio.src.startsWith('data:')) {
             if (audio.paused) {
               void audio.play().catch(() => {});
             }
           } else {
-            audio.loop = true;
-            if (!audio.getAttribute('src') || audio.getAttribute('src') === SILENT_WAV_DATA_URI) {
-              audio.src = SILENT_WAV_DATA_URI;
+            audio.loop = false;
+            const currentAttr = audio.getAttribute('src');
+            if (!currentAttr || currentAttr === SILENT_WAV_DATA_URI) {
+              if (!currentAttr) {
+                audio.src = SILENT_WAV_DATA_URI;
+              }
+              void audio.play().catch(() => {});
             }
-            void audio.play().catch(() => {});
           }
         } catch {
           // ignore
@@ -178,8 +182,17 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
     const applyInitialSetup = useCallback(
       (audio: HTMLAudioElement) => {
         const vidId = videoIdRef.current;
+        const clockSnap = getPlaybackClockSnapshot();
+        const clockResume =
+          vidId && clockSnap.videoId === vidId && clockSnap.currentTime > 0
+            ? clockSnap.currentTime
+            : 0;
         const targetResume =
-          latestPosRef.current > 0 ? latestPosRef.current : initialSeekSecondsRef.current;
+          latestPosRef.current > 0
+            ? latestPosRef.current
+            : clockResume > 0
+            ? clockResume
+            : initialSeekSecondsRef.current;
         if (
           vidId &&
           appliedInitialSeekForIdRef.current !== vidId &&
@@ -296,11 +309,14 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
       if (!active && !keepAlivePrimed) {
         isSwitchingSrcRef.current = false;
         appliedInitialSeekForIdRef.current = null;
+        latestPosRef.current = 0;
         audio.loop = false;
-        if (!audio.paused) audio.pause();
-        if (audio.getAttribute('src')) {
-          audio.removeAttribute('src');
-          audio.load();
+        const curSrc = audio.getAttribute('src');
+        if (curSrc && curSrc !== SILENT_WAV_DATA_URI) {
+          if (!audio.paused) audio.pause();
+          // Keep tiny silent WAV src instead of removeAttribute('src')+load() so iOS/Android
+          // preserves user-gesture activation on this <audio> node for seamless background handoff.
+          audio.src = SILENT_WAV_DATA_URI;
         }
         return;
       }

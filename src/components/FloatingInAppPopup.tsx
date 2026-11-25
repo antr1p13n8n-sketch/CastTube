@@ -26,7 +26,7 @@ import {
   AlertCircle,
   LocateFixed,
 } from 'lucide-react';
-import { PlayerMode, Video } from '../types';
+import { NativeAudioStatus, PlayerMode, Video } from '../types';
 import { formatTime } from '../utils/format';
 import {
   getPlaybackClockSnapshot,
@@ -113,10 +113,12 @@ function clampPopupOffset(
 
 interface FloatingInAppPopupProps {
   isOpen: boolean;
+  isOsPipActive?: boolean;
   currentVideo: Video | null;
   isPlaying: boolean;
   playerMode: PlayerMode;
   usingNativeAudio: boolean;
+  nativeAudioStatus?: NativeAudioStatus;
   playbackRate?: number;
   volume?: number;
   isMuted?: boolean;
@@ -127,6 +129,7 @@ interface FloatingInAppPopupProps {
   embedHost: 'nocookie' | 'standard';
   canOpenOsPip?: boolean;
   onOpenOsPip?: () => void;
+  onRegisterVideoEl?: (el: HTMLVideoElement | null) => void;
   onOpenSettings?: () => void;
   onOpenExtractorAuth?: () => void;
   onToggleEmbedHost: () => void;
@@ -180,10 +183,12 @@ const PopupProgressSection: React.FC<{
 
 export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   isOpen,
+  isOsPipActive = false,
   currentVideo,
   isPlaying,
   playerMode,
   usingNativeAudio,
+  nativeAudioStatus = 'checking',
   playbackRate = 1,
   volume = 85,
   isMuted = false,
@@ -194,6 +199,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   embedHost,
   canOpenOsPip = false,
   onOpenOsPip,
+  onRegisterVideoEl,
   onOpenSettings,
   onOpenExtractorAuth,
   onToggleEmbedHost,
@@ -213,6 +219,8 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   const [compact, setCompact] = useState<boolean>(readSavedCompact);
   const [embedErrorCode, setEmbedErrorCode] = useState<number | null>(null);
   const [needsDirectTap, setNeedsDirectTap] = useState<boolean>(false);
+  const [nativeVideoFailed, setNativeVideoFailed] = useState<boolean>(false);
+  const [preferEmbed, setPreferEmbed] = useState<boolean>(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const initialPos = useRef<SavedPopupPos>(readSavedPopupPos());
   const dragX = useMotionValue(initialPos.current.x);
@@ -225,6 +233,9 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   const viewportBoundsRef = useRef<HTMLDivElement | null>(null);
   const popupContainerRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const nativeVideoRef = useRef<HTMLVideoElement | null>(null);
+  const appliedNativeSeekForIdRef = useRef<string | null>(null);
+  const isSwitchingNativeRef = useRef<boolean>(false);
   const handshakeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoplayWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const embedReadyRef = useRef(false);
@@ -237,6 +248,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   const propsRef = useRef({
     currentVideo,
     isPlaying,
+    isOsPipActive,
     playbackRate,
     volume,
     isMuted,
@@ -248,6 +260,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   propsRef.current = {
     currentVideo,
     isPlaying,
+    isOsPipActive,
     playbackRate,
     volume,
     isMuted,
@@ -257,9 +270,33 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
     onFallbackStandardHost,
   };
 
-  const useEmbed = Boolean(isOpen && currentVideo && !usingNativeAudio);
+  const canTryNativeVideo = Boolean(
+    isOpen &&
+      currentVideo &&
+      !usingNativeAudio &&
+      nativeAudioStatus !== 'live_stream' &&
+      nativeAudioStatus !== 'login_required' &&
+      !nativeVideoFailed &&
+      !preferEmbed
+  );
+  const useNativeMp4Video = canTryNativeVideo;
+  const useEmbed = Boolean(isOpen && currentVideo && !usingNativeAudio && !useNativeMp4Video);
   const initialEmbedPlayRef = useRef(isPlaying);
   initialEmbedPlayRef.current = isPlaying;
+
+  const setNativeVideoNode = useCallback(
+    (el: HTMLVideoElement | null) => {
+      nativeVideoRef.current = el;
+      onRegisterVideoEl?.(el);
+    },
+    [onRegisterVideoEl]
+  );
+
+  useEffect(() => {
+    setNativeVideoFailed(false);
+    setPreferEmbed(false);
+    appliedNativeSeekForIdRef.current = null;
+  }, [currentVideo?.id]);
 
   // Persist compact preference
   useEffect(() => {
@@ -408,6 +445,56 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
     };
   }, [currentVideo?.id, embedHost, useEmbed, reloadNonce, clearHandshakeTimer, clearAutoplayWatchdog]);
 
+  // Sync reactive state into Native MP4 <video> element when active
+  useEffect(() => {
+    const vidEl = nativeVideoRef.current;
+    if (!useNativeMp4Video || !vidEl || !currentVideo) return;
+    vidEl.muted = isMuted;
+    vidEl.volume = Math.max(0, Math.min(1, volume / 100));
+    try {
+      const pitchVid = vidEl as HTMLVideoElement & {
+        preservesPitch?: boolean;
+        webkitPreservesPitch?: boolean;
+      };
+      if ('preservesPitch' in pitchVid) pitchVid.preservesPitch = true;
+      if ('webkitPreservesPitch' in pitchVid) pitchVid.webkitPreservesPitch = true;
+      vidEl.playbackRate = playbackRate;
+    } catch {
+      // ignore
+    }
+  }, [useNativeMp4Video, currentVideo?.id, volume, isMuted, playbackRate]);
+
+  useEffect(() => {
+    const vidEl = nativeVideoRef.current;
+    if (!useNativeMp4Video || !vidEl || !currentVideo) return;
+    if (isPlaying) {
+      if (vidEl.paused) {
+        vidEl
+          .play()
+          .then(() => {
+            setNeedsDirectTap(false);
+          })
+          .catch((err: unknown) => {
+            const name = (err as { name?: string })?.name;
+            if (name === 'NotAllowedError') {
+              setNeedsDirectTap(true);
+            }
+          });
+      } else {
+        setNeedsDirectTap(false);
+      }
+    } else {
+      setNeedsDirectTap(false);
+      if (!vidEl.paused) {
+        isSwitchingNativeRef.current = true;
+        vidEl.pause();
+        setTimeout(() => {
+          isSwitchingNativeRef.current = false;
+        }, 120);
+      }
+    }
+  }, [useNativeMp4Video, currentVideo?.id, isPlaying]);
+
   // Sync play/pause commands into the popup iframe without reloading it
   useEffect(() => {
     if (!useEmbed || !currentVideo || !iframeRef.current) return;
@@ -451,16 +538,24 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   // Handle external seekCommand (e.g. MediaSession / keyboard shortcut / main bar seek)
   useEffect(() => {
     if (seekCommand === null) return;
-    if (!useEmbed) return;
+    if (!useEmbed && !useNativeMp4Video) return;
     const echoed =
       suppressSeekEchoRef.current !== null &&
       Math.abs(suppressSeekEchoRef.current - seekCommand) < 0.25;
     suppressSeekEchoRef.current = null;
     if (!echoed) {
-      sendEmbedCommand('seekTo', [seekCommand, true]);
+      if (useNativeMp4Video && nativeVideoRef.current) {
+        try {
+          nativeVideoRef.current.currentTime = Math.max(0, seekCommand);
+        } catch {
+          // ignore
+        }
+      } else if (useEmbed) {
+        sendEmbedCommand('seekTo', [seekCommand, true]);
+      }
     }
     onSeekHandled?.();
-  }, [seekCommand, useEmbed, sendEmbedCommand, onSeekHandled]);
+  }, [seekCommand, useEmbed, useNativeMp4Video, sendEmbedCommand, onSeekHandled]);
 
   // Listen to YouTube postMessage events from popup embed
   useEffect(() => {
@@ -572,7 +667,14 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
   }, [useEmbed, clearHandshakeTimer, sendEmbedCommand]);
 
   const directSeekAndNotify = (targetSec: number) => {
-    if (useEmbed) {
+    if (useNativeMp4Video && nativeVideoRef.current) {
+      suppressSeekEchoRef.current = targetSec;
+      try {
+        nativeVideoRef.current.currentTime = Math.max(0, targetSec);
+      } catch {
+        // ignore
+      }
+    } else if (useEmbed) {
       suppressSeekEchoRef.current = targetSec;
       sendEmbedCommand('seekTo', [targetSec, true]);
     }
@@ -611,10 +713,12 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
             }}
             style={{ x: dragX, y: dragY }}
             initial={{ opacity: 0, scale: 0.94 }}
-            animate={{ opacity: 1, scale: 1 }}
+            animate={{ opacity: isOsPipActive ? 0 : 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.94 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
             className={`fixed right-2.5 sm:right-5 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] sm:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border casttube-accent-border shadow-2xl overflow-hidden text-left transition-[width] duration-200 ${
+              isOsPipActive ? 'pointer-events-none' : ''
+            } ${
               compact
                 ? 'w-[min(calc(100vw-1.25rem),256px)] sm:w-[296px]'
                 : 'w-[min(calc(100vw-1.25rem),288px)] sm:w-[352px]'
@@ -701,7 +805,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                   type="button"
                   onClick={onClose}
                   className="min-w-[34px] min-h-[34px] sm:min-w-[30px] sm:min-h-[30px] flex items-center justify-center rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
-                  title="Tutup Popup"
+                  title={isPlaying ? 'Tutup Popup (Audio Tetap Jalan)' : 'Tutup Popup'}
                   aria-label="Tutup Popup"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -711,7 +815,159 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
 
             {/* Media Stage */}
             <div className="p-2.5 sm:p-3.5 space-y-2 sm:space-y-2.5">
-              {useEmbed ? (
+              {useNativeMp4Video ? (
+                <div className={compact ? 'flex items-center gap-2.5' : 'space-y-2'}>
+                  {/* Single Persistent Native MP4 <video> (supports direct mobile OS Picture-in-Picture & uninterrupted background resume) */}
+                  <div
+                    onClick={() => {
+                      const v = nativeVideoRef.current;
+                      if (needsDirectTap && v) {
+                        v.play()
+                          .then(() => {
+                            setNeedsDirectTap(false);
+                            onEmbedStateChange(true);
+                          })
+                          .catch(() => {});
+                        return;
+                      }
+                      onPlayPause();
+                    }}
+                    className={
+                      compact
+                        ? 'relative w-20 h-[45px] rounded-xl overflow-hidden bg-black shrink-0 ring-1 ring-[var(--ct-border-light)] dark:ring-[var(--ct-border-dark)] cursor-pointer'
+                        : 'relative w-full aspect-video rounded-2xl overflow-hidden bg-black border border-slate-200 dark:border-slate-800 shadow-inner cursor-pointer'
+                    }
+                  >
+                    <video
+                      key={`mp4-${currentVideo.id}`}
+                      ref={setNativeVideoNode}
+                      src={`/api/youtube/audio-stream?videoId=${encodeURIComponent(
+                        currentVideo.id
+                      )}&media=video`}
+                      poster={currentVideo.thumbnail}
+                      playsInline
+                      preload="auto"
+                      muted={isMuted}
+                      onLoadedMetadata={(e) => {
+                        const vidEl = e.currentTarget;
+                        const snap = getPlaybackClockSnapshot();
+                        if (
+                          appliedNativeSeekForIdRef.current !== currentVideo.id &&
+                          snap.videoId === currentVideo.id &&
+                          snap.currentTime > 0.5
+                        ) {
+                          appliedNativeSeekForIdRef.current = currentVideo.id;
+                          try {
+                            vidEl.currentTime = snap.currentTime;
+                          } catch {
+                            // ignore
+                          }
+                        }
+                        vidEl.muted = propsRef.current.isMuted;
+                        vidEl.volume = Math.max(0, Math.min(1, propsRef.current.volume / 100));
+                        try {
+                          vidEl.playbackRate = propsRef.current.playbackRate;
+                        } catch {
+                          // ignore
+                        }
+                        if (propsRef.current.isPlaying && vidEl.paused) {
+                          vidEl
+                            .play()
+                            .then(() => setNeedsDirectTap(false))
+                            .catch((err: unknown) => {
+                              const name = (err as { name?: string })?.name;
+                              if (name === 'NotAllowedError') {
+                                setNeedsDirectTap(true);
+                              }
+                            });
+                        }
+                      }}
+                      onTimeUpdate={(e) => {
+                        const vidEl = e.currentTarget;
+                        setPlaybackClock(
+                          currentVideo.id,
+                          vidEl.currentTime || 0,
+                          Number.isFinite(vidEl.duration) ? vidEl.duration : 0
+                        );
+                      }}
+                      onPlay={() => {
+                        setNeedsDirectTap(false);
+                        if (!propsRef.current.isPlaying) {
+                          propsRef.current.onEmbedStateChange(true);
+                        }
+                      }}
+                      onPause={(e) => {
+                        if (isSwitchingNativeRef.current || e.currentTarget.ended) return;
+                        if (propsRef.current.isPlaying) {
+                          propsRef.current.onEmbedStateChange(false);
+                        }
+                      }}
+                      onEnded={() => {
+                        propsRef.current.onNext();
+                      }}
+                      onError={() => {
+                        setNativeVideoFailed(true);
+                      }}
+                      className="w-full h-full object-cover"
+                    />
+
+                    {!compact && needsDirectTap && (
+                      <div className="absolute inset-0 bg-slate-950/45 flex items-center justify-center">
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full casttube-gradient-btn text-[11px] font-bold shadow-lg">
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Ketuk untuk Putar di HP</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {compact ? (
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white line-clamp-2 leading-snug">
+                        {currentVideo.title}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1.5">
+                        <span className="truncate">{currentVideo.channelTitle}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                          Siap PiP
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">
+                        {currentVideo.title}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span className="truncate">{currentVideo.channelTitle}</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {canOpenOsPip && onOpenOsPip && (
+                            <button
+                              type="button"
+                              onClick={onOpenOsPip}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg casttube-gradient-btn text-[10px] font-bold hover:brightness-110 transition-all cursor-pointer"
+                              title="Lepas video ke Layar HP Mengambang (tampil di atas WhatsApp / aplikasi lain)"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              <span>PiP HP</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setPreferEmbed(true)}
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold casttube-accent-secondary-text hover:underline shrink-0 cursor-pointer"
+                            title="Ganti ke mode Embed YouTube"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>Embed YT</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : useEmbed ? (
                 <div className={compact ? 'flex items-center gap-2.5' : 'space-y-2'}>
                   {/* Single Persistent Iframe (never unmounts when toggling compact vs expanded!) */}
                   <div
@@ -817,15 +1073,27 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                       </div>
                       <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
                         <span className="truncate">{currentVideo.channelTitle}</span>
-                        <button
-                          type="button"
-                          onClick={onToggleEmbedHost}
-                          className="inline-flex items-center gap-1 text-[10px] font-semibold casttube-accent-secondary-text hover:underline shrink-0 cursor-pointer"
-                          title="Ganti server pemutar embed YouTube jika video diblokir"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                          <span>{embedHost === 'nocookie' ? 'Server Standar' : 'Server Privasi'}</span>
-                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {preferEmbed && !nativeVideoFailed && nativeAudioStatus !== 'live_stream' && (
+                            <button
+                              type="button"
+                              onClick={() => setPreferEmbed(false)}
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+                              title="Kembali ke Mode Video PiP Native"
+                            >
+                              <span>Mode PiP</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={onToggleEmbedHost}
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold casttube-accent-secondary-text hover:underline shrink-0 cursor-pointer"
+                            title="Ganti server pemutar embed YouTube jika video diblokir"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>{embedHost === 'nocookie' ? 'Server Standar' : 'Server Privasi'}</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -903,7 +1171,14 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                     onClick={() => {
                       const snap = getPlaybackClockSnapshot();
                       const target = Math.max(0, snap.currentTime - 15);
-                      if (useEmbed) {
+                      if (useNativeMp4Video && nativeVideoRef.current) {
+                        suppressSeekEchoRef.current = target;
+                        try {
+                          nativeVideoRef.current.currentTime = target;
+                        } catch {
+                          // ignore
+                        }
+                      } else if (useEmbed) {
                         suppressSeekEchoRef.current = target;
                         sendEmbedCommand('seekTo', [target, true]);
                       }
@@ -919,7 +1194,13 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (useEmbed && !isPlaying && iframeStateRef.current.playing !== true) {
+                      if (useNativeMp4Video && nativeVideoRef.current && !isPlaying) {
+                        void nativeVideoRef.current.play().catch(() => {});
+                      } else if (
+                        useEmbed &&
+                        !isPlaying &&
+                        iframeStateRef.current.playing !== true
+                      ) {
                         sendEmbedCommand('playVideo');
                         armAutoplayWatchdog();
                       }
@@ -937,7 +1218,14 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = ({
                     onClick={() => {
                       const snap = getPlaybackClockSnapshot();
                       const nextT = Math.min(snap.duration || Infinity, snap.currentTime + 30);
-                      if (useEmbed) {
+                      if (useNativeMp4Video && nativeVideoRef.current) {
+                        suppressSeekEchoRef.current = nextT;
+                        try {
+                          nativeVideoRef.current.currentTime = nextT;
+                        } catch {
+                          // ignore
+                        }
+                      } else if (useEmbed) {
                         suppressSeekEchoRef.current = nextT;
                         sendEmbedCommand('seekTo', [nextT, true]);
                       }

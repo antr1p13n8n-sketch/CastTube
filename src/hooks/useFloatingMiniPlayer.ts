@@ -76,7 +76,10 @@ export function useFloatingMiniPlayer({
   const pipWindowRef = useRef<Window | null>(null);
   const handshakeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const clockUnsubRef = useRef<(() => void) | null>(null);
+  const registeredPopupVideoRef = useRef<PipVideoElement | null>(null);
+  const [isOsVideoPipOwningMedia, setIsOsVideoPipOwningMedia] = useState(false);
   const videoPipStateRef = useRef<{
+    kind: 'registered-mp4' | 'offscreen-mp4' | 'canvas' | null;
     videoEl: PipVideoElement | null;
     canvasEl: HTMLCanvasElement | null;
     drawInterval: ReturnType<typeof setInterval> | null;
@@ -84,6 +87,7 @@ export function useFloatingMiniPlayer({
     thumbVideoId: string | null;
     cleanupListeners: (() => void) | null;
   }>({
+    kind: null,
     videoEl: null,
     canvasEl: null,
     drawInterval: null,
@@ -148,20 +152,31 @@ export function useFloatingMiniPlayer({
     typeof window !== 'undefined' && 'documentPictureInPicture' in window;
   const supportsVideoPip =
     typeof document !== 'undefined' &&
-    typeof HTMLCanvasElement !== 'undefined' &&
-    typeof HTMLCanvasElement.prototype.captureStream === 'function' &&
     Boolean(
       document.pictureInPictureEnabled ||
         (typeof HTMLVideoElement !== 'undefined' &&
-          'webkitSetPresentationMode' in HTMLVideoElement.prototype)
+          ('requestPictureInPicture' in HTMLVideoElement.prototype ||
+            'webkitSetPresentationMode' in HTMLVideoElement.prototype))
     );
+  const supportsCanvasCapture =
+    typeof HTMLCanvasElement !== 'undefined' &&
+    typeof HTMLCanvasElement.prototype.captureStream === 'function';
   const canOpenOsPip = (supportsDocumentPip || supportsVideoPip) && isTopWindow;
   // Universal popup support: always enabled via unrestricted interactive FloatingInAppPopup
   const isSupported = true;
 
   const isPopupEmbedActive = Boolean(
-    isOpen && (mode === 'document' || mode === 'inapp') && !usingNativeAudio && currentVideo
+    isOpen &&
+      !usingNativeAudio &&
+      currentVideo &&
+      (mode === 'document' ||
+        mode === 'inapp' ||
+        (mode === 'video' && isOsVideoPipOwningMedia))
   );
+
+  const registerPopupVideoElement = useCallback((el: HTMLVideoElement | null) => {
+    registeredPopupVideoRef.current = el as PipVideoElement | null;
+  }, []);
 
   const cleanupVideoPip = useCallback(() => {
     const vp = videoPipStateRef.current;
@@ -173,7 +188,8 @@ export function useFloatingMiniPlayer({
       vp.cleanupListeners();
       vp.cleanupListeners = null;
     }
-    if (typeof document !== 'undefined' && document.pictureInPictureElement === vp.videoEl) {
+    const isRegisteredEl = vp.kind === 'registered-mp4';
+    if (typeof document !== 'undefined' && vp.videoEl && document.pictureInPictureElement === vp.videoEl) {
       try {
         void document.exitPictureInPicture().catch(() => {});
       } catch {
@@ -185,21 +201,27 @@ export function useFloatingMiniPlayer({
         if (vp.videoEl.webkitPresentationMode === 'picture-in-picture') {
           vp.videoEl.webkitSetPresentationMode?.('inline');
         }
-        vp.videoEl.pause();
-        const srcObj = vp.videoEl.srcObject as MediaStream | null;
-        if (srcObj) {
-          srcObj.getTracks().forEach((t) => t.stop());
+        if (!isRegisteredEl) {
+          vp.videoEl.pause();
+          const srcObj = vp.videoEl.srcObject as MediaStream | null;
+          if (srcObj) {
+            srcObj.getTracks().forEach((t) => t.stop());
+          }
+          vp.videoEl.srcObject = null;
+          vp.videoEl.removeAttribute('src');
+          vp.videoEl.load();
+          vp.videoEl.remove();
         }
-        vp.videoEl.srcObject = null;
-        vp.videoEl.remove();
       } catch {
         // ignore
       }
       vp.videoEl = null;
     }
+    vp.kind = null;
     vp.canvasEl = null;
     vp.thumbImg = null;
     vp.thumbVideoId = null;
+    setIsOsVideoPipOwningMedia(false);
   }, []);
 
   const cleanupResources = useCallback(() => {
@@ -394,6 +416,44 @@ export function useFloatingMiniPlayer({
     pipEmbedHost,
     renderDocumentPipContents,
   ]);
+
+  // Sync reactive state into offscreen MP4 OS Picture-in-Picture video when active
+  useEffect(() => {
+    const vp = videoPipStateRef.current;
+    if (mode !== 'video' || vp.kind !== 'offscreen-mp4' || !vp.videoEl || !currentVideo) return;
+    const videoEl = vp.videoEl;
+    const expectedSrc = `/api/youtube/audio-stream?videoId=${encodeURIComponent(
+      currentVideo.id
+    )}&media=video`;
+    if (!videoEl.getAttribute('src')?.includes(encodeURIComponent(currentVideo.id))) {
+      videoEl.src = expectedSrc;
+      const snap = getPlaybackClockSnapshot();
+      const targetTime =
+        snap.videoId === currentVideo.id && snap.currentTime > 0 ? snap.currentTime : 0;
+      const applyResume = () => {
+        if (targetTime > 0.5) {
+          try {
+            videoEl.currentTime = targetTime;
+          } catch {
+            // ignore
+          }
+        }
+      };
+      videoEl.addEventListener('loadedmetadata', applyResume, { once: true });
+    }
+    videoEl.muted = isMuted;
+    videoEl.volume = Math.max(0, Math.min(1, volume / 100));
+    try {
+      videoEl.playbackRate = playbackRate;
+    } catch {
+      // ignore
+    }
+    if (isPlaying && videoEl.paused) {
+      void videoEl.play().catch(() => {});
+    } else if (!isPlaying && !videoEl.paused) {
+      videoEl.pause();
+    }
+  }, [mode, currentVideo?.id, isPlaying, playbackRate, volume, isMuted]);
 
   useEffect(() => {
     const syncPipTheme = () => {
@@ -836,89 +896,309 @@ export function useFloatingMiniPlayer({
         }
       }
 
-      // Mobile Android Chrome / iOS Safari OS Picture-in-Picture via live Canvas <video> stream
+      // Mobile Android Chrome / iOS Safari OS Picture-in-Picture
       if (supportsVideoPip && isTopWindow) {
-        try {
-          cleanupResources();
-          const canvas = document.createElement('canvas');
-          canvas.width = 640;
-          canvas.height = 360;
-          const videoEl = document.createElement('video') as PipVideoElement;
-          videoEl.muted = true;
-          videoEl.playsInline = true;
-          videoEl.autoplay = true;
-          videoEl.setAttribute('playsinline', '');
-          videoEl.setAttribute('webkit-playsinline', '');
-          videoEl.style.position = 'fixed';
-          videoEl.style.top = '-9999px';
-          videoEl.style.left = '0';
-          videoEl.style.width = '2px';
-          videoEl.style.height = '2px';
-          videoEl.style.opacity = '0.01';
-          videoEl.style.pointerEvents = 'none';
-          document.body.appendChild(videoEl);
-
-          videoPipStateRef.current.canvasEl = canvas;
-          videoPipStateRef.current.videoEl = videoEl;
-
-          drawVideoPipFrame();
-          const stream = canvas.captureStream(10);
-          videoEl.srcObject = stream;
-          videoPipStateRef.current.drawInterval = setInterval(drawVideoPipFrame, 120);
-
-          await videoEl.play();
-
-          let entered = false;
-          if (typeof videoEl.requestPictureInPicture === 'function' && document.pictureInPictureEnabled) {
+        const enterPipOnElement = async (videoEl: PipVideoElement): Promise<boolean> => {
+          if (
+            typeof videoEl.requestPictureInPicture === 'function' &&
+            document.pictureInPictureEnabled
+          ) {
             await videoEl.requestPictureInPicture();
-            entered = true;
-          } else if (
+            return true;
+          }
+          if (
             typeof videoEl.webkitSupportsPresentationMode === 'function' &&
             videoEl.webkitSupportsPresentationMode('picture-in-picture') &&
             typeof videoEl.webkitSetPresentationMode === 'function'
           ) {
             videoEl.webkitSetPresentationMode('picture-in-picture');
-            entered = true;
-          }
-
-          if (entered) {
-            const onLeavePip = () => cleanupResources();
-            const onWebkitMode = () => {
-              if (videoEl.webkitPresentationMode !== 'picture-in-picture') {
-                cleanupResources();
-              }
-            };
-            const onVideoPlay = () => {
-              if (!propsRef.current.isPlaying) {
-                propsRef.current.onPlayPause();
-              }
-            };
-            const onVideoPause = () => {
-              if (propsRef.current.isPlaying && (document.pictureInPictureElement === videoEl || videoEl.webkitPresentationMode === 'picture-in-picture')) {
-                propsRef.current.onPlayPause();
-              }
-            };
-            videoEl.addEventListener('leavepictureinpicture', onLeavePip);
-            videoEl.addEventListener('webkitpresentationmodechanged', onWebkitMode);
-            videoEl.addEventListener('play', onVideoPlay);
-            videoEl.addEventListener('pause', onVideoPause);
-            videoPipStateRef.current.cleanupListeners = () => {
-              videoEl.removeEventListener('leavepictureinpicture', onLeavePip);
-              videoEl.removeEventListener('webkitpresentationmodechanged', onWebkitMode);
-              videoEl.removeEventListener('play', onVideoPlay);
-              videoEl.removeEventListener('pause', onVideoPause);
-            };
-
-            setIsOpen(true);
-            setMode('video');
-            openedByMinimizeRef.current = false;
-            wasHiddenSinceOpenRef.current =
-              typeof document !== 'undefined' && document.visibilityState === 'hidden';
             return true;
           }
-          cleanupResources();
-        } catch {
-          cleanupResources();
+          return false;
+        };
+
+        // Strategy 1 (fastest, preserves iOS Safari / Android Chrome synchronous user gesture):
+        // Use the already-mounted live MP4 <video> element inside FloatingInAppPopup!
+        const livePopupVideo = registeredPopupVideoRef.current;
+        if (
+          livePopupVideo &&
+          !propsRef.current.usingNativeAudio &&
+          livePopupVideo.readyState >= 1
+        ) {
+          try {
+            if (livePopupVideo.paused && propsRef.current.isPlaying) {
+              void livePopupVideo.play().catch(() => {});
+            }
+            const entered = await enterPipOnElement(livePopupVideo);
+            if (entered) {
+              cleanupVideoPip();
+              videoPipStateRef.current.kind = 'registered-mp4';
+              videoPipStateRef.current.videoEl = livePopupVideo;
+
+              const onLeaveRegisteredPip = () => {
+                cleanupVideoPip();
+                if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+                  setIsOpen(true);
+                  setMode('inapp');
+                } else {
+                  setIsOpen(false);
+                  setMode(null);
+                }
+              };
+              const onWebkitRegisteredMode = () => {
+                if (livePopupVideo.webkitPresentationMode !== 'picture-in-picture') {
+                  onLeaveRegisteredPip();
+                }
+              };
+
+              livePopupVideo.addEventListener('leavepictureinpicture', onLeaveRegisteredPip);
+              livePopupVideo.addEventListener('webkitpresentationmodechanged', onWebkitRegisteredMode);
+              videoPipStateRef.current.cleanupListeners = () => {
+                livePopupVideo.removeEventListener('leavepictureinpicture', onLeaveRegisteredPip);
+                livePopupVideo.removeEventListener(
+                  'webkitpresentationmodechanged',
+                  onWebkitRegisteredMode
+                );
+              };
+
+              setIsOsVideoPipOwningMedia(true);
+              setIsOpen(true);
+              setMode('video');
+              openedByMinimizeRef.current = false;
+              wasHiddenSinceOpenRef.current =
+                typeof document !== 'undefined' && document.visibilityState === 'hidden';
+              return true;
+            }
+          } catch {
+            // Fall through to offscreen MP4 or Canvas stream
+          }
+        }
+
+        // Strategy 2: Spawn offscreen real MP4 <video> stream (works even when popup wasn't open yet)
+        const targetVid = propsRef.current.currentVideo;
+        const status = propsRef.current.nativeAudioStatus;
+        if (
+          targetVid &&
+          !propsRef.current.usingNativeAudio &&
+          status !== 'live_stream' &&
+          status !== 'login_required'
+        ) {
+          try {
+            cleanupResources();
+            const videoEl = document.createElement('video') as PipVideoElement;
+            videoEl.playsInline = true;
+            videoEl.autoplay = true;
+            videoEl.preload = 'auto';
+            videoEl.muted = propsRef.current.isMuted;
+            videoEl.volume = Math.max(0, Math.min(1, propsRef.current.volume / 100));
+            videoEl.setAttribute('playsinline', '');
+            videoEl.setAttribute('webkit-playsinline', '');
+            videoEl.style.position = 'fixed';
+            videoEl.style.top = '-9999px';
+            videoEl.style.left = '0';
+            videoEl.style.width = '2px';
+            videoEl.style.height = '2px';
+            videoEl.style.opacity = '0.01';
+            videoEl.style.pointerEvents = 'none';
+            videoEl.src = `/api/youtube/audio-stream?videoId=${encodeURIComponent(
+              targetVid.id
+            )}&media=video`;
+            document.body.appendChild(videoEl);
+
+            videoPipStateRef.current.kind = 'offscreen-mp4';
+            videoPipStateRef.current.videoEl = videoEl;
+
+            await new Promise<void>((resolve, reject) => {
+              if (videoEl.readyState >= 1) {
+                resolve();
+                return;
+              }
+              const timer = setTimeout(() => {
+                videoEl.removeEventListener('loadedmetadata', onMeta);
+                videoEl.removeEventListener('error', onErr);
+                reject(new Error('mp4_metadata_timeout'));
+              }, 5000);
+              const onMeta = () => {
+                clearTimeout(timer);
+                videoEl.removeEventListener('error', onErr);
+                resolve();
+              };
+              const onErr = () => {
+                clearTimeout(timer);
+                videoEl.removeEventListener('loadedmetadata', onMeta);
+                reject(new Error('mp4_load_error'));
+              };
+              videoEl.addEventListener('loadedmetadata', onMeta, { once: true });
+              videoEl.addEventListener('error', onErr, { once: true });
+            });
+
+            const snap = getPlaybackClockSnapshot();
+            if (snap.videoId === targetVid.id && snap.currentTime > 0.5) {
+              try {
+                videoEl.currentTime = snap.currentTime;
+              } catch {
+                // ignore
+              }
+            }
+            try {
+              videoEl.playbackRate = propsRef.current.playbackRate;
+            } catch {
+              // ignore
+            }
+            await videoEl.play();
+
+            const entered = await enterPipOnElement(videoEl);
+            if (entered) {
+              const onLeavePip = () => {
+                cleanupVideoPip();
+                if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+                  setIsOpen(true);
+                  setMode('inapp');
+                } else {
+                  setIsOpen(false);
+                  setMode(null);
+                }
+              };
+              const onWebkitMode = () => {
+                if (videoEl.webkitPresentationMode !== 'picture-in-picture') {
+                  onLeavePip();
+                }
+              };
+              const onVideoTimeUpdate = () => {
+                const vid = propsRef.current.currentVideo;
+                if (!vid) return;
+                setPlaybackClock(
+                  vid.id,
+                  videoEl.currentTime || 0,
+                  Number.isFinite(videoEl.duration) ? videoEl.duration : 0
+                );
+              };
+              const onVideoPlay = () => {
+                if (!propsRef.current.isPlaying) {
+                  propsRef.current.onEmbedStateChange?.(true);
+                }
+              };
+              const onVideoPause = () => {
+                if (
+                  propsRef.current.isPlaying &&
+                  !videoEl.ended &&
+                  (document.pictureInPictureElement === videoEl ||
+                    videoEl.webkitPresentationMode === 'picture-in-picture')
+                ) {
+                  propsRef.current.onEmbedStateChange?.(false);
+                }
+              };
+              const onVideoEnded = () => {
+                propsRef.current.onNext();
+              };
+
+              videoEl.addEventListener('leavepictureinpicture', onLeavePip);
+              videoEl.addEventListener('webkitpresentationmodechanged', onWebkitMode);
+              videoEl.addEventListener('timeupdate', onVideoTimeUpdate);
+              videoEl.addEventListener('play', onVideoPlay);
+              videoEl.addEventListener('pause', onVideoPause);
+              videoEl.addEventListener('ended', onVideoEnded);
+              videoPipStateRef.current.cleanupListeners = () => {
+                videoEl.removeEventListener('leavepictureinpicture', onLeavePip);
+                videoEl.removeEventListener('webkitpresentationmodechanged', onWebkitMode);
+                videoEl.removeEventListener('timeupdate', onVideoTimeUpdate);
+                videoEl.removeEventListener('play', onVideoPlay);
+                videoEl.removeEventListener('pause', onVideoPause);
+                videoEl.removeEventListener('ended', onVideoEnded);
+              };
+
+              setIsOsVideoPipOwningMedia(true);
+              setIsOpen(true);
+              setMode('video');
+              openedByMinimizeRef.current = false;
+              wasHiddenSinceOpenRef.current =
+                typeof document !== 'undefined' && document.visibilityState === 'hidden';
+              return true;
+            }
+            cleanupResources();
+          } catch {
+            cleanupResources();
+          }
+        }
+
+        // Strategy 3: Canvas visual PiP stream fallback (great when NativeAudioPlayer plays live/audio-only)
+        if (supportsCanvasCapture) {
+          try {
+            cleanupResources();
+            const canvas = document.createElement('canvas');
+            canvas.width = 640;
+            canvas.height = 360;
+            const videoEl = document.createElement('video') as PipVideoElement;
+            videoEl.muted = true;
+            videoEl.playsInline = true;
+            videoEl.autoplay = true;
+            videoEl.setAttribute('playsinline', '');
+            videoEl.setAttribute('webkit-playsinline', '');
+            videoEl.style.position = 'fixed';
+            videoEl.style.top = '-9999px';
+            videoEl.style.left = '0';
+            videoEl.style.width = '2px';
+            videoEl.style.height = '2px';
+            videoEl.style.opacity = '0.01';
+            videoEl.style.pointerEvents = 'none';
+            document.body.appendChild(videoEl);
+
+            videoPipStateRef.current.kind = 'canvas';
+            videoPipStateRef.current.canvasEl = canvas;
+            videoPipStateRef.current.videoEl = videoEl;
+
+            drawVideoPipFrame();
+            const stream = canvas.captureStream(10);
+            videoEl.srcObject = stream;
+            videoPipStateRef.current.drawInterval = setInterval(drawVideoPipFrame, 120);
+
+            await videoEl.play();
+
+            const entered = await enterPipOnElement(videoEl);
+            if (entered) {
+              const onLeavePip = () => cleanupResources();
+              const onWebkitMode = () => {
+                if (videoEl.webkitPresentationMode !== 'picture-in-picture') {
+                  cleanupResources();
+                }
+              };
+              const onVideoPlay = () => {
+                if (!propsRef.current.isPlaying) {
+                  propsRef.current.onPlayPause();
+                }
+              };
+              const onVideoPause = () => {
+                if (
+                  propsRef.current.isPlaying &&
+                  (document.pictureInPictureElement === videoEl ||
+                    videoEl.webkitPresentationMode === 'picture-in-picture')
+                ) {
+                  propsRef.current.onPlayPause();
+                }
+              };
+              videoEl.addEventListener('leavepictureinpicture', onLeavePip);
+              videoEl.addEventListener('webkitpresentationmodechanged', onWebkitMode);
+              videoEl.addEventListener('play', onVideoPlay);
+              videoEl.addEventListener('pause', onVideoPause);
+              videoPipStateRef.current.cleanupListeners = () => {
+                videoEl.removeEventListener('leavepictureinpicture', onLeavePip);
+                videoEl.removeEventListener('webkitpresentationmodechanged', onWebkitMode);
+                videoEl.removeEventListener('play', onVideoPlay);
+                videoEl.removeEventListener('pause', onVideoPause);
+              };
+
+              setIsOsVideoPipOwningMedia(false);
+              setIsOpen(true);
+              setMode('video');
+              openedByMinimizeRef.current = false;
+              wasHiddenSinceOpenRef.current =
+                typeof document !== 'undefined' && document.visibilityState === 'hidden';
+              return true;
+            }
+            cleanupResources();
+          } catch {
+            cleanupResources();
+          }
         }
       }
 
@@ -930,8 +1210,10 @@ export function useFloatingMiniPlayer({
     [
       supportsDocumentPip,
       supportsVideoPip,
+      supportsCanvasCapture,
       isTopWindow,
       cleanupResources,
+      cleanupVideoPip,
       drawVideoPipFrame,
       renderDocumentPipContents,
     ]
@@ -956,7 +1238,7 @@ export function useFloatingMiniPlayer({
         document.visibilityState === 'hidden' &&
         !options?.manual;
 
-      if (modeRef.current === 'inapp' && isOpenRef.current) {
+      if ((modeRef.current === 'inapp' || modeRef.current === 'video') && isOpenRef.current) {
         if (options?.manual) {
           openedByMinimizeRef.current = false;
         }
@@ -1004,7 +1286,7 @@ export function useFloatingMiniPlayer({
     if (
       typeof navigator === 'undefined' ||
       !('mediaSession' in navigator) ||
-      !supportsDocumentPip
+      !(supportsDocumentPip || supportsVideoPip)
     ) {
       setSupportsAutoPip(true);
       return;
@@ -1027,7 +1309,11 @@ export function useFloatingMiniPlayer({
     try {
       mediaSession.setActionHandler('enterpictureinpicture', () => {
         lastAutoTriggerAtRef.current = Date.now();
-        void openPopup({ silent: true });
+        if (canOpenOsPip && (supportsDocumentPip || registeredPopupVideoRef.current)) {
+          void openOsPipWindow({ silent: true });
+        } else {
+          void openPopup({ silent: true });
+        }
       });
       setSupportsAutoPip(true);
     } catch {
@@ -1041,7 +1327,16 @@ export function useFloatingMiniPlayer({
         // ignore
       }
     };
-  }, [autoPopupOnMinimize, currentVideo?.id, isPlaying, openPopup, supportsDocumentPip]);
+  }, [
+    autoPopupOnMinimize,
+    currentVideo?.id,
+    isPlaying,
+    canOpenOsPip,
+    openOsPipWindow,
+    openPopup,
+    supportsDocumentPip,
+    supportsVideoPip,
+  ]);
 
   // Auto-open on minimize (without restriction) and clean auto-close on return only when triggered by minimize
   useEffect(() => {
@@ -1098,11 +1393,13 @@ export function useFloatingMiniPlayer({
     canOpenOsPip,
     isOpen,
     isPopupEmbedActive,
+    isOsVideoPipOwningMedia,
     mode,
     pipEmbedHost,
     togglePipEmbedHost,
     fallbackToStandardEmbedHost,
     error,
+    registerPopupVideoElement,
     openPopup,
     openOsPipWindow,
     closePopup,

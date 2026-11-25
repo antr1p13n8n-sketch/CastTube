@@ -299,6 +299,8 @@ export default function App() {
   // Player States (Restores last played video and saved progress offline/online)
   const [currentVideo, setCurrentVideo] = useState<Video | null>(boot.initialVideo);
   const [playerMode, setPlayerMode] = useState<PlayerMode>(boot.session.playerMode);
+  const playerModeRef = useRef<PlayerMode>(playerMode);
+  playerModeRef.current = playerMode;
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
@@ -309,6 +311,8 @@ export default function App() {
   );
   const [seekCommand, setSeekCommand] = useState<number | null>(null);
   const [audioStatusMap, setAudioStatusMap] = useState<Record<string, NativeAudioStatus>>({});
+  const audioStatusMapRef = useRef(audioStatusMap);
+  audioStatusMapRef.current = audioStatusMap;
   const nativeAudioRef = useRef<NativeAudioHandle | null>(null);
   const autoSwitchedToAudioRef = useRef<boolean>(false);
   const probedAudioIdsRef = useRef<Set<string>>(new Set());
@@ -1063,11 +1067,13 @@ export default function App() {
     prevPopupEmbedActiveRef.current = isPopupEmbedActive;
   }, [isPopupEmbedActive]);
 
+  const handleCloseFloatingPopupRef = useRef<() => void>(() => {});
+
   const handleToggleFloatingPopup = useCallback(async (): Promise<boolean> => {
     nativeAudioRef.current?.unlock();
     void ensureAutoYouTubeCookies();
     if (floatingMiniPlayerRef.current.isOpen) {
-      floatingMiniPlayerRef.current.closePopup();
+      handleCloseFloatingPopupRef.current();
       return false;
     }
     let targetVideo = currentVideoRef.current;
@@ -2356,6 +2362,9 @@ export default function App() {
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
     onVisibilityHiddenWhilePlaying: () => {
+      if (floatingMiniPlayerRef.current.mode === 'video') {
+        return;
+      }
       if (
         bgAudioSettingsRef.current.enabled &&
         bgAudioSettingsRef.current.autoSwitchOnMinimize &&
@@ -2689,7 +2698,43 @@ export default function App() {
     setPlayerMode('video');
     setActiveTab('player');
   }, []);
+  const handleCloseFloatingPopup = useCallback(() => {
+    const wasPlaying = isPlayingRef.current;
+    const vid = currentVideoRef.current;
+    const snap = getPlaybackClockSnapshot();
+    nativeAudioRef.current?.unlock();
+    floatingMiniPlayerRef.current.closePopup();
+
+    if (!wasPlaying || !vid) return;
+
+    if (snap.videoId === vid.id && snap.currentTime > 0) {
+      setSeekCommand(snap.currentTime);
+    }
+
+    const isTouchOrMobile =
+      typeof window !== 'undefined' &&
+      (window.innerWidth < 768 || navigator.maxTouchPoints > 0);
+    const status = audioStatusMapRef.current[vid.id];
+    const streamUsable =
+      status !== 'live_stream' &&
+      status !== 'login_required' &&
+      status !== 'unavailable';
+
+    if (
+      playerModeRef.current === 'video' &&
+      (activeTab !== 'player' || isTouchOrMobile) &&
+      streamUsable
+    ) {
+      autoSwitchedToAudioRef.current = false;
+      setPlayerMode('audio');
+      setIsPlaying(true);
+      showBgAudioNotice('Popup ditutup — audio tetap diputar di pemutar mini & latar.');
+    }
+  }, [activeTab, showBgAudioNotice]);
+  handleCloseFloatingPopupRef.current = handleCloseFloatingPopup;
+
   const handleExpandInAppPopup = useCallback(() => {
+    nativeAudioRef.current?.unlock();
     setActiveTab('player');
     floatingMiniPlayerRef.current.closePopup();
   }, []);
@@ -3587,11 +3632,16 @@ export default function App() {
 
       {/* Universal Draggable In-App Floating Popup (guaranteed active on all browsers/mobile/iframes) */}
       <FloatingInAppPopup
-        isOpen={floatingMiniPlayer.isOpen && floatingMiniPlayer.mode === 'inapp'}
+        isOpen={
+          floatingMiniPlayer.isOpen &&
+          (floatingMiniPlayer.mode === 'inapp' || floatingMiniPlayer.mode === 'video')
+        }
+        isOsPipActive={floatingMiniPlayer.mode === 'video'}
         currentVideo={currentVideo}
         isPlaying={isPlaying}
         playerMode={playerMode}
         usingNativeAudio={useNativeAudio}
+        nativeAudioStatus={currentAudioStatus}
         playbackRate={playbackRate}
         volume={volume}
         isMuted={isMuted}
@@ -3604,6 +3654,7 @@ export default function App() {
         onOpenOsPip={() => {
           void floatingMiniPlayer.openOsPipWindow({ manual: true });
         }}
+        onRegisterVideoEl={floatingMiniPlayer.registerPopupVideoElement}
         onOpenSettings={handleOpenBackgroundAudioPopup}
         onOpenExtractorAuth={handleOpenAudioExtractorSettings}
         onToggleEmbedHost={floatingMiniPlayer.togglePipEmbedHost}
@@ -3617,7 +3668,7 @@ export default function App() {
         onCycleSpeed={handleCyclePlaybackRate}
         onToggleMode={handleTogglePlayerModeFromHeader}
         onExpand={handleExpandInAppPopup}
-        onClose={floatingMiniPlayer.closePopup}
+        onClose={handleCloseFloatingPopup}
         onEmbedStateChange={handlePopupEmbedStateChange}
       />
 
