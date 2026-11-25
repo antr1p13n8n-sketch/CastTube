@@ -24,7 +24,9 @@ interface MiniPlayerBarProps {
   onToggleFloatingPopup?: () => void;
 }
 
-const MiniPlayerTopProgress: React.FC<{ videoId: string }> = React.memo(({ videoId }) => {
+const MiniPlayerTopProgress: React.FC<{ videoId: string }> = React.memo(function MiniPlayerTopProgress({
+  videoId,
+}) {
   const clock = usePlaybackClock();
   const currentTime = clock.videoId === videoId ? clock.currentTime : 0;
   const duration = clock.videoId === videoId ? clock.duration : 0;
@@ -41,7 +43,9 @@ const MiniPlayerTopProgress: React.FC<{ videoId: string }> = React.memo(({ video
   );
 });
 
-const MiniPlayerTimeReadout: React.FC<{ videoId: string }> = React.memo(({ videoId }) => {
+const MiniPlayerTimeReadout: React.FC<{ videoId: string }> = React.memo(function MiniPlayerTimeReadout({
+  videoId,
+}) {
   const clock = usePlaybackClock();
   const currentTime = clock.videoId === videoId ? clock.currentTime : 0;
   const duration = clock.videoId === videoId ? clock.duration : 0;
@@ -103,23 +107,25 @@ export const MiniPlayerBar: React.FC<MiniPlayerBarProps> = React.memo(({
                 {isPlaying && (
                   <div className="absolute inset-0 bg-black/35 flex items-center justify-center">
                     <span className="flex items-end gap-0.5 h-3.5" aria-hidden="true">
-                      <motion.span
-                        animate={{ scaleY: [0.35, 1, 0.45, 0.9, 0.35] }}
-                        transition={{ duration: 0.85, repeat: Infinity, ease: 'easeInOut' }}
-                        className="w-0.5 h-full rounded-full origin-bottom"
-                        style={{ backgroundColor: 'var(--ct-glow)' }}
+                      <span
+                        className="w-0.5 h-full rounded-full ct-eq-bar"
+                        style={{ backgroundColor: 'var(--ct-glow)', animationDuration: '0.85s' }}
                       />
-                      <motion.span
-                        animate={{ scaleY: [0.9, 0.35, 1, 0.5, 0.9] }}
-                        transition={{ duration: 0.7, repeat: Infinity, ease: 'easeInOut' }}
-                        className="w-0.5 h-full rounded-full origin-bottom"
-                        style={{ backgroundColor: 'var(--ct-mid)' }}
+                      <span
+                        className="w-0.5 h-full rounded-full ct-eq-bar"
+                        style={{
+                          backgroundColor: 'var(--ct-mid)',
+                          animationDuration: '0.7s',
+                          animationDelay: '0.15s',
+                        }}
                       />
-                      <motion.span
-                        animate={{ scaleY: [0.5, 0.95, 0.35, 0.8, 0.5] }}
-                        transition={{ duration: 1.0, repeat: Infinity, ease: 'easeInOut' }}
-                        className="w-0.5 h-full rounded-full origin-bottom"
-                        style={{ backgroundColor: 'var(--ct-start)' }}
+                      <span
+                        className="w-0.5 h-full rounded-full ct-eq-bar"
+                        style={{
+                          backgroundColor: 'var(--ct-start)',
+                          animationDuration: '1s',
+                          animationDelay: '0.3s',
+                        }}
                       />
                     </span>
                   </div>

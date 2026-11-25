@@ -17,7 +17,12 @@ interface PaletteStops {
   glowHex: string;
 }
 
-export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
+interface GradientCacheEntry {
+  key: string;
+  grad: CanvasGradient;
+}
+
+export const AudioVisualizer: React.FC<AudioVisualizerProps> = React.memo(({
   isPlaying,
   isVisible = true,
   style = 'wave',
@@ -28,6 +33,18 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
   const animFrameIdRef = useRef<number | null>(null);
   const phaseRef = useRef<number>(0);
   const energyRef = useRef<number>(isPlaying ? 1 : 0.05);
+  const isPlayingRef = useRef<boolean>(isPlaying);
+  const playbackRateRef = useRef<number>(playbackRate);
+  const styleRef = useRef<VisualizerStyle>(style);
+  const wakeLoopRef = useRef<(() => void) | null>(null);
+
+  isPlayingRef.current = isPlaying;
+  playbackRateRef.current = playbackRate;
+  styleRef.current = style;
+
+  useEffect(() => {
+    wakeLoopRef.current?.();
+  }, [isPlaying, style, playbackRate]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -37,17 +54,52 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     if (!ctx) return;
 
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let logicalWidth = 200;
+    let logicalHeight = 80;
     let palette: PaletteStops = getActiveCssThemeColors();
+    const gradCache = new Map<string, GradientCacheEntry>();
+
+    const getCachedGradient = (
+      slot: string,
+      x0: number,
+      y0: number,
+      x1: number,
+      y1: number,
+      stops: string[]
+    ): CanvasGradient => {
+      const key = `${logicalWidth}x${logicalHeight}::${x0},${y0},${x1},${y1}::${stops.join(',')}`;
+      const existing = gradCache.get(slot);
+      if (existing && existing.key === key) {
+        return existing.grad;
+      }
+      const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+      const count = Math.max(stops.length - 1, 1);
+      stops.forEach((color, idx) => grad.addColorStop(idx / count, color));
+      gradCache.set(slot, { key, grad });
+      return grad;
+    };
 
     const resize = () => {
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.max(rect.width * dpr, 200);
-      canvas.height = Math.max(rect.height * dpr, 80);
+      logicalWidth = Math.max(rect.width, 200);
+      logicalHeight = Math.max(rect.height, 48);
+      const nextW = Math.round(logicalWidth * dpr);
+      const nextH = Math.round(logicalHeight * dpr);
+      if (canvas.width !== nextW || canvas.height !== nextH) {
+        canvas.width = nextW;
+        canvas.height = nextH;
+        gradCache.clear();
+      }
     };
 
     resize();
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => resize());
+      resizeObserver.observe(canvas);
+    }
     window.addEventListener('resize', resize);
 
     let isDarkMode = document.documentElement.classList.contains('dark');
@@ -61,6 +113,8 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 
     const handlePaletteChange = () => {
       palette = getActiveCssThemeColors();
+      gradCache.clear();
+      wakeLoopRef.current?.();
     };
     window.addEventListener(THEME_COLORS_CHANGED_EVENT, handlePaletteChange);
 
@@ -68,36 +122,41 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 
     const render = () => {
       if (stopped) return;
-      const width = canvas.width / dpr;
-      const height = canvas.height / dpr;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        animFrameIdRef.current = null;
+        return;
+      }
+
+      const width = logicalWidth;
+      const height = logicalHeight;
+      const activePlaying = isPlayingRef.current;
+      const activeRate = playbackRateRef.current;
+      const activeStyle = styleRef.current;
 
       ctx.save();
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, width, height);
 
-      // Smooth energy transition
-      const targetEnergy = isPlaying ? 1 : 0.05;
-      energyRef.current += (targetEnergy - energyRef.current) * 0.1;
+      const targetEnergy = activePlaying ? 1 : 0.05;
+      energyRef.current += (targetEnergy - energyRef.current) * 0.12;
       const energy = energyRef.current;
 
-      // Advance phase based on playbackRate
-      phaseRef.current += 0.04 * (isPlaying ? playbackRate : 0.15);
+      phaseRef.current += 0.04 * (activePlaying ? activeRate : 0.15);
       const phase = phaseRef.current;
 
-      if (style === 'wave') {
-        renderWave(ctx, width, height, phase, energy, isDarkMode, palette);
-      } else if (style === 'bars') {
-        renderBars(ctx, width, height, phase, energy, isDarkMode, palette);
-      } else if (style === 'radar') {
-        renderRadar(ctx, width, height, phase, energy, isDarkMode, palette);
+      if (activeStyle === 'wave') {
+        renderWave(ctx, width, height, phase, energy, isDarkMode, palette, getCachedGradient);
+      } else if (activeStyle === 'bars') {
+        renderBars(ctx, width, height, phase, energy, palette, getCachedGradient);
+      } else if (activeStyle === 'radar') {
+        renderRadar(ctx, width, height, phase, energy, palette, getCachedGradient);
       } else {
-        renderMinimal(ctx, width, height, phase, energy, isDarkMode, palette);
+        renderMinimal(ctx, width, height, phase, energy, palette, getCachedGradient);
       }
 
       ctx.restore();
 
-      // Stop 60fps rAF completely once paused and settled to save CPU/battery
-      if (!isPlaying && energy <= 0.06) {
+      if (!activePlaying && energy <= 0.06) {
         animFrameIdRef.current = null;
         return;
       }
@@ -105,19 +164,41 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
       animFrameIdRef.current = requestAnimationFrame(render);
     };
 
-    animFrameIdRef.current = requestAnimationFrame(render);
+    const scheduleFrame = () => {
+      if (stopped || animFrameIdRef.current !== null) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      animFrameIdRef.current = requestAnimationFrame(render);
+    };
+    wakeLoopRef.current = scheduleFrame;
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (animFrameIdRef.current !== null) {
+          cancelAnimationFrame(animFrameIdRef.current);
+          animFrameIdRef.current = null;
+        }
+      } else {
+        scheduleFrame();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    scheduleFrame();
 
     return () => {
       stopped = true;
+      wakeLoopRef.current = null;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      resizeObserver?.disconnect();
       themeObserver.disconnect();
       window.removeEventListener(THEME_COLORS_CHANGED_EVENT, handlePaletteChange);
       window.removeEventListener('resize', resize);
-      if (animFrameIdRef.current) {
+      if (animFrameIdRef.current !== null) {
         cancelAnimationFrame(animFrameIdRef.current);
         animFrameIdRef.current = null;
       }
     };
-  }, [isPlaying, isVisible, style, playbackRate]);
+  }, [isVisible]);
 
   return (
     <canvas
@@ -125,21 +206,16 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
       className={`w-full h-full block rounded-xl overflow-hidden pointer-events-none ${className}`}
     />
   );
-};
+});
 
-function createSpectrumGradient(
-  ctx: CanvasRenderingContext2D,
+type CachedGradientGetter = (
+  slot: string,
   x0: number,
   y0: number,
   x1: number,
   y1: number,
   stops: string[]
-) {
-  const grad = ctx.createLinearGradient(x0, y0, x1, y1);
-  const count = Math.max(stops.length - 1, 1);
-  stops.forEach((color, idx) => grad.addColorStop(idx / count, color));
-  return grad;
-}
+) => CanvasGradient;
 
 function renderWave(
   ctx: CanvasRenderingContext2D,
@@ -148,33 +224,38 @@ function renderWave(
   phase: number,
   energy: number,
   isDark: boolean,
-  palette: PaletteStops
+  palette: PaletteStops,
+  getGrad: CachedGradientGetter
 ) {
   const centerY = height / 2;
+  const scaleFactor = Math.min(1, height / 90);
   const layers = [
     {
+      slot: 'wave-0',
       freq: 0.02,
       speed: 1.0,
-      baseAmp: 26,
+      baseAmp: 24 * scaleFactor,
       alpha: isDark ? 0.58 : 0.45,
       stops: [palette.glowHex, palette.endHex, palette.midHex],
-      width: 2.2,
+      width: 2.0,
     },
     {
+      slot: 'wave-1',
       freq: 0.035,
       speed: -0.8,
-      baseAmp: 20,
+      baseAmp: 18 * scaleFactor,
       alpha: isDark ? 0.65 : 0.5,
       stops: [palette.startHex, palette.midHex, palette.glowHex],
-      width: 2.6,
+      width: 2.4,
     },
     {
+      slot: 'wave-2',
       freq: 0.015,
       speed: 1.4,
-      baseAmp: 34,
+      baseAmp: 30 * scaleFactor,
       alpha: 1,
       stops: [palette.glowHex, palette.endHex, palette.midHex, palette.startHex],
-      width: 3.2,
+      width: 2.8,
     },
   ];
 
@@ -185,11 +266,11 @@ function renderWave(
     ctx.globalAlpha = layer.alpha;
     ctx.beginPath();
     ctx.lineWidth = layer.width;
-    ctx.strokeStyle = createSpectrumGradient(ctx, 0, 0, width, 0, layer.stops);
+    ctx.strokeStyle = getGrad(layer.slot, 0, 0, width, 0, layer.stops);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    for (let x = 0; x <= width; x += 5) {
+    for (let x = 0; x <= width; x += 6) {
       const normalizedX = x / width;
       const envelope = Math.sin(normalizedX * Math.PI);
       const wave1 = Math.sin(x * layer.freq + phase * layer.speed);
@@ -213,8 +294,8 @@ function renderBars(
   height: number,
   phase: number,
   energy: number,
-  _isDark: boolean,
-  palette: PaletteStops
+  palette: PaletteStops,
+  getGrad: CachedGradientGetter
 ) {
   const barCount = 36;
   const gap = 3;
@@ -223,13 +304,12 @@ function renderBars(
   const centerY = height / 2;
   const maxAmp = (height / 2) * 0.85;
 
-  const gradient = createSpectrumGradient(ctx, 0, 0, width, height, [
+  ctx.fillStyle = getGrad('bars', 0, 0, width, height, [
     palette.glowHex,
     palette.endHex,
     palette.midHex,
     palette.startHex,
   ]);
-  ctx.fillStyle = gradient;
 
   for (let i = 0; i < barCount; i++) {
     const x = i * (barWidth + gap);
@@ -257,8 +337,8 @@ function renderRadar(
   height: number,
   phase: number,
   energy: number,
-  _isDark: boolean,
-  palette: PaletteStops
+  palette: PaletteStops,
+  getGrad: CachedGradientGetter
 ) {
   const centerX = width / 2;
   const centerY = height / 2;
@@ -277,8 +357,8 @@ function renderRadar(
     else ctx.lineTo(x, y);
   }
   ctx.closePath();
-  ctx.strokeStyle = createSpectrumGradient(
-    ctx,
+  ctx.strokeStyle = getGrad(
+    'radar',
     centerX - baseRadius,
     centerY - baseRadius,
     centerX + baseRadius,
@@ -288,7 +368,6 @@ function renderRadar(
   ctx.lineWidth = 3;
   ctx.stroke();
 
-  // Outer pulse ring
   const pulseR = baseRadius + 18 + Math.sin(phase * 2) * 6 * energy;
   ctx.save();
   ctx.globalAlpha = 0.36;
@@ -306,8 +385,8 @@ function renderMinimal(
   height: number,
   phase: number,
   energy: number,
-  _isDark: boolean,
-  palette: PaletteStops
+  palette: PaletteStops,
+  getGrad: CachedGradientGetter
 ) {
   const barCount = 12;
   const centerY = height / 2;
@@ -316,7 +395,7 @@ function renderMinimal(
   const totalWidth = barCount * barWidth + (barCount - 1) * gap;
   const startX = (width - totalWidth) / 2;
 
-  ctx.fillStyle = createSpectrumGradient(ctx, startX, 0, startX + totalWidth, 0, [
+  ctx.fillStyle = getGrad('minimal', startX, 0, startX + totalWidth, 0, [
     palette.glowHex,
     palette.endHex,
     palette.midHex,

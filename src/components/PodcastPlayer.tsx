@@ -81,7 +81,7 @@ interface PodcastPlayerProps {
 const PodcastScrubber: React.FC<{
   videoId: string;
   onSeek: (seconds: number) => void;
-}> = React.memo(({ videoId, onSeek }) => {
+}> = React.memo(function PodcastScrubber({ videoId, onSeek }) {
   const clock = usePlaybackClock();
   const currentTime = clock.videoId === videoId ? clock.currentTime : 0;
   const duration = clock.videoId === videoId ? clock.duration : 0;
@@ -146,7 +146,7 @@ function useSleepTimerCountdown(expiresAt: number | null, totalMinutes: number |
 const SleepTimerLabel: React.FC<{
   expiresAt: number | null;
   totalMinutes: number | null;
-}> = React.memo(({ expiresAt, totalMinutes }) => {
+}> = React.memo(function SleepTimerLabel({ expiresAt, totalMinutes }) {
   const { isActive, formattedRemaining } = useSleepTimerCountdown(expiresAt, totalMinutes);
   if (!isActive) return <span>Waktu Tidur</span>;
   return <span className="font-mono tabular-nums">Tidur: {formattedRemaining}</span>;
@@ -156,7 +156,7 @@ const SleepTimerOverlayCard: React.FC<{
   expiresAt: number | null;
   totalMinutes: number | null;
   onCancel: () => void;
-}> = React.memo(({ expiresAt, totalMinutes, onCancel }) => {
+}> = React.memo(function SleepTimerOverlayCard({ expiresAt, totalMinutes, onCancel }) {
   const { isActive, formattedRemaining, progressPercent } = useSleepTimerCountdown(
     expiresAt,
     totalMinutes
@@ -215,7 +215,7 @@ const SleepTimerProgressStrip: React.FC<{
   expiresAt: number | null;
   totalMinutes: number | null;
   onCancel: () => void;
-}> = React.memo(({ expiresAt, totalMinutes, onCancel }) => {
+}> = React.memo(function SleepTimerProgressStrip({ expiresAt, totalMinutes, onCancel }) {
   const { isActive, formattedRemaining, progressPercent } = useSleepTimerCountdown(
     expiresAt,
     totalMinutes

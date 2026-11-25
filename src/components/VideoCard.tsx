@@ -41,21 +41,14 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
       ? Math.min(100, Math.max(0, (progress.currentTime / progress.duration) * 100))
       : 0;
   const shouldStagger = index < 6;
-  return (
-    <motion.div
-      initial={shouldStagger ? { opacity: 0, y: 8 } : false}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.16,
-        delay: shouldStagger ? index * 0.015 : 0,
-        ease: [0.16, 1, 0.3, 1],
-      }}
-      className={`video-card-auto group relative flex flex-col rounded-2xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border transition-[transform,colors,shadow] duration-200 overflow-hidden hover:-translate-y-0.5 ${
-        isCurrentlyPlaying
-          ? 'casttube-card-active'
-          : 'border-slate-200/90 dark:border-slate-800/90 casttube-card-hover'
-      }`}
-    >
+  const cardClassName = `video-card-auto group relative flex flex-col rounded-2xl bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border transition-[transform,colors,shadow] duration-200 overflow-hidden hover:-translate-y-0.5 ${
+    isCurrentlyPlaying
+      ? 'casttube-card-active'
+      : 'border-slate-200/90 dark:border-slate-800/90 casttube-card-hover'
+  }`;
+
+  const cardInner = (
+    <>
       {/* Thumbnail area with overlay controls */}
       <div
         onClick={() => onPlayVideo(video)}
@@ -86,20 +79,17 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
         {isCurrentlyPlaying && (
           <div className="absolute top-2.5 left-2.5 px-2.5 py-0.5 rounded-md casttube-gradient-btn text-[10px] font-bold tracking-wide uppercase flex items-center gap-1.5">
             <span className="flex items-end gap-0.5 h-2.5" aria-hidden="true">
-              <motion.span
-                animate={{ scaleY: [0.35, 1, 0.45, 0.9, 0.35] }}
-                transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }}
-                className="w-0.5 h-full bg-current rounded-full origin-bottom opacity-80"
+              <span
+                className="w-0.5 h-full bg-current rounded-full opacity-80 ct-eq-bar"
+                style={{ animationDuration: '0.85s' }}
               />
-              <motion.span
-                animate={{ scaleY: [0.85, 0.35, 1, 0.5, 0.85] }}
-                transition={{ duration: 0.75, repeat: Infinity, ease: 'easeInOut' }}
-                className="w-0.5 h-full bg-current rounded-full origin-bottom"
+              <span
+                className="w-0.5 h-full bg-current rounded-full ct-eq-bar"
+                style={{ animationDuration: '0.7s', animationDelay: '0.15s' }}
               />
-              <motion.span
-                animate={{ scaleY: [0.5, 0.95, 0.35, 0.8, 0.5] }}
-                transition={{ duration: 1.05, repeat: Infinity, ease: 'easeInOut' }}
-                className="w-0.5 h-full bg-current rounded-full origin-bottom opacity-85"
+              <span
+                className="w-0.5 h-full bg-current rounded-full opacity-85 ct-eq-bar"
+                style={{ animationDuration: '1s', animationDelay: '0.3s' }}
               />
             </span>
             Sedang Diputar
@@ -302,6 +292,25 @@ export const VideoCard: React.FC<VideoCardProps> = React.memo(({
           </div>
         </div>
       </div>
+    </>
+  );
+
+  if (!shouldStagger) {
+    return <div className={cardClassName}>{cardInner}</div>;
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.16,
+        delay: index * 0.015,
+        ease: [0.16, 1, 0.3, 1],
+      }}
+      className={cardClassName}
+    >
+      {cardInner}
     </motion.div>
   );
 });

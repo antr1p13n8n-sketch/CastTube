@@ -238,7 +238,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
                     {activeSection === 'theme'
                       ? 'Pilih palet warna utama atau atur gradasi kustom Anda secara langsung di seluruh aplikasi.'
-                      : 'Pengaturan popup otomatis tanpa batas, cookie YouTube, dan kustomisasi warna tema.'}
+                      : 'Pengaturan popup audio otomatis tanpa batas, cookie YouTube, dan kustomisasi warna tema.'}
                   </p>
                 </div>
               </div>
@@ -426,10 +426,10 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                   <div className="rounded-2xl p-3.5 border border-emerald-300/70 dark:border-emerald-700/50 bg-gradient-to-r from-emerald-50/90 via-cyan-50/85 to-indigo-50/90 dark:from-emerald-950/35 dark:via-cyan-950/30 dark:to-indigo-950/35 text-xs space-y-1.5">
                     <div className="flex items-center gap-2 font-bold text-emerald-800 dark:text-emerald-300">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      <span>Popup Mengambang Otomatis Aktif (Tanpa Pembatasan)</span>
+                      <span>Popup Audio Otomatis Aktif (Audio-Only)</span>
                     </div>
                     <p className="text-emerald-900/80 dark:text-emerald-200/85 leading-relaxed">
-                      Jendela popup pemutar langsung aktif saat Anda memutar video/audio atau berpindah layar, baik di browser desktop, HP, maupun mode preview.
+                      Jendela popup khusus audio langsung aktif saat Anda memutar atau berpindah layar — hemat kuota, ringan di HP &amp; desktop, dan bebas pembatasan.
                     </p>
                   </div>
 
@@ -459,17 +459,17 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                               : nativeAudioStatus === 'checking'
                               ? 'Menghubungkan Jalur Audio...'
                               : nativeAudioStatus === 'live_stream'
-                              ? 'Siaran Live Aktif di Popup Mengambang'
-                              : 'Berjalan di Pemutar YouTube + Popup Mengambang'}
+                              ? 'Siaran Live · Audio Popup Aktif'
+                              : 'Popup Audio Mengambang Aktif'}
                           </div>
                           <p className="mt-0.5 opacity-90">
                             {usingNativeAudio
-                              ? 'Audio native aktif untuk video ini dan tetap berbunyi saat aplikasi diminimize atau layar dikunci.'
+                              ? 'Audio native aktif untuk episode ini dan tetap berbunyi saat aplikasi diminimize atau layar dikunci.'
                               : nativeAudioStatus === 'checking'
-                              ? 'Menghubungkan jalur audio untuk "' + currentVideo.title + '".'
+                              ? 'Menghubungkan jalur audio ringan untuk "' + currentVideo.title + '".'
                               : nativeAudioStatus === 'live_stream'
-                              ? 'Siaran langsung tetap berjalan lancar melalui jendela popup mengambang CastTube.'
-                              : 'Popup mengambang otomatis memakai pemutar YouTube langsung agar video/audio tetap aktif tanpa batas. Untuk video khusus akun / audio native di layar terkunci, hubungkan Cookie / Akun TV (opsional).'}
+                              ? 'Siaran langsung tetap diputar melalui mode audio popup CastTube.'
+                              : 'Popup mengambang selalu berjalan dalam mode khusus audio agar ringan dan hemat kuota. Untuk audio latar di layar terkunci, hubungkan Cookie / Akun TV (opsional).'}
                           </p>
                         </div>
                       </div>
@@ -688,10 +688,10 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                         <div className="text-xs min-w-0">
                           <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                             <PictureInPicture2 className="w-4 h-4 casttube-accent-icon shrink-0" />
-                            <span>Popup Pemutar Mengambang</span>
+                            <span>Popup Audio Mengambang</span>
                           </div>
                           <p className="text-slate-600 dark:text-slate-300 mt-0.5">
-                            Aktifkan popup sekarang tanpa pembatasan dan bebas geser ke sudut mana pun.
+                            Aktifkan popup khusus audio sekarang — hemat kuota, ringan, dan bebas geser ke sudut mana pun.
                           </p>
                         </div>
                         <button

@@ -59,6 +59,18 @@ export function setPlaybackClock(videoId: string | null, currentTime: number, du
   emit();
 }
 
+export function initPlaybackClock(videoId: string | null, currentTime = 0, duration = 0) {
+  if (state.revision !== 0 || state.videoId !== null) return;
+  const nextTime = Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0;
+  const nextDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  state = {
+    videoId,
+    currentTime: nextTime,
+    duration: nextDuration,
+    revision: 0,
+  };
+}
+
 export function resetPlaybackClock(videoId: string | null, currentTime = 0, duration = 0) {
   const nextTime = Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0;
   const nextDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;

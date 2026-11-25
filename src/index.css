@@ -79,7 +79,7 @@
       radial-gradient(at 100% 0%, var(--ct-blob-2-light) 0px, transparent 42%),
       radial-gradient(at 85% 45%, var(--ct-blob-3-light) 0px, transparent 44%),
       radial-gradient(at 15% 85%, var(--ct-blob-4-light) 0px, transparent 42%);
-    background-attachment: fixed;
+    background-attachment: scroll;
   }
 
   .dark .casttube-app-bg {
@@ -89,7 +89,29 @@
       radial-gradient(at 100% 0%, var(--ct-blob-2-dark) 0px, transparent 44%),
       radial-gradient(at 80% 50%, var(--ct-blob-3-dark) 0px, transparent 48%),
       radial-gradient(at 15% 90%, var(--ct-blob-4-dark) 0px, transparent 44%);
-    background-attachment: fixed;
+    background-attachment: scroll;
+  }
+
+  @media (min-width: 1024px) {
+    .casttube-app-bg,
+    .dark .casttube-app-bg {
+      background-attachment: fixed;
+    }
+  }
+
+  @keyframes ct-eq-bounce {
+    0%, 100% {
+      transform: scaleY(0.35);
+    }
+    50% {
+      transform: scaleY(1);
+    }
+  }
+
+  .ct-eq-bar {
+    transform-origin: bottom;
+    animation: ct-eq-bounce 0.85s ease-in-out infinite;
+    will-change: transform;
   }
 
   .casttube-gradient-bar {

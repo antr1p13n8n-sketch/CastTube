@@ -94,6 +94,7 @@ import {
 import { parseJsonSafely, buildHttpErrorMessage } from './utils/safeJson';
 import {
   getPlaybackClockSnapshot,
+  initPlaybackClock,
   resetPlaybackClock,
   setPlaybackClock,
 } from './utils/playbackClock';
@@ -164,7 +165,7 @@ export default function App() {
       (bootVideos.length > 0 ? bootVideos[0] : null);
     const initialTime = bootVideo ? bootProgress[bootVideo.id]?.currentTime || 0 : 0;
     const initialDuration = bootVideo ? bootProgress[bootVideo.id]?.duration || 0 : 0;
-    resetPlaybackClock(bootVideo?.id || null, initialTime, initialDuration);
+    initPlaybackClock(bootVideo?.id || null, initialTime, initialDuration);
     initialBootRef.current = {
       videos: bootVideos,
       progressMap: bootProgress,
@@ -309,6 +310,8 @@ export default function App() {
   const [queue, setQueue] = useState<Video[]>(() =>
     boot.videos.length > 1 ? boot.videos.slice(1, 6) : []
   );
+  const queueRef = useRef<Video[]>(queue);
+  queueRef.current = queue;
   const [seekCommand, setSeekCommand] = useState<number | null>(null);
   const [audioStatusMap, setAudioStatusMap] = useState<Record<string, NativeAudioStatus>>({});
   const audioStatusMapRef = useRef(audioStatusMap);
@@ -941,6 +944,27 @@ export default function App() {
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
 
+  const ensureAudioModeForPopup = useCallback(
+    (video: Video | null, markAutoSwitched = false) => {
+      if (!video || playerModeRef.current !== 'video') return;
+      const status = audioStatusMapRef.current[video.id];
+      const streamUsable =
+        status !== 'live_stream' &&
+        status !== 'login_required' &&
+        status !== 'unavailable';
+      if (!streamUsable) return;
+      const snap = getPlaybackClockSnapshot();
+      if (snap.videoId === video.id && snap.currentTime > 0) {
+        setSeekCommand(snap.currentTime);
+      }
+      if (markAutoSwitched) {
+        autoSwitchedToAudioRef.current = true;
+      }
+      setPlayerMode('audio');
+    },
+    []
+  );
+
   const handlePlayPause = useCallback(() => {
     const willPlay = !isPlayingRef.current;
     if (willPlay) {
@@ -951,11 +975,12 @@ export default function App() {
         !floatingMiniPlayerRef.current.isOpen &&
         (activeTab !== 'player' || playerMode === 'audio')
       ) {
+        ensureAudioModeForPopup(currentVideoRef.current, activeTab !== 'player');
         void floatingMiniPlayerRef.current.openPopup({ silent: true });
       }
     }
     setIsPlaying(willPlay);
-  }, [activeTab, playerMode]);
+  }, [activeTab, playerMode, ensureAudioModeForPopup]);
 
   const handleSeek = useCallback((seconds: number) => {
     setPlaybackClock(currentVideoIdRef.current, seconds);
@@ -991,10 +1016,13 @@ export default function App() {
         bgAudioSettingsRef.current.autoPopupOnPlay &&
         (mode === 'audio' || floatingMiniPlayerRef.current.isOpen)
       ) {
+        if (floatingMiniPlayerRef.current.isOpen && mode === 'video') {
+          ensureAudioModeForPopup(video, false);
+        }
         void floatingMiniPlayerRef.current.openPopup({ silent: true, videoOverride: video });
       }
     },
-    [selectVideoForPlayback]
+    [selectVideoForPlayback, ensureAudioModeForPopup]
   );
 
   const handlePlayVideoCard = useCallback(
@@ -1008,12 +1036,12 @@ export default function App() {
   );
 
   const handleNextTrack = useCallback(() => {
-    setQueue((prevQueue) => {
-      if (prevQueue.length === 0) return prevQueue;
-      const [nextVid, ...rest] = prevQueue;
-      selectVideoForPlayback(nextVid, undefined, true);
-      return rest;
-    });
+    const currentQueue = queueRef.current;
+    if (currentQueue.length === 0) return;
+    const [nextVid, ...rest] = currentQueue;
+    queueRef.current = rest;
+    setQueue(rest);
+    selectVideoForPlayback(nextVid, undefined, true);
   }, [selectVideoForPlayback]);
 
   const handlePrevTrack = useCallback(() => {
@@ -1029,19 +1057,9 @@ export default function App() {
     handleSeek(0);
   }, [handleSeek, selectVideoForPlayback]);
 
-  const openAudioExtractorRef = useRef<() => void>(() => {});
-  const handlePopupEmbedStateChange = useCallback((playing: boolean) => {
-    setIsPlaying(playing);
-  }, []);
-
   const floatingMiniPlayer = useFloatingMiniPlayer({
     currentVideo,
     isPlaying,
-    playbackRate,
-    volume,
-    isMuted,
-    usingNativeAudio: useNativeAudio,
-    nativeAudioStatus: currentAudioStatus,
     hasNext: queue.length > 0,
     autoPopupOnMinimize: bgAudioSettings.enabled && bgAudioSettings.autoPopupOnMinimize,
     autoClosePopupOnReturn: bgAudioSettings.autoClosePopupOnReturn,
@@ -1049,23 +1067,9 @@ export default function App() {
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
     onNext: handleNextTrack,
-    onOpenExtractorAuth: () => openAudioExtractorRef.current(),
-    onEmbedStateChange: handlePopupEmbedStateChange,
   });
   const floatingMiniPlayerRef = useRef(floatingMiniPlayer);
   floatingMiniPlayerRef.current = floatingMiniPlayer;
-  const isPopupEmbedActive = floatingMiniPlayer.isPopupEmbedActive;
-
-  const prevPopupEmbedActiveRef = useRef(isPopupEmbedActive);
-  useEffect(() => {
-    if (prevPopupEmbedActiveRef.current && !isPopupEmbedActive) {
-      const snap = getPlaybackClockSnapshot();
-      if (snap.currentTime > 0) {
-        setSeekCommand(snap.currentTime);
-      }
-    }
-    prevPopupEmbedActiveRef.current = isPopupEmbedActive;
-  }, [isPopupEmbedActive]);
 
   const handleCloseFloatingPopupRef = useRef<() => void>(() => {});
 
@@ -1080,18 +1084,21 @@ export default function App() {
     if (!targetVideo) {
       targetVideo = latestStateRef.current.videos[0] || null;
       if (!targetVideo) return false;
-      selectVideoForPlayback(targetVideo, playerMode, true);
+      selectVideoForPlayback(targetVideo, 'audio', true);
       saveLastVideoId(targetVideo.id);
-    } else if (!isPlayingRef.current) {
-      setIsPlaying(true);
+    } else {
+      ensureAudioModeForPopup(targetVideo, false);
+      if (!isPlayingRef.current) {
+        setIsPlaying(true);
+      }
     }
     return floatingMiniPlayerRef.current.openPopup({
       manual: true,
       videoOverride: targetVideo,
     });
-  }, [playerMode, selectVideoForPlayback]);
+  }, [selectVideoForPlayback, ensureAudioModeForPopup]);
 
-  // Automatically keep floating popup active when navigating away from the main player to Feed while playing
+  // Automatically keep audio-only floating popup active when navigating away from the main player to Feed while playing
   const prevActiveTabRef = useRef(activeTab);
   useEffect(() => {
     const prevTab = prevActiveTabRef.current;
@@ -1103,12 +1110,13 @@ export default function App() {
       currentVideoRef.current &&
       !floatingMiniPlayerRef.current.isOpen
     ) {
+      ensureAudioModeForPopup(currentVideoRef.current, true);
       void floatingMiniPlayerRef.current.openPopup({
         silent: true,
         videoOverride: currentVideoRef.current,
       });
     }
-  }, [activeTab]);
+  }, [activeTab, ensureAudioModeForPopup]);
 
   const handleToggleQueue = useCallback((video: Video) => {
     setQueue((prev) => {
@@ -2362,9 +2370,6 @@ export default function App() {
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
     onVisibilityHiddenWhilePlaying: () => {
-      if (floatingMiniPlayerRef.current.mode === 'video') {
-        return;
-      }
       if (
         bgAudioSettingsRef.current.enabled &&
         bgAudioSettingsRef.current.autoSwitchOnMinimize &&
@@ -2385,7 +2390,7 @@ export default function App() {
 
   const handleYouTubeTimeUpdate = useCallback(
     (cur: number, dur: number) => {
-      if (useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive || !currentVideoIdRef.current)
+      if (useNativeAudio || isCheckingNativeAudio || !currentVideoIdRef.current)
         return;
       const vid = currentVideoIdRef.current;
       setPlaybackClock(vid, cur, dur);
@@ -2394,19 +2399,19 @@ export default function App() {
         persistProgress(vid, cur, dur);
       }
     },
-    [persistProgress, useNativeAudio, isCheckingNativeAudio, isPopupEmbedActive]
+    [persistProgress, useNativeAudio, isCheckingNativeAudio]
   );
 
   const handleYouTubeStateChange = useCallback(
     (playing: boolean) => {
-      if (useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive) return;
+      if (useNativeAudio || isCheckingNativeAudio) return;
       setIsPlaying(playing);
     },
-    [useNativeAudio, isCheckingNativeAudio, isPopupEmbedActive]
+    [useNativeAudio, isCheckingNativeAudio]
   );
 
   const handleYouTubeEnded = useCallback(() => {
-    if (useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive) return;
+    if (useNativeAudio || isCheckingNativeAudio) return;
     if (currentVideoIdRef.current) {
       handleMarkAsPlayed(currentVideoIdRef.current);
     }
@@ -2416,7 +2421,6 @@ export default function App() {
     handleNextTrack,
     useNativeAudio,
     isCheckingNativeAudio,
-    isPopupEmbedActive,
   ]);
 
   const handleNativeTimeUpdate = useCallback(
@@ -2640,11 +2644,12 @@ export default function App() {
         isPlayingRef.current &&
         !floatingMiniPlayerRef.current.isOpen
       ) {
+        ensureAudioModeForPopup(currentVideo, false);
         void floatingMiniPlayerRef.current.openPopup({ silent: true });
       }
-      showBgAudioNotice('Setting otomatis popup & audio latar belakang aktif.');
+      showBgAudioNotice('Setting otomatis popup audio & latar belakang aktif.');
     },
-    [showBgAudioNotice, currentVideo]
+    [showBgAudioNotice, currentVideo, ensureAudioModeForPopup]
   );
 
   const handleDismissBgAudio = useCallback((next: BackgroundAudioSettings) => {
@@ -2660,20 +2665,21 @@ export default function App() {
 
   const handleTogglePlayerModeFromHeader = useCallback(() => {
     autoSwitchedToAudioRef.current = false;
-    setPlayerMode((prev) => {
-      if (prev === 'video') {
-        nativeAudioRef.current?.unlock();
-      }
-      if (
-        bgAudioSettingsRef.current.enabled &&
-        bgAudioSettingsRef.current.autoPopupOnPlay &&
-        isPlayingRef.current &&
-        !floatingMiniPlayerRef.current.isOpen
-      ) {
-        void floatingMiniPlayerRef.current.openPopup({ silent: true });
-      }
-      return prev === 'video' ? 'audio' : 'video';
-    });
+    const prevMode = playerModeRef.current;
+    const nextMode: PlayerMode = prevMode === 'video' ? 'audio' : 'video';
+    if (prevMode === 'video') {
+      nativeAudioRef.current?.unlock();
+    }
+    playerModeRef.current = nextMode;
+    setPlayerMode(nextMode);
+    if (
+      bgAudioSettingsRef.current.enabled &&
+      bgAudioSettingsRef.current.autoPopupOnPlay &&
+      isPlayingRef.current &&
+      !floatingMiniPlayerRef.current.isOpen
+    ) {
+      void floatingMiniPlayerRef.current.openPopup({ silent: true });
+    }
   }, []);
   const handleToggleMute = useCallback(() => setIsMuted((prev) => !prev), []);
   const handleSwitchToVideoMode = useCallback(() => {
@@ -2752,7 +2758,6 @@ export default function App() {
     setHasOpenedExtractorModal(true);
     setIsExtractorModalOpen(true);
   }, [currentVideo]);
-  openAudioExtractorRef.current = handleOpenAudioExtractorSettings;
   const handleSeekHandled = useCallback(() => setSeekCommand(null), []);
   const handleCyclePlaybackRate = useCallback(() => {
     const steps = [0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -2972,7 +2977,7 @@ export default function App() {
                 onOpenBackgroundAudioPopup={handleOpenBackgroundAudioPopup}
                 isFloatingSupported={floatingMiniPlayer.isSupported}
                 isFloatingOpen={floatingMiniPlayer.isOpen}
-                movedToPopup={isPopupEmbedActive}
+                movedToPopup={false}
                 onToggleFloatingPopup={handleToggleFloatingPopup}
                 onAddToPlaylist={handleAddToPlaylistCard}
                 isPlayed={playedIdSet.has(currentVideo.id)}
@@ -2985,7 +2990,7 @@ export default function App() {
                     <YouTubePlayer
                       currentVideo={currentVideo}
                       isPlaying={
-                        useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive
+                        useNativeAudio || isCheckingNativeAudio
                           ? false
                           : isPlaying
                       }
@@ -3000,7 +3005,7 @@ export default function App() {
                       onEnded={handleYouTubeEnded}
                       onOpenExtractorAuth={handleOpenAudioExtractorSettings}
                       seekCommand={
-                        useNativeAudio || isCheckingNativeAudio || isPopupEmbedActive
+                        useNativeAudio || isCheckingNativeAudio
                           ? null
                           : seekCommand
                       }
@@ -3574,10 +3579,10 @@ export default function App() {
               </div>
               <div>
                 <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                  Popup Mengambang Otomatis
+                  Popup Audio Mengambang (Audio-Only)
                 </h4>
                 <p className="mt-1 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Pemutar popup aktif otomatis saat memutar atau meminimalkan aplikasi tanpa pembatasan, dengan dukungan mode terang dan gelap penuh warna.
+                  Pemutar popup khusus audio aktif otomatis saat memutar atau meminimalkan aplikasi, ringan di HP tanpa boros kuota video.
                 </p>
               </div>
             </div>
@@ -3630,7 +3635,7 @@ export default function App() {
         onToggleFloatingPopup={handleToggleFloatingPopup}
       />
 
-      {/* Universal Draggable In-App Floating Popup (guaranteed active on all browsers/mobile/iframes) */}
+      {/* Universal Draggable Audio-Only In-App Floating Popup */}
       <FloatingInAppPopup
         isOpen={
           floatingMiniPlayer.isOpen &&
@@ -3639,26 +3644,18 @@ export default function App() {
         isOsPipActive={floatingMiniPlayer.mode === 'video'}
         currentVideo={currentVideo}
         isPlaying={isPlaying}
-        playerMode={playerMode}
         usingNativeAudio={useNativeAudio}
         nativeAudioStatus={currentAudioStatus}
         playbackRate={playbackRate}
-        volume={volume}
         isMuted={isMuted}
-        seekCommand={isPopupEmbedActive ? seekCommand : null}
-        onSeekHandled={handleSeekHandled}
         hasPrev={Boolean(currentVideo)}
         hasNext={queue.length > 0}
-        embedHost={floatingMiniPlayer.pipEmbedHost}
         canOpenOsPip={floatingMiniPlayer.canOpenOsPip}
         onOpenOsPip={() => {
           void floatingMiniPlayer.openOsPipWindow({ manual: true });
         }}
-        onRegisterVideoEl={floatingMiniPlayer.registerPopupVideoElement}
         onOpenSettings={handleOpenBackgroundAudioPopup}
         onOpenExtractorAuth={handleOpenAudioExtractorSettings}
-        onToggleEmbedHost={floatingMiniPlayer.togglePipEmbedHost}
-        onFallbackStandardHost={floatingMiniPlayer.fallbackToStandardEmbedHost}
         onPlayPause={handlePlayPause}
         onSkipBack={handleSkipBack}
         onSkipForward={handleSkipForward}
@@ -3666,10 +3663,9 @@ export default function App() {
         onPrev={handlePrevTrack}
         onNext={handleNextTrack}
         onCycleSpeed={handleCyclePlaybackRate}
-        onToggleMode={handleTogglePlayerModeFromHeader}
+        onToggleMute={handleToggleMute}
         onExpand={handleExpandInAppPopup}
         onClose={handleCloseFloatingPopup}
-        onEmbedStateChange={handlePopupEmbedStateChange}
       />
 
       {/* Lazy-Loaded Modals & Drawers */}
