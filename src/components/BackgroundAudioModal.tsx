@@ -145,10 +145,14 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
       setDraft((prev) => ({
         ...prev,
         enabled: true,
+        autoSwitchOnMinimize: true,
+        autoResumeOnReopen: true,
+        keepScreenAwake: true,
         autoPopupOnMinimize: true,
         autoPopupOnPlay: true,
-        autoClosePopupOnReturn: true,
+        autoClosePopupOnReturn: false,
         autoPromptActivation: false,
+        promptDismissed: true,
       }));
       setCookieNote('Cookie YouTube otomatis terpasang & Setting Otomatis Popup aktif.');
       onAutoCookieReady?.();
@@ -172,8 +176,10 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
       enabled: true,
       autoSwitchOnMinimize: true,
       autoResumeOnReopen: true,
+      keepScreenAwake: true,
       autoPopupOnMinimize: true,
       autoPopupOnPlay: true,
+      autoClosePopupOnReturn: false,
       autoPromptActivation: false,
       promptDismissed: true,
       activatedAt: new Date().toISOString(),
@@ -188,8 +194,10 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
       enabled: true,
       autoSwitchOnMinimize: true,
       autoResumeOnReopen: true,
+      keepScreenAwake: true,
       autoPopupOnMinimize: true,
       autoPopupOnPlay: true,
+      autoClosePopupOnReturn: false,
       autoPromptActivation: false,
       promptDismissed: true,
     };
@@ -606,27 +614,23 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                           </span>
                         </div>
 
-                        <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
+                        <div className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-emerald-200/80 dark:border-emerald-800/40">
                           <div className="flex items-start gap-2.5 min-w-0">
                             <Minimize2 className="w-4 h-4 text-cyan-500 shrink-0 mt-0.5" />
                             <div className="text-xs">
                               <div className="font-bold text-slate-900 dark:text-white">
-                                Tutup Popup Saat Kembali ke Aplikasi
+                                Popup Tetap Aktif Saat Kembali ke Aplikasi
                               </div>
                               <div className="text-slate-500 dark:text-slate-400 mt-0.5">
-                                Opsional: tutup otomatis hanya jika popup dipicu saat aplikasi diminimize.
+                                Popup audio tetap siaga otomatis di HP maupun desktop sampai Anda mengetuk tutup (X) atau memperbesar pemutar.
                               </div>
                             </div>
                           </div>
-                          <input
-                            type="checkbox"
-                            checked={draft.autoClosePopupOnReturn}
-                            onChange={(e) =>
-                              setDraft((prev) => ({ ...prev, autoClosePopupOnReturn: e.target.checked }))
-                            }
-                            className="mt-1 h-4 w-4 casttube-range-accent rounded cursor-pointer shrink-0"
-                          />
-                        </label>
+                          <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Otomatis</span>
+                          </span>
+                        </div>
                       </>
                     )}
                   </div>
@@ -657,7 +661,7 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                     </div>
 
                     {supportsWakeLock && (
-                      <label className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 cursor-pointer">
+                      <div className="flex items-start justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-emerald-200/80 dark:border-emerald-800/40">
                         <div className="flex items-start gap-2.5 min-w-0">
                           <ShieldCheck className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                           <div className="text-xs">
@@ -665,19 +669,15 @@ export const BackgroundAudioModal: React.FC<BackgroundAudioModalProps> = ({
                               Jaga Sesi Tetap Bangun (Wake Lock)
                             </div>
                             <div className="text-slate-500 dark:text-slate-400 mt-0.5">
-                              Mencegah perangkat masuk mode tidur saat pemutar sedang aktif di layar.
+                              Otomatis aktif mencegah HP masuk mode tidur saat pemutar audio berjalan.
                             </div>
                           </div>
                         </div>
-                        <input
-                          type="checkbox"
-                          checked={draft.keepScreenAwake}
-                          onChange={(e) =>
-                            setDraft((prev) => ({ ...prev, keepScreenAwake: e.target.checked }))
-                          }
-                          className="mt-1 h-4 w-4 casttube-range-accent rounded cursor-pointer shrink-0"
-                        />
-                      </label>
+                        <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Otomatis</span>
+                        </span>
+                      </div>
                     )}
                   </div>
 

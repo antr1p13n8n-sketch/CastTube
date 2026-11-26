@@ -23,7 +23,6 @@ import {
   LocateFixed,
   Volume2,
   VolumeX,
-  KeyRound,
 } from 'lucide-react';
 import { NativeAudioStatus, Video } from '../types';
 import { formatTime } from '../utils/format';
@@ -119,7 +118,6 @@ interface FloatingInAppPopupProps {
   canOpenOsPip?: boolean;
   onOpenOsPip?: () => void;
   onOpenSettings?: () => void;
-  onOpenExtractorAuth?: () => void;
   onPlayPause: () => void;
   onSkipBack: (seconds?: number) => void;
   onSkipForward: (seconds?: number) => void;
@@ -267,7 +265,6 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = React.memo(
   canOpenOsPip = false,
   onOpenOsPip,
   onOpenSettings,
-  onOpenExtractorAuth,
   onPlayPause,
   onSkipBack,
   onSkipForward,
@@ -300,11 +297,11 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = React.memo(
   } | null>(null);
   const closeHandledAtRef = useRef<number>(0);
 
-  // Reset internal touch-close state whenever popup opens/closes cleanly
+  // Reset internal touch-close state whenever popup opens/closes or track changes
   useEffect(() => {
     setTouchCloseState('idle');
     touchCloseSessionRef.current = null;
-  }, [isOpen]);
+  }, [isOpen, currentVideo?.id]);
 
   const triggerCloseAction = useCallback(() => {
     const now = Date.now();
@@ -486,7 +483,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = React.memo(
     <>
       <div
         ref={viewportBoundsRef}
-        className="fixed inset-2 pointer-events-none z-40"
+        className="fixed top-2 left-2 right-2 bottom-[calc(4.9rem+env(safe-area-inset-bottom))] pointer-events-none z-[45]"
         aria-hidden="true"
       />
       <AnimatePresence>
@@ -539,12 +536,12 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = React.memo(
             animate={{ opacity: isOsPipActive ? 0 : 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.94 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-            className={`fixed right-2.5 sm:right-5 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] sm:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border casttube-accent-border shadow-2xl overflow-hidden text-left transition-[width] duration-200 touch-none ${
+            className={`fixed right-2.5 sm:right-5 bottom-[calc(5.1rem+env(safe-area-inset-bottom))] sm:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-[45] rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border casttube-accent-border shadow-2xl overflow-hidden text-left transition-[width] duration-200 touch-none ${
               isOsPipActive ? 'pointer-events-none' : ''
             } ${
               compact
                 ? 'w-[min(calc(100vw-1.25rem),248px)] sm:w-[288px]'
-                : 'w-[min(calc(100vw-1.25rem),280px)] sm:w-[340px]'
+                : 'w-[min(calc(100vw-1.25rem),284px)] sm:w-[340px]'
             }`}
           >
             {/* Top Rainbow Hairline */}
@@ -657,6 +654,7 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = React.memo(
             <div className="p-2.5 sm:p-3.5 space-y-2 sm:space-y-2.5">
               <div className="flex items-center gap-3">
                 <div
+                  data-no-drag="true"
                   onClick={onExpand}
                   className={`relative rounded-2xl overflow-hidden bg-slate-900 shrink-0 cursor-pointer ring-2 ring-[var(--ct-border-light)] dark:ring-[var(--ct-border-dark)] ${
                     compact ? 'w-11 h-11' : 'w-14 h-14'
@@ -710,16 +708,6 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = React.memo(
                       {audioStatusLabel}
                     </span>
                   </div>
-                  {nativeAudioStatus === 'login_required' && onOpenExtractorAuth && !compact && (
-                    <button
-                      type="button"
-                      onClick={onOpenExtractorAuth}
-                      className="inline-flex items-center gap-1 text-[10px] font-semibold casttube-accent-text hover:underline cursor-pointer"
-                    >
-                      <KeyRound className="w-3 h-3" />
-                      <span>Hubungkan Cookie untuk Audio Native</span>
-                    </button>
-                  )}
                 </div>
               </div>
 

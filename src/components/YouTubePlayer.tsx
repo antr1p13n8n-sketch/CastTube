@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
+import React, { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import { AlertCircle, ExternalLink, RefreshCw, ShieldCheck, Globe } from 'lucide-react';
 import { PlayerMode, Video } from '../types';
 import { getPlaybackClockSnapshot } from '../utils/playbackClock';
@@ -11,6 +11,11 @@ declare global {
 }
 
 type EmbedHost = 'https://www.youtube-nocookie.com' | 'https://www.youtube.com';
+
+export interface YouTubePlayerHandle {
+  playNow: (videoId?: string, startSeconds?: number) => void;
+  pauseNow: () => void;
+}
 
 interface YouTubePlayerProps {
   currentVideo: Video | null;
@@ -30,22 +35,26 @@ interface YouTubePlayerProps {
   initialSeekSeconds?: number;
 }
 
-export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
-  currentVideo,
-  isPlaying,
-  isVisible,
-  playbackRate,
-  volume,
-  isMuted,
-  onTimeUpdate,
-  onStateChange,
-  onEnded,
-  onError,
-  onOpenExtractorAuth,
-  seekCommand,
-  onSeekHandled,
-  initialSeekSeconds = 0,
-}) => {
+export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>(
+  function YouTubePlayer(
+    {
+      currentVideo,
+      isPlaying,
+      isVisible,
+      playbackRate,
+      volume,
+      isMuted,
+      onTimeUpdate,
+      onStateChange,
+      onEnded,
+      onError,
+      onOpenExtractorAuth,
+      seekCommand,
+      onSeekHandled,
+      initialSeekSeconds = 0,
+    },
+    ref
+  ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<any>(null);
   const isReadyRef = useRef<boolean>(false);
@@ -113,6 +122,48 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     }
   }, []);
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      playNow(videoId?: string, startSeconds?: number) {
+        intendedPlayingRef.current = true;
+        isPlayingRef.current = true;
+        const player = playerRef.current;
+        if (!player || !isReadyRef.current) return;
+        const targetId = videoId || currentVideoRef.current?.id;
+        if (!targetId) return;
+        try {
+          if (loadedVideoIdRef.current !== targetId) {
+            loadedVideoIdRef.current = targetId;
+            skipNextPlayVideoRef.current = targetId;
+            player.loadVideoById?.({
+              videoId: targetId,
+              startSeconds: Math.max(0, Math.floor(startSeconds || 0)),
+            });
+          } else {
+            skipNextPlayVideoRef.current = targetId;
+            player.playVideo?.();
+          }
+          startTimePolling();
+        } catch {
+          // ignore if player is still initializing; onReady will play automatically
+        }
+      },
+      pauseNow() {
+        intendedPlayingRef.current = false;
+        isPlayingRef.current = false;
+        skipNextPlayVideoRef.current = null;
+        try {
+          playerRef.current?.pauseVideo?.();
+        } catch {
+          // ignore
+        }
+        stopTimePolling();
+      },
+    }),
+    [startTimePolling, stopTimePolling]
+  );
+
   // Initialize YT Player API (re-creates cleanly when embedHost switches between nocookie and standard)
   useEffect(() => {
     let cancelled = false;
@@ -141,7 +192,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         host: embedHost,
         videoId: initialVid ? initialVid.id : '',
         playerVars: {
-          autoplay: 0,
+          autoplay: isPlayingRef.current && initialVid ? 1 : 0,
           controls: 1,
           modestbranding: 1,
           rel: 0,
@@ -162,6 +213,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                   'allow',
                   'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
                 );
+                iframe.setAttribute('playsinline', '1');
                 iframe.referrerPolicy = 'strict-origin-when-cross-origin';
               }
             } catch {
@@ -578,4 +630,5 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       )}
     </div>
   );
-};
+  }
+);

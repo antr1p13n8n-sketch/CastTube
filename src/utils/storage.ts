@@ -569,13 +569,13 @@ export function saveLastFeedSyncAt(timestampMs: number = Date.now()) {
   }
 }
 
-const AUTO_COOKIE_POPUP_MIGRATION_KEY = 'casttube_auto_popup_unrestricted_v3';
+const AUTO_COOKIE_POPUP_MIGRATION_KEY = 'casttube_auto_popup_unrestricted_v4';
 
 export const DEFAULT_BG_AUDIO_SETTINGS: BackgroundAudioSettings = {
   enabled: true,
   autoSwitchOnMinimize: true,
   autoResumeOnReopen: true,
-  keepScreenAwake: false,
+  keepScreenAwake: true,
   autoPopupOnMinimize: true,
   autoPopupOnPlay: true,
   autoClosePopupOnReturn: false,
@@ -595,10 +595,10 @@ export function loadBackgroundAudioSettings(): BackgroundAudioSettings {
           enabled: true,
           autoSwitchOnMinimize: true,
           autoResumeOnReopen: true,
-          keepScreenAwake: Boolean(parsed.keepScreenAwake),
+          keepScreenAwake: true,
           autoPopupOnMinimize: true,
           autoPopupOnPlay: true,
-          autoClosePopupOnReturn: hasMigrated ? Boolean(parsed.autoClosePopupOnReturn) : false,
+          autoClosePopupOnReturn: false,
           autoPromptActivation: false,
           promptDismissed: true,
           activatedAt:
@@ -615,6 +615,7 @@ export function loadBackgroundAudioSettings(): BackgroundAudioSettings {
     }
     if (!hasMigrated) {
       localStorage.setItem(AUTO_COOKIE_POPUP_MIGRATION_KEY, '1');
+      localStorage.setItem(STORAGE_KEYS.BG_AUDIO, JSON.stringify(DEFAULT_BG_AUDIO_SETTINGS));
     }
   } catch {
     // ignore
@@ -631,8 +632,10 @@ export function saveBackgroundAudioSettings(settings: BackgroundAudioSettings) {
         enabled: true,
         autoSwitchOnMinimize: true,
         autoResumeOnReopen: true,
+        keepScreenAwake: true,
         autoPopupOnMinimize: true,
         autoPopupOnPlay: true,
+        autoClosePopupOnReturn: false,
         autoPromptActivation: false,
         promptDismissed: true,
       })

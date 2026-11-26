@@ -40,9 +40,12 @@ interface PodcastPlayerProps {
   isPlaying: boolean;
   playbackRate: number;
   volume: number;
+  effectiveVolume?: number;
   isMuted: boolean;
   sleepTimerMinutes: number | null;
   sleepTimerExpiresAt: number | null;
+  sleepTimerTotalMs?: number | null;
+  smartSleepFade?: boolean;
   queue: Video[];
   onPlayPause: () => void;
   onSeek: (seconds: number) => void;
@@ -55,6 +58,8 @@ interface PodcastPlayerProps {
   onToggleMute: () => void;
   onSwitchToVideo: () => void;
   onSetSleepTimer: (minutes: number | null) => void;
+  onExtendSleepTimer?: (extraMinutes?: number) => void;
+  onToggleSmartSleepFade?: () => void;
   onPlayQueueItem: (video: Video) => void;
   onRemoveFromQueue: (videoId: string) => void;
   onMoveQueueItem?: (index: number, direction: -1 | 1) => void;
@@ -112,7 +117,11 @@ const PodcastScrubber: React.FC<{
   );
 });
 
-function useSleepTimerCountdown(expiresAt: number | null, totalMinutes: number | null) {
+function useSleepTimerCountdown(
+  expiresAt: number | null,
+  totalMinutes: number | null,
+  totalMsOverride?: number | null
+) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -132,8 +141,9 @@ function useSleepTimerCountdown(expiresAt: number | null, totalMinutes: number |
 
   const remainingMs = Math.max(0, expiresAt - now);
   const totalMinutesResolved = totalMinutes && totalMinutes > 0 ? totalMinutes : 15;
-  const totalMs = totalMinutesResolved * 60 * 1000;
-  const totalSecs = Math.min(totalMinutesResolved * 60, Math.ceil(remainingMs / 1000));
+  const totalMs =
+    totalMsOverride && totalMsOverride > 0 ? totalMsOverride : totalMinutesResolved * 60 * 1000;
+  const totalSecs = Math.min(Math.ceil(totalMs / 1000), Math.ceil(remainingMs / 1000));
   const progressPercent = Math.min(100, Math.max(0, (remainingMs / totalMs) * 100));
 
   return {
@@ -146,20 +156,40 @@ function useSleepTimerCountdown(expiresAt: number | null, totalMinutes: number |
 const SleepTimerLabel: React.FC<{
   expiresAt: number | null;
   totalMinutes: number | null;
-}> = React.memo(function SleepTimerLabel({ expiresAt, totalMinutes }) {
-  const { isActive, formattedRemaining } = useSleepTimerCountdown(expiresAt, totalMinutes);
-  if (!isActive) return <span>Waktu Tidur</span>;
+  totalMs?: number | null;
+}> = React.memo(function SleepTimerLabel({ expiresAt, totalMinutes, totalMs }) {
+  const { isActive, formattedRemaining } = useSleepTimerCountdown(
+    expiresAt,
+    totalMinutes,
+    totalMs
+  );
+  if (!isActive) return <span>Smart Sleep</span>;
   return <span className="font-mono tabular-nums">Tidur: {formattedRemaining}</span>;
 });
 
 const SleepTimerOverlayCard: React.FC<{
   expiresAt: number | null;
   totalMinutes: number | null;
+  totalMs?: number | null;
+  smartFade: boolean;
+  effectiveVolume: number;
+  isMuted: boolean;
+  onExtend?: () => void;
   onCancel: () => void;
-}> = React.memo(function SleepTimerOverlayCard({ expiresAt, totalMinutes, onCancel }) {
+}> = React.memo(function SleepTimerOverlayCard({
+  expiresAt,
+  totalMinutes,
+  totalMs,
+  smartFade,
+  effectiveVolume,
+  isMuted,
+  onExtend,
+  onCancel,
+}) {
   const { isActive, formattedRemaining, progressPercent } = useSleepTimerCountdown(
     expiresAt,
-    totalMinutes
+    totalMinutes,
+    totalMs
   );
 
   return (
@@ -172,19 +202,34 @@ const SleepTimerOverlayCard: React.FC<{
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-2.5 left-2.5 right-2.5 z-20 rounded-xl bg-black/70 backdrop-blur-md border border-amber-400/35 px-2.5 py-2 text-white shadow-lg"
+          className="absolute top-2.5 left-2.5 right-2.5 z-20 rounded-xl bg-black/75 backdrop-blur-md border border-amber-400/40 px-2.5 py-2 text-white shadow-xl"
           role="status"
           aria-live="off"
         >
           <div className="flex items-center justify-between gap-2 text-[11px]">
             <div className="flex items-center gap-1.5 min-w-0 font-semibold text-amber-300">
               <Moon className="w-3.5 h-3.5 shrink-0 animate-pulse" />
-              <span className="truncate">Waktu Tidur</span>
+              <span className="truncate">
+                {smartFade ? 'Smart Fade' : 'Sleep Timer'}
+              </span>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
               <span className="font-mono font-bold tabular-nums text-white">
                 {formattedRemaining}
               </span>
+              {onExtend && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onExtend();
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-white/15 hover:bg-white/25 text-[10px] font-bold text-amber-200 transition-colors cursor-pointer"
+                  title="Tambah 5 menit"
+                >
+                  +5m
+                </button>
+              )}
               <button
                 type="button"
                 onClick={(e) => {
@@ -199,6 +244,14 @@ const SleepTimerOverlayCard: React.FC<{
               </button>
             </div>
           </div>
+          {smartFade && (
+            <div className="mt-1 flex items-center justify-between text-[10px] text-amber-100/80">
+              <span>Fade out bertahap</span>
+              <span className="font-mono tabular-nums font-semibold">
+                {isMuted ? 'Bisu' : `Vol ${effectiveVolume}%`}
+              </span>
+            </div>
+          )}
           <div className="mt-1.5 h-1.5 w-full rounded-full bg-white/15 overflow-hidden">
             <div
               className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-[width] duration-700 ease-linear"
@@ -214,11 +267,26 @@ const SleepTimerOverlayCard: React.FC<{
 const SleepTimerProgressStrip: React.FC<{
   expiresAt: number | null;
   totalMinutes: number | null;
+  totalMs?: number | null;
+  smartFade: boolean;
+  effectiveVolume: number;
+  isMuted: boolean;
+  onExtend?: () => void;
   onCancel: () => void;
-}> = React.memo(function SleepTimerProgressStrip({ expiresAt, totalMinutes, onCancel }) {
+}> = React.memo(function SleepTimerProgressStrip({
+  expiresAt,
+  totalMinutes,
+  totalMs,
+  smartFade,
+  effectiveVolume,
+  isMuted,
+  onExtend,
+  onCancel,
+}) {
   const { isActive, formattedRemaining, progressPercent } = useSleepTimerCountdown(
     expiresAt,
-    totalMinutes
+    totalMinutes,
+    totalMs
   );
 
   return (
@@ -233,20 +301,37 @@ const SleepTimerProgressStrip: React.FC<{
           className="overflow-hidden"
         >
           <div className="p-3 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 space-y-2 text-xs">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 min-w-0">
                 <Moon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-                <span className="font-semibold truncate">Tidur otomatis dalam</span>
-                {totalMinutes && (
-                  <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80 shrink-0">
-                    ({totalMinutes} mnt)
+                <span className="font-semibold truncate">
+                  {smartFade ? 'Smart Fade Out aktif' : 'Tidur otomatis dalam'}
+                </span>
+                {smartFade ? (
+                  <span className="text-[11px] font-mono text-amber-700/90 dark:text-amber-300/90 shrink-0">
+                    ({isMuted ? 'Bisu' : `Vol ${effectiveVolume}%`})
                   </span>
+                ) : (
+                  totalMinutes && (
+                    <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80 shrink-0">
+                      ({totalMinutes} mnt)
+                    </span>
+                  )
                 )}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <span className="font-mono font-bold tabular-nums text-amber-800 dark:text-amber-200">
                   {formattedRemaining}
                 </span>
+                {onExtend && (
+                  <button
+                    type="button"
+                    onClick={onExtend}
+                    className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-amber-800 dark:text-amber-200 bg-amber-200/60 dark:bg-amber-900/40 hover:bg-amber-300/80 dark:hover:bg-amber-800/70 transition-colors cursor-pointer"
+                  >
+                    +5m
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={onCancel}
@@ -281,9 +366,12 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
   isPlaying,
   playbackRate,
   volume,
+  effectiveVolume,
   isMuted,
   sleepTimerMinutes,
   sleepTimerExpiresAt,
+  sleepTimerTotalMs,
+  smartSleepFade = true,
   queue,
   onPlayPause,
   onSeek,
@@ -296,6 +384,8 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
   onToggleMute,
   onSwitchToVideo,
   onSetSleepTimer,
+  onExtendSleepTimer,
+  onToggleSmartSleepFade,
   onPlayQueueItem,
   onRemoveFromQueue,
   onMoveQueueItem,
@@ -321,16 +411,25 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
   const [visualizerStyle, setVisualizerStyle] = useState<VisualizerStyle>('wave');
   const [showQueue, setShowQueue] = useState(false);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
+  const [customSleepMinutes, setCustomSleepMinutes] = useState<number>(() =>
+    sleepTimerMinutes && sleepTimerMinutes >= 5 && sleepTimerMinutes <= 30
+      ? sleepTimerMinutes
+      : 15
+  );
   const [isHoveringArt, setIsHoveringArt] = useState(false);
   const [showMobileTips, setShowMobileTips] = useState(false);
+
+  const resolvedEffectiveVolume =
+    typeof effectiveVolume === 'number' ? effectiveVolume : volume;
 
   const speedOptions = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
   const sleepOptions: { label: string; value: number | null }[] = [
     { label: 'Nonaktif', value: null },
+    { label: '5 Menit', value: 5 },
+    { label: '10 Menit', value: 10 },
     { label: '15 Menit', value: 15 },
+    { label: '20 Menit', value: 20 },
     { label: '30 Menit', value: 30 },
-    { label: '45 Menit', value: 45 },
-    { label: '60 Menit', value: 60 },
   ];
 
   return (
@@ -574,10 +673,15 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
             {/* Dark vinyl overlay */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
-            {/* Sleep Timer Countdown & Progress Bar Overlay */}
+            {/* Sleep Timer Countdown & Smart Fade Overlay */}
             <SleepTimerOverlayCard
               expiresAt={sleepTimerExpiresAt}
               totalMinutes={sleepTimerMinutes}
+              totalMs={sleepTimerTotalMs}
+              smartFade={smartSleepFade}
+              effectiveVolume={resolvedEffectiveVolume}
+              isMuted={isMuted}
+              onExtend={onExtendSleepTimer ? () => onExtendSleepTimer(5) : undefined}
               onCancel={() => onSetSleepTimer(null)}
             />
 
@@ -825,7 +929,7 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
 
             {/* Volume slider & Sleep Timer */}
             <div className="flex items-center gap-3 sm:gap-4">
-              {/* Sleep timer dropdown trigger */}
+              {/* Smart Sleep Timer dropdown trigger */}
               <div className="relative">
                 <motion.button
                   whileTap={{ scale: 0.95 }}
@@ -835,12 +939,13 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                       ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold'
                       : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
-                  title="Pengatur Waktu Tidur"
+                  title="Pengatur Smart Sleep Timer (Fade Out Halus)"
                 >
                   <Moon className="w-3.5 h-3.5" />
                   <SleepTimerLabel
                     expiresAt={sleepTimerExpiresAt}
                     totalMinutes={sleepTimerMinutes}
+                    totalMs={sleepTimerTotalMs}
                   />
                 </motion.button>
 
@@ -851,27 +956,92 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 6, scale: 0.95 }}
                       transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                      className="absolute left-0 sm:left-auto sm:right-0 bottom-full mb-2 w-36 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-30"
+                      className="absolute left-0 sm:left-auto sm:right-0 bottom-full mb-2 w-60 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl p-2 z-30 space-y-1.5"
                     >
-                      <div className="px-3 py-1 text-[11px] font-semibold text-slate-400">
-                        Waktu Berhenti:
+                      <div className="px-2 pt-1 flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                        <span>Smart Sleep Timer</span>
+                        <span className="font-mono text-amber-600 dark:text-amber-400">5–30 mnt</span>
                       </div>
-                      {sleepOptions.map((opt) => (
+
+                      {onToggleSmartSleepFade && (
                         <button
-                          key={opt.label}
-                          onClick={() => {
-                            onSetSleepTimer(opt.value);
-                            setShowSleepMenu(false);
-                          }}
-                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer ${
-                            sleepTimerMinutes === opt.value
-                              ? 'text-red-600 dark:text-red-400 font-bold'
-                              : 'text-slate-700 dark:text-slate-300'
-                          }`}
+                          type="button"
+                          onClick={onToggleSmartSleepFade}
+                          className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/35 border border-amber-200/70 dark:border-amber-800/50 text-left cursor-pointer"
                         >
-                          {opt.label}
+                          <div>
+                            <div className="text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                              Fade Out Halus
+                            </div>
+                            <div className="text-[10px] text-amber-700/80 dark:text-amber-300/75 leading-tight">
+                              {smartSleepFade
+                                ? 'Volume turun bertahap ke 0%'
+                                : 'Hentikan suara langsung'}
+                            </div>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${
+                              smartSleepFade
+                                ? 'bg-amber-500 text-white'
+                                : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                            }`}
+                          >
+                            {smartSleepFade ? 'Aktif' : 'Mati'}
+                          </span>
                         </button>
-                      ))}
+                      )}
+
+                      <div className="grid grid-cols-3 gap-1 pt-0.5">
+                        {sleepOptions.map((opt) => (
+                          <button
+                            key={opt.label}
+                            type="button"
+                            onClick={() => {
+                              onSetSleepTimer(opt.value);
+                              if (opt.value !== null) setCustomSleepMinutes(opt.value);
+                              setShowSleepMenu(false);
+                            }}
+                            className={`px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                              sleepTimerMinutes === opt.value
+                                ? 'bg-amber-500 text-white font-bold shadow-xs'
+                                : 'bg-slate-100 dark:bg-slate-700/70 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="pt-1.5 mt-1 border-t border-slate-100 dark:border-slate-700/80 px-1 space-y-1.5">
+                        <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+                          <span>Durasi Kustom (5–30 mnt)</span>
+                          <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                            {customSleepMinutes} mnt
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="range"
+                            aria-label="Durasi Smart Sleep Timer dalam menit"
+                            min={5}
+                            max={30}
+                            step={1}
+                            value={customSleepMinutes}
+                            onChange={(e) => setCustomSleepMinutes(Number(e.target.value))}
+                            className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer casttube-range-accent"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSetSleepTimer(customSleepMinutes);
+                              setShowSleepMenu(false);
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-bold casttube-gradient-btn hover:brightness-110 cursor-pointer shrink-0"
+                          >
+                            Mulai
+                          </button>
+                        </div>
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -900,6 +1070,14 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
                   onChange={(e) => onVolumeChange(Number(e.target.value))}
                   className="w-20 sm:w-24 h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer casttube-range-accent focus:outline-hidden"
                 />
+                {smartSleepFade && sleepTimerExpiresAt && !isMuted && resolvedEffectiveVolume < volume && (
+                  <span
+                    className="text-[10px] font-mono tabular-nums font-semibold text-amber-600 dark:text-amber-400"
+                    title="Volume efektif saat fade out Smart Sleep"
+                  >
+                    →{resolvedEffectiveVolume}%
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -908,6 +1086,11 @@ export const PodcastPlayer: React.FC<PodcastPlayerProps> = React.memo(({
           <SleepTimerProgressStrip
             expiresAt={sleepTimerExpiresAt}
             totalMinutes={sleepTimerMinutes}
+            totalMs={sleepTimerTotalMs}
+            smartFade={smartSleepFade}
+            effectiveVolume={resolvedEffectiveVolume}
+            isMuted={isMuted}
+            onExtend={onExtendSleepTimer ? () => onExtendSleepTimer(5) : undefined}
             onCancel={() => onSetSleepTimer(null)}
           />
         </div>
