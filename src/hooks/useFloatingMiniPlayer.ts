@@ -13,12 +13,19 @@ interface UseFloatingMiniPlayerOptions {
   currentVideo: Video | null;
   isPlaying: boolean;
   hasNext: boolean;
+  hasPrev?: boolean;
+  playbackRate?: number;
+  isMuted?: boolean;
   autoPopupOnMinimize?: boolean;
   autoClosePopupOnReturn?: boolean;
   onPlayPause: () => void;
   onSkipBack: (seconds?: number) => void;
   onSkipForward: (seconds?: number) => void;
+  onSeek?: (seconds: number) => void;
+  onPrev?: () => void;
   onNext: () => void;
+  onCycleSpeed?: () => void;
+  onToggleMute?: () => void;
 }
 
 export interface OpenFloatingPopupOptions {
@@ -35,16 +42,33 @@ interface PipVideoElement extends HTMLVideoElement {
   webkitPresentationMode?: string;
 }
 
+interface CachedPipGradients {
+  themeKey: string;
+  colors: ReturnType<typeof getActiveCssThemeColors>;
+  bgGrad: CanvasGradient;
+  orb1: CanvasGradient;
+  orb2: CanvasGradient;
+  barGrad: CanvasGradient;
+  artGrad: CanvasGradient;
+}
+
 export function useFloatingMiniPlayer({
   currentVideo,
   isPlaying,
   hasNext,
+  hasPrev = false,
+  playbackRate = 1,
+  isMuted = false,
   autoPopupOnMinimize = true,
   autoClosePopupOnReturn = false,
   onPlayPause,
   onSkipBack,
   onSkipForward,
+  onSeek,
+  onPrev,
   onNext,
+  onCycleSpeed,
+  onToggleMute,
 }: UseFloatingMiniPlayerOptions) {
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<FloatingPopupMode>(null);
@@ -53,12 +77,14 @@ export function useFloatingMiniPlayer({
 
   const pipWindowRef = useRef<Window | null>(null);
   const clockUnsubRef = useRef<(() => void) | null>(null);
+  const syncingVideoPipRef = useRef(false);
   const videoPipStateRef = useRef<{
     videoEl: PipVideoElement | null;
     canvasEl: HTMLCanvasElement | null;
     drawInterval: ReturnType<typeof setInterval> | null;
     thumbImg: HTMLImageElement | null;
     thumbVideoId: string | null;
+    cachedGrads: CachedPipGradients | null;
     cleanupListeners: (() => void) | null;
   }>({
     videoEl: null,
@@ -66,6 +92,7 @@ export function useFloatingMiniPlayer({
     drawInterval: null,
     thumbImg: null,
     thumbVideoId: null,
+    cachedGrads: null,
     cleanupListeners: null,
   });
 
@@ -81,23 +108,37 @@ export function useFloatingMiniPlayer({
     currentVideo,
     isPlaying,
     hasNext,
+    hasPrev,
+    playbackRate,
+    isMuted,
     autoPopupOnMinimize,
     autoClosePopupOnReturn,
     onPlayPause,
     onSkipBack,
     onSkipForward,
+    onSeek,
+    onPrev,
     onNext,
+    onCycleSpeed,
+    onToggleMute,
   });
   propsRef.current = {
     currentVideo,
     isPlaying,
     hasNext,
+    hasPrev,
+    playbackRate,
+    isMuted,
     autoPopupOnMinimize,
     autoClosePopupOnReturn,
     onPlayPause,
     onSkipBack,
     onSkipForward,
+    onSeek,
+    onPrev,
     onNext,
+    onCycleSpeed,
+    onToggleMute,
   };
 
   const isTopWindow = typeof window !== 'undefined' && window.self === window.top;
@@ -154,6 +195,7 @@ export function useFloatingMiniPlayer({
     vp.canvasEl = null;
     vp.thumbImg = null;
     vp.thumbVideoId = null;
+    vp.cachedGrads = null;
   }, []);
 
   const cleanupResources = useCallback(() => {
@@ -178,14 +220,24 @@ export function useFloatingMiniPlayer({
 
   const renderDocumentPipContents = useCallback((win: Window) => {
     const doc = win.document;
-    const { currentVideo: vid, isPlaying: playing, hasNext: nextAvail } = propsRef.current;
+    const {
+      currentVideo: vid,
+      isPlaying: playing,
+      hasNext: nextAvail,
+      hasPrev: prevAvail,
+      playbackRate: rate,
+      isMuted: muted,
+    } = propsRef.current;
 
     const titleEl = doc.getElementById('ct-pip-title');
     const channelEl = doc.getElementById('ct-pip-channel');
     const thumbEl = doc.getElementById('ct-pip-thumb') as HTMLImageElement | null;
     const statusEl = doc.getElementById('ct-pip-status');
     const playBtn = doc.getElementById('ct-pip-play');
+    const prevBtn = doc.getElementById('ct-pip-prev') as HTMLButtonElement | null;
     const nextBtn = doc.getElementById('ct-pip-next') as HTMLButtonElement | null;
+    const speedBtn = doc.getElementById('ct-pip-speed');
+    const muteBtn = doc.getElementById('ct-pip-mute');
 
     if (titleEl) titleEl.textContent = vid?.title || 'Tidak ada audio aktif';
     if (channelEl) channelEl.textContent = vid?.channelTitle || 'CastTube';
@@ -201,9 +253,20 @@ export function useFloatingMiniPlayer({
       playBtn.textContent = playing ? 'Jeda' : 'Putar';
       playBtn.setAttribute('aria-label', playing ? 'Jeda' : 'Putar');
     }
+    if (prevBtn) {
+      prevBtn.disabled = !prevAvail;
+      prevBtn.style.opacity = prevAvail ? '1' : '0.4';
+    }
     if (nextBtn) {
       nextBtn.disabled = !nextAvail;
       nextBtn.style.opacity = nextAvail ? '1' : '0.4';
+    }
+    if (speedBtn) {
+      speedBtn.textContent = `${rate}x`;
+    }
+    if (muteBtn) {
+      muteBtn.textContent = muted ? 'Bisu' : 'Suara';
+      muteBtn.style.color = muted ? '#fb7185' : '#e2e8f0';
     }
 
     const snap = getPlaybackClockSnapshot();
@@ -231,27 +294,11 @@ export function useFloatingMiniPlayer({
     currentVideo?.title,
     isPlaying,
     hasNext,
+    hasPrev,
+    playbackRate,
+    isMuted,
     renderDocumentPipContents,
   ]);
-
-  useEffect(() => {
-    const syncPipTheme = () => {
-      const pipWin = pipWindowRef.current;
-      if (!pipWin || pipWin.closed) return;
-      const colors = getActiveCssThemeColors();
-      const rootStyle = pipWin.document.documentElement.style;
-      rootStyle.setProperty('--ct-start', colors.startHex);
-      rootStyle.setProperty('--ct-mid', colors.midHex);
-      rootStyle.setProperty('--ct-end', colors.endHex);
-      rootStyle.setProperty('--ct-glow', colors.glowHex);
-      rootStyle.setProperty('--ct-btn-text', colors.btnText);
-    };
-    window.addEventListener(THEME_COLORS_CHANGED_EVENT, syncPipTheme);
-    return () => {
-      window.removeEventListener(THEME_COLORS_CHANGED_EVENT, syncPipTheme);
-      cleanupResources();
-    };
-  }, [cleanupResources]);
 
   const drawAudioPipFrame = useCallback(() => {
     const vp = videoPipStateRef.current;
@@ -262,9 +309,48 @@ export function useFloatingMiniPlayer({
 
     const vid = propsRef.current.currentVideo;
     const playing = propsRef.current.isPlaying;
-    const colors = getActiveCssThemeColors();
     const w = canvas.width;
     const h = canvas.height;
+    const artX = 28;
+    const artY = 44;
+    const artW = 192;
+    const artH = 144;
+
+    if (!vp.cachedGrads) {
+      const colors = getActiveCssThemeColors();
+      const bgGrad = ctx.createLinearGradient(0, 0, w, h);
+      bgGrad.addColorStop(0, '#090d1a');
+      bgGrad.addColorStop(1, '#111827');
+
+      const orb1 = ctx.createRadialGradient(w * 0.15, h * 0.18, 10, w * 0.15, h * 0.18, w * 0.55);
+      orb1.addColorStop(0, `${colors.startHex}44`);
+      orb1.addColorStop(1, 'transparent');
+
+      const orb2 = ctx.createRadialGradient(w * 0.88, h * 0.82, 10, w * 0.88, h * 0.82, w * 0.55);
+      orb2.addColorStop(0, `${colors.glowHex}3d`);
+      orb2.addColorStop(1, 'transparent');
+
+      const barGrad = ctx.createLinearGradient(0, 0, w, 0);
+      barGrad.addColorStop(0, colors.startHex);
+      barGrad.addColorStop(0.5, colors.midHex);
+      barGrad.addColorStop(1, colors.glowHex);
+
+      const artGrad = ctx.createLinearGradient(artX, artY, artX + artW, artY + artH);
+      artGrad.addColorStop(0, colors.startHex);
+      artGrad.addColorStop(1, colors.endHex);
+
+      vp.cachedGrads = {
+        themeKey: `${colors.startHex}-${colors.midHex}-${colors.endHex}-${colors.glowHex}`,
+        colors,
+        bgGrad,
+        orb1,
+        orb2,
+        barGrad,
+        artGrad,
+      };
+    }
+
+    const { colors, bgGrad, orb1, orb2, barGrad, artGrad } = vp.cachedGrads;
 
     if (vid && vp.thumbVideoId !== vid.id) {
       vp.thumbVideoId = vid.id;
@@ -275,40 +361,24 @@ export function useFloatingMiniPlayer({
       img.onload = () => {
         if (videoPipStateRef.current.thumbVideoId === vid.id) {
           videoPipStateRef.current.thumbImg = img;
+          drawAudioPipFrame();
         }
       };
       img.src = `https://i.ytimg.com/vi/${encodeURIComponent(vid.id)}/mqdefault.jpg`;
     }
 
-    const bgGrad = ctx.createLinearGradient(0, 0, w, h);
-    bgGrad.addColorStop(0, '#090d1a');
-    bgGrad.addColorStop(1, '#111827');
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, w, h);
 
-    const orb1 = ctx.createRadialGradient(w * 0.15, h * 0.18, 10, w * 0.15, h * 0.18, w * 0.55);
-    orb1.addColorStop(0, `${colors.startHex}44`);
-    orb1.addColorStop(1, 'transparent');
     ctx.fillStyle = orb1;
     ctx.fillRect(0, 0, w, h);
 
-    const orb2 = ctx.createRadialGradient(w * 0.88, h * 0.82, 10, w * 0.88, h * 0.82, w * 0.55);
-    orb2.addColorStop(0, `${colors.glowHex}3d`);
-    orb2.addColorStop(1, 'transparent');
     ctx.fillStyle = orb2;
     ctx.fillRect(0, 0, w, h);
 
-    const barGrad = ctx.createLinearGradient(0, 0, w, 0);
-    barGrad.addColorStop(0, colors.startHex);
-    barGrad.addColorStop(0.5, colors.midHex);
-    barGrad.addColorStop(1, colors.glowHex);
     ctx.fillStyle = barGrad;
     ctx.fillRect(0, 0, w, 6);
 
-    const artX = 28;
-    const artY = 44;
-    const artW = 192;
-    const artH = 144;
     ctx.save();
     ctx.beginPath();
     ctx.roundRect(artX, artY, artW, artH, 18);
@@ -321,9 +391,6 @@ export function useFloatingMiniPlayer({
         ctx.fillRect(artX, artY, artW, artH);
       }
     } else {
-      const artGrad = ctx.createLinearGradient(artX, artY, artX + artW, artY + artH);
-      artGrad.addColorStop(0, colors.startHex);
-      artGrad.addColorStop(1, colors.endHex);
       ctx.fillStyle = artGrad;
       ctx.fillRect(artX, artY, artW, artH);
     }
@@ -396,6 +463,66 @@ export function useFloatingMiniPlayer({
     ctx.fillText('CastTube Audio PiP', w - 196, 326);
   }, []);
 
+  // Keep OS Canvas PiP video element play/pause state & adaptive draw cadence synced with true audio state
+  useEffect(() => {
+    const vp = videoPipStateRef.current;
+    if (mode !== 'video' || !vp.videoEl) return;
+
+    drawAudioPipFrame();
+
+    syncingVideoPipRef.current = true;
+    try {
+      if (isPlaying && vp.videoEl.paused) {
+        void vp.videoEl.play().catch(() => {});
+      } else if (!isPlaying && !vp.videoEl.paused) {
+        vp.videoEl.pause();
+      }
+    } finally {
+      setTimeout(() => {
+        syncingVideoPipRef.current = false;
+      }, 120);
+    }
+
+    if (vp.drawInterval) {
+      clearInterval(vp.drawInterval);
+      vp.drawInterval = null;
+    }
+
+    if (isPlaying) {
+      vp.drawInterval = setInterval(drawAudioPipFrame, 160);
+    }
+
+    return () => {
+      if (vp.drawInterval) {
+        clearInterval(vp.drawInterval);
+        vp.drawInterval = null;
+      }
+    };
+  }, [mode, isPlaying, currentVideo?.id, drawAudioPipFrame]);
+
+  useEffect(() => {
+    const syncPipTheme = () => {
+      videoPipStateRef.current.cachedGrads = null;
+      if (modeRef.current === 'video') {
+        drawAudioPipFrame();
+      }
+      const pipWin = pipWindowRef.current;
+      if (!pipWin || pipWin.closed) return;
+      const colors = getActiveCssThemeColors();
+      const rootStyle = pipWin.document.documentElement.style;
+      rootStyle.setProperty('--ct-start', colors.startHex);
+      rootStyle.setProperty('--ct-mid', colors.midHex);
+      rootStyle.setProperty('--ct-end', colors.endHex);
+      rootStyle.setProperty('--ct-glow', colors.glowHex);
+      rootStyle.setProperty('--ct-btn-text', colors.btnText);
+    };
+    window.addEventListener(THEME_COLORS_CHANGED_EVENT, syncPipTheme);
+    return () => {
+      window.removeEventListener(THEME_COLORS_CHANGED_EVENT, syncPipTheme);
+      cleanupResources();
+    };
+  }, [cleanupResources, drawAudioPipFrame]);
+
   const openOsPipWindow = useCallback(
     async (options?: OpenFloatingPopupOptions): Promise<boolean> => {
       setError(null);
@@ -409,7 +536,7 @@ export function useFloatingMiniPlayer({
         return false;
       }
 
-      // Desktop Document Picture-in-Picture (Audio-Only Controller Card)
+      // Desktop Document Picture-in-Picture (Audio-Only Interactive Controller Card)
       if (supportsDocumentPip && isTopWindow) {
         try {
           if (pipWindowRef.current && !pipWindowRef.current.closed) {
@@ -424,8 +551,8 @@ export function useFloatingMiniPlayer({
           const api = (window as unknown as { documentPictureInPicture: DocumentPictureInPictureAPI })
             .documentPictureInPicture;
           const pipWin = await api.requestWindow({
-            width: 392,
-            height: 212,
+            width: 416,
+            height: 224,
           });
           pipWindowRef.current = pipWin;
 
@@ -455,12 +582,13 @@ export function useFloatingMiniPlayer({
             .title { font-size: 13px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
             .channel { font-size: 11px; color: #94a3b8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .progress-wrap { margin-top: 2px; }
-            .bar { width: 100%; height: 6px; border-radius: 999px; background: rgba(148,163,184,0.2); overflow: hidden; }
+            .bar-hit { padding: 5px 0; cursor: pointer; }
+            .bar { width: 100%; height: 7px; border-radius: 999px; background: rgba(148,163,184,0.22); overflow: hidden; }
             .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--ct-start), var(--ct-mid), var(--ct-end), var(--ct-glow)); transition: width 0.2s linear; }
-            .time { margin-top: 5px; font-size: 11px; color: #cbd5e1; font-family: ui-monospace, monospace; display: flex; justify-content: space-between; }
-            .controls { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+            .time { margin-top: 2px; font-size: 11px; color: #cbd5e1; font-family: ui-monospace, monospace; display: flex; justify-content: space-between; }
+            .controls { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
             button {
-              border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 8px 10px; font-size: 11px; font-weight: 700;
+              border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 7px 9px; font-size: 11px; font-weight: 700;
               cursor: pointer; background: rgba(30,41,59,0.85); color: #e2e8f0; transition: transform 0.15s, background 0.15s; white-space: nowrap;
             }
             button:hover { background: rgba(51,65,85,0.95); }
@@ -480,24 +608,40 @@ export function useFloatingMiniPlayer({
               </div>
             </div>
             <div class="progress-wrap">
-              <div class="bar"><div id="ct-pip-bar-fill" class="bar-fill"></div></div>
+              <div id="ct-pip-bar-hit" class="bar-hit" title="Ketuk untuk melompat posisi audio">
+                <div class="bar"><div id="ct-pip-bar-fill" class="bar-fill"></div></div>
+              </div>
               <div class="time">
                 <span id="ct-pip-time">0:00 / 0:00</span>
                 <span>Audio Saja</span>
               </div>
             </div>
             <div class="controls">
+              <button id="ct-pip-prev" type="button" title="Sebelumnya">&lt;&lt;</button>
               <button id="ct-pip-back" type="button">-15d</button>
               <button id="ct-pip-play" class="primary" type="button">Putar</button>
               <button id="ct-pip-fwd" type="button">+30d</button>
-              <button id="ct-pip-next" type="button">Lanjut</button>
+              <button id="ct-pip-next" type="button" title="Berikutnya">&gt;&gt;</button>
+              <button id="ct-pip-mute" type="button">Suara</button>
+              <button id="ct-pip-speed" type="button">1x</button>
             </div>
           `;
 
+          doc.getElementById('ct-pip-bar-hit')?.addEventListener('click', (ev) => {
+            const snap = getPlaybackClockSnapshot();
+            if (snap.duration <= 0) return;
+            const target = ev.currentTarget as HTMLElement;
+            const rect = target.getBoundingClientRect();
+            const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+            propsRef.current.onSeek?.(ratio * snap.duration);
+          });
+          doc.getElementById('ct-pip-prev')?.addEventListener('click', () => propsRef.current.onPrev?.());
           doc.getElementById('ct-pip-back')?.addEventListener('click', () => propsRef.current.onSkipBack(15));
           doc.getElementById('ct-pip-play')?.addEventListener('click', () => propsRef.current.onPlayPause());
           doc.getElementById('ct-pip-fwd')?.addEventListener('click', () => propsRef.current.onSkipForward(30));
           doc.getElementById('ct-pip-next')?.addEventListener('click', () => propsRef.current.onNext());
+          doc.getElementById('ct-pip-mute')?.addEventListener('click', () => propsRef.current.onToggleMute?.());
+          doc.getElementById('ct-pip-speed')?.addEventListener('click', () => propsRef.current.onCycleSpeed?.());
 
           renderDocumentPipContents(pipWin);
           clockUnsubRef.current = subscribePlaybackClock(() => {
@@ -559,7 +703,6 @@ export function useFloatingMiniPlayer({
           drawAudioPipFrame();
           const stream = canvas.captureStream(8);
           videoEl.srcObject = stream;
-          videoPipStateRef.current.drawInterval = setInterval(drawAudioPipFrame, 160);
 
           await videoEl.play();
 
@@ -596,12 +739,13 @@ export function useFloatingMiniPlayer({
               }
             };
             const onVideoPlay = () => {
-              if (!propsRef.current.isPlaying) {
+              if (!syncingVideoPipRef.current && !propsRef.current.isPlaying) {
                 propsRef.current.onPlayPause();
               }
             };
             const onVideoPause = () => {
               if (
+                !syncingVideoPipRef.current &&
                 propsRef.current.isPlaying &&
                 (document.pictureInPictureElement === videoEl ||
                   videoEl.webkitPresentationMode === 'picture-in-picture')

@@ -132,13 +132,17 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
               void audio.play().catch(() => {});
             }
           } else {
-            audio.loop = false;
+            // Keep silent keep-alive looping until the real stream swaps in so iOS Safari / Android Chrome
+            // retains the active user-gesture audio session across async stream probing.
+            audio.loop = true;
             const currentAttr = audio.getAttribute('src');
             if (!currentAttr || currentAttr === SILENT_WAV_DATA_URI) {
               if (!currentAttr) {
                 audio.src = SILENT_WAV_DATA_URI;
               }
-              void audio.play().catch(() => {});
+              if (audio.paused) {
+                void audio.play().catch(() => {});
+              }
             }
           }
         } catch {
@@ -334,7 +338,7 @@ export const NativeAudioPlayer = forwardRef<NativeAudioHandle, NativeAudioPlayer
       isSwitchingSrcRef.current = true;
       switchGuardTimerRef.current = setTimeout(() => {
         isSwitchingSrcRef.current = false;
-      }, 2500);
+      }, 4000);
 
       return () => {
         if (switchGuardTimerRef.current) {

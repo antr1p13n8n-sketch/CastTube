@@ -83,8 +83,8 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = React.memo(({
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       dpr = Math.min(window.devicePixelRatio || 1, 2);
-      logicalWidth = Math.max(rect.width, 200);
-      logicalHeight = Math.max(rect.height, 48);
+      logicalWidth = Math.max(rect.width, 160);
+      logicalHeight = Math.max(rect.height, 36);
       const nextW = Math.round(logicalWidth * dpr);
       const nextH = Math.round(logicalHeight * dpr);
       if (canvas.width !== nextW || canvas.height !== nextH) {
@@ -133,8 +133,8 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = React.memo(({
       const activeRate = playbackRateRef.current;
       const activeStyle = styleRef.current;
 
-      ctx.save();
-      ctx.scale(dpr, dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = 1;
       ctx.clearRect(0, 0, width, height);
 
       const targetEnergy = activePlaying ? 1 : 0.05;
@@ -154,7 +154,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = React.memo(({
         renderMinimal(ctx, width, height, phase, energy, palette, getCachedGradient);
       }
 
-      ctx.restore();
+      ctx.globalAlpha = 1;
 
       if (!activePlaying && energy <= 0.06) {
         animFrameIdRef.current = null;
@@ -262,7 +262,6 @@ function renderWave(
   for (let l = 0; l < layers.length; l++) {
     const layer = layers[l];
     const amp = layer.baseAmp * energy;
-    ctx.save();
     ctx.globalAlpha = layer.alpha;
     ctx.beginPath();
     ctx.lineWidth = layer.width;
@@ -284,8 +283,8 @@ function renderWave(
       }
     }
     ctx.stroke();
-    ctx.restore();
   }
+  ctx.globalAlpha = 1;
 }
 
 function renderBars(

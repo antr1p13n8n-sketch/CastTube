@@ -88,6 +88,7 @@ import { useFloatingMiniPlayer } from './hooks/useFloatingMiniPlayer';
 import { useAudioDownload } from './hooks/useAudioDownload';
 import {
   buildExtractorHeaders,
+  loadExtractorConfig,
   syncExtractorConfigToServer,
   ensureAutoYouTubeCookies,
 } from './utils/extractorConfig';
@@ -348,9 +349,14 @@ export default function App() {
     probedAudioIdsRef.current.add(videoId);
 
     let cancelled = false;
-    ensureAutoYouTubeCookies()
-      .then(() => syncExtractorConfigToServer())
-      .catch(() => {})
+    const cachedCfg = loadExtractorConfig();
+    const prepareAuth = cachedCfg.cookies
+      ? Promise.resolve()
+      : ensureAutoYouTubeCookies()
+          .then(() => syncExtractorConfigToServer())
+          .catch(() => {});
+
+    prepareAuth
       .then(() => {
         if (cancelled) return null;
         return fetch(`/api/youtube/audio-stream?videoId=${encodeURIComponent(videoId)}&check=1`, {
@@ -1057,16 +1063,32 @@ export default function App() {
     handleSeek(0);
   }, [handleSeek, selectVideoForPlayback]);
 
+  const handleToggleMute = useCallback(() => setIsMuted((prev) => !prev), []);
+  const handleCyclePlaybackRate = useCallback(() => {
+    const steps = [0.75, 1, 1.25, 1.5, 1.75, 2];
+    setPlaybackRate((prev) => {
+      const idx = steps.findIndex((s) => Math.abs(s - prev) < 0.05);
+      return steps[(idx + 1) % steps.length];
+    });
+  }, []);
+
   const floatingMiniPlayer = useFloatingMiniPlayer({
     currentVideo,
     isPlaying,
     hasNext: queue.length > 0,
+    hasPrev: Boolean(currentVideo),
+    playbackRate,
+    isMuted,
     autoPopupOnMinimize: bgAudioSettings.enabled && bgAudioSettings.autoPopupOnMinimize,
     autoClosePopupOnReturn: bgAudioSettings.autoClosePopupOnReturn,
     onPlayPause: handlePlayPause,
     onSkipBack: handleSkipBack,
     onSkipForward: handleSkipForward,
+    onSeek: handleSeek,
+    onPrev: handlePrevTrack,
     onNext: handleNextTrack,
+    onCycleSpeed: handleCyclePlaybackRate,
+    onToggleMute: handleToggleMute,
   });
   const floatingMiniPlayerRef = useRef(floatingMiniPlayer);
   floatingMiniPlayerRef.current = floatingMiniPlayer;
@@ -2681,7 +2703,6 @@ export default function App() {
       void floatingMiniPlayerRef.current.openPopup({ silent: true });
     }
   }, []);
-  const handleToggleMute = useCallback(() => setIsMuted((prev) => !prev), []);
   const handleSwitchToVideoMode = useCallback(() => {
     autoSwitchedToAudioRef.current = false;
     setPlayerMode('video');
@@ -2713,10 +2734,6 @@ export default function App() {
 
     if (!wasPlaying || !vid) return;
 
-    if (snap.videoId === vid.id && snap.currentTime > 0) {
-      setSeekCommand(snap.currentTime);
-    }
-
     const isTouchOrMobile =
       typeof window !== 'undefined' &&
       (window.innerWidth < 768 || navigator.maxTouchPoints > 0);
@@ -2731,6 +2748,9 @@ export default function App() {
       (activeTab !== 'player' || isTouchOrMobile) &&
       streamUsable
     ) {
+      if (snap.videoId === vid.id && snap.currentTime > 0) {
+        setSeekCommand(snap.currentTime);
+      }
       autoSwitchedToAudioRef.current = false;
       setPlayerMode('audio');
       setIsPlaying(true);
@@ -2759,13 +2779,6 @@ export default function App() {
     setIsExtractorModalOpen(true);
   }, [currentVideo]);
   const handleSeekHandled = useCallback(() => setSeekCommand(null), []);
-  const handleCyclePlaybackRate = useCallback(() => {
-    const steps = [0.75, 1, 1.25, 1.5, 1.75, 2];
-    setPlaybackRate((prev) => {
-      const idx = steps.findIndex((s) => Math.abs(s - prev) < 0.05);
-      return steps[(idx + 1) % steps.length];
-    });
-  }, []);
   const handleExpandPlayerTab = useCallback(() => setActiveTab('player'), []);
 
   // Lock resume seek timestamp per active track so 10s progress saves don't churn player props
