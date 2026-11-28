@@ -1036,20 +1036,35 @@ export default function App() {
 
   const handlePlayPause = useCallback(() => {
     const willPlay = !isPlayingRef.current;
-    const curVid = currentVideoRef.current;
+    let curVid = currentVideoRef.current;
     if (willPlay) {
-      nativeAudioRef.current?.unlock();
-      floatingMiniPlayerRef.current.primeOsPip();
-      if (!useNativeAudioRef.current && curVid) {
+      if (!curVid) {
+        curVid = latestStateRef.current.videos[0] || null;
+        if (!curVid) return;
+        setHasActivatedYouTube(true);
+        selectVideoForPlayback(curVid, 'audio', true);
+        saveLastVideoId(curVid.id);
+      }
+
+      const knownStatus = audioStatusMapRef.current[curVid.id];
+      const shouldUnlockNativeAudio =
+        useNativeAudioRef.current || !knownStatus || knownStatus === 'checking';
+      if (shouldUnlockNativeAudio) {
+        nativeAudioRef.current?.unlock();
+      }
+
+      if (!useNativeAudioRef.current) {
         const snap = getPlaybackClockSnapshot();
-        const resumeSec = snap.videoId === curVid.id ? snap.currentTime : 0;
+        const resumeSec =
+          snap.videoId === curVid.id && snap.currentTime > 0
+            ? snap.currentTime
+            : playbackProgressMapRef.current[curVid.id]?.currentTime || 0;
         youTubePlayerRef.current?.playNow(curVid.id, resumeSec);
       }
+
       if (
         bgAudioSettingsRef.current.enabled &&
-        bgAudioSettingsRef.current.autoPopupOnPlay &&
-        !floatingMiniPlayerRef.current.isOpen &&
-        curVid
+        bgAudioSettingsRef.current.autoPopupOnPlay
       ) {
         if (activeTab !== 'player' || playerModeRef.current === 'audio') {
           ensureAudioModeForPopup(curVid, activeTab !== 'player');
@@ -1059,11 +1074,13 @@ export default function App() {
           videoOverride: curVid,
         });
       }
+
+      floatingMiniPlayerRef.current.primeOsPip();
     } else if (!useNativeAudioRef.current) {
       youTubePlayerRef.current?.pauseNow();
     }
     setIsPlaying(willPlay);
-  }, [activeTab, ensureAudioModeForPopup]);
+  }, [activeTab, ensureAudioModeForPopup, selectVideoForPlayback]);
 
   const handleSeek = useCallback((seconds: number) => {
     setPlaybackClock(currentVideoIdRef.current, seconds);
@@ -1090,13 +1107,14 @@ export default function App() {
 
   const handlePlayVideo = useCallback(
     (video: Video, mode: PlayerMode = 'video') => {
-      nativeAudioRef.current?.unlock();
-      floatingMiniPlayerRef.current.primeOsPip();
+      const knownStatus = audioStatusMapRef.current[video.id];
+      const willUseNative = mode === 'audio' && knownStatus === 'available';
+      if (willUseNative || !knownStatus || knownStatus === 'checking') {
+        nativeAudioRef.current?.unlock();
+      }
       setHasActivatedYouTube(true);
       autoSwitchedToAudioRef.current = false;
 
-      const willUseNative =
-        mode === 'audio' && audioStatusMapRef.current[video.id] === 'available';
       const resumeSec = playbackProgressMapRef.current[video.id]?.currentTime || 0;
       if (!willUseNative) {
         youTubePlayerRef.current?.playNow(video.id, resumeSec);
@@ -1114,6 +1132,7 @@ export default function App() {
         }
         void floatingMiniPlayerRef.current.openPopup({ silent: true, videoOverride: video });
       }
+      floatingMiniPlayerRef.current.primeOsPip();
     },
     [selectVideoForPlayback, ensureAudioModeForPopup]
   );
@@ -2466,13 +2485,14 @@ export default function App() {
 
   const handlePlayPlaylist = (orderedVideos: Video[], mode: PlayerMode) => {
     if (orderedVideos.length === 0) return;
-    nativeAudioRef.current?.unlock();
-    floatingMiniPlayerRef.current.primeOsPip();
+    const [first, ...rest] = orderedVideos;
+    const knownStatus = audioStatusMapRef.current[first.id];
+    const willUseNative = mode === 'audio' && knownStatus === 'available';
+    if (willUseNative || !knownStatus || knownStatus === 'checking') {
+      nativeAudioRef.current?.unlock();
+    }
     setHasActivatedYouTube(true);
     autoSwitchedToAudioRef.current = false;
-    const [first, ...rest] = orderedVideos;
-    const willUseNative =
-      mode === 'audio' && audioStatusMapRef.current[first.id] === 'available';
     const resumeSec = playbackProgressMapRef.current[first.id]?.currentTime || 0;
     if (!willUseNative) {
       youTubePlayerRef.current?.playNow(first.id, resumeSec);
@@ -2488,6 +2508,7 @@ export default function App() {
     ) {
       void floatingMiniPlayerRef.current.openPopup({ silent: true, videoOverride: first });
     }
+    floatingMiniPlayerRef.current.primeOsPip();
   };
 
   // Background audio & Media Session API (keeps audio playing when minimized or screen-locked)
@@ -2496,9 +2517,11 @@ export default function App() {
     isPlaying,
     playbackRate,
     onPlay: () => {
-      nativeAudioRef.current?.unlock();
-      floatingMiniPlayerRef.current.primeOsPip();
       const curVid = currentVideoRef.current;
+      const knownStatus = curVid ? audioStatusMapRef.current[curVid.id] : undefined;
+      if (useNativeAudioRef.current || !knownStatus || knownStatus === 'checking') {
+        nativeAudioRef.current?.unlock();
+      }
       if (!useNativeAudioRef.current && curVid) {
         const snap = getPlaybackClockSnapshot();
         const resumeSec = snap.videoId === curVid.id ? snap.currentTime : 0;
@@ -2508,7 +2531,6 @@ export default function App() {
       if (
         bgAudioSettingsRef.current.enabled &&
         bgAudioSettingsRef.current.autoPopupOnPlay &&
-        !floatingMiniPlayerRef.current.isOpen &&
         curVid
       ) {
         void floatingMiniPlayerRef.current.openPopup({
@@ -2516,6 +2538,7 @@ export default function App() {
           videoOverride: curVid,
         });
       }
+      floatingMiniPlayerRef.current.primeOsPip();
     },
     onPause: () => {
       if (!useNativeAudioRef.current) {
@@ -2562,7 +2585,21 @@ export default function App() {
   const handleYouTubeStateChange = useCallback(
     (playing: boolean) => {
       if (useNativeAudio) return;
+      const wasPlaying = isPlayingRef.current;
       setIsPlaying(playing);
+      if (
+        playing &&
+        !wasPlaying &&
+        currentVideoRef.current &&
+        bgAudioSettingsRef.current.enabled &&
+        bgAudioSettingsRef.current.autoPopupOnPlay &&
+        !floatingMiniPlayerRef.current.isOpen
+      ) {
+        void floatingMiniPlayerRef.current.openPopup({
+          silent: true,
+          videoOverride: currentVideoRef.current,
+        });
+      }
     },
     [useNativeAudio]
   );
@@ -2735,6 +2772,9 @@ export default function App() {
     }, 4500);
   }, []);
   sleepNoticeRef.current = showBgAudioNotice;
+  const handleYouTubeAutoplayBlocked = useCallback(() => {
+    showBgAudioNotice('Browser HP menahan putar otomatis — ketuk tombol Putar pada popup audio.');
+  }, [showBgAudioNotice]);
 
   const handleOpenBackgroundAudioPopup = useCallback(() => {
     nativeAudioRef.current?.unlock();
@@ -3031,7 +3071,7 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 w-full flex-1 pt-6 sm:pt-8">
+      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 w-full flex-1 pt-6 sm:pt-8">
         {/* Active Player View (Podcast Audio or Video) */}
         {currentVideo && (
           <section className="mb-10">
@@ -3044,7 +3084,11 @@ export default function App() {
                 scale: activeTab === 'player' && playerMode === 'audio' ? 1 : 0.985,
               }}
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              className={activeTab === 'player' && playerMode === 'audio' ? 'block' : 'hidden'}
+              className={
+                activeTab === 'player' && playerMode === 'audio'
+                  ? 'relative z-10 block'
+                  : 'hidden'
+              }
             >
               <PodcastPlayer
                 currentVideo={currentVideo}
@@ -3095,12 +3139,18 @@ export default function App() {
               />
             </motion.div>
 
-            {/* 2. Video Player View (Hosts the actual YouTube iframe without unmounting; stays compositor-painted for Audio-Only mobile fallback) */}
+            {/* 2. Video Player View (Hosts the actual YouTube iframe at full opacity & >=200px height when used for audio-only fallback so mobile browsers don't block autoplay) */}
+            {!(activeTab === 'player' && playerMode === 'video') && hasActivatedYouTube && (
+              <div
+                aria-hidden="true"
+                className="fixed bottom-2 left-2 w-[284px] h-[204px] pointer-events-none z-[1] casttube-app-bg rounded-xl"
+              />
+            )}
             <div
               className={
                 activeTab === 'player' && playerMode === 'video'
                   ? 'block'
-                  : 'fixed top-20 left-2 w-[220px] h-[124px] aspect-video pointer-events-none opacity-[0.01] z-[1] overflow-hidden'
+                  : 'fixed bottom-2 left-2 w-[280px] h-[200px] aspect-video pointer-events-none opacity-100 z-0 overflow-hidden rounded-xl'
               }
             >
               <VideoPlayerView
@@ -3142,6 +3192,7 @@ export default function App() {
                       onTimeUpdate={handleYouTubeTimeUpdate}
                       onStateChange={handleYouTubeStateChange}
                       onEnded={handleYouTubeEnded}
+                      onAutoplayBlocked={handleYouTubeAutoplayBlocked}
                       onOpenExtractorAuth={handleOpenAudioExtractorSettings}
                       seekCommand={useNativeAudio ? null : seekCommand}
                       onSeekHandled={handleSeekHandled}
@@ -3154,7 +3205,7 @@ export default function App() {
         )}
 
         {/* Group Navigation Bar & Filter Strip */}
-        <section className="mb-8 space-y-4">
+        <section className="relative z-10 mb-8 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             {/* Group Tabs (Segmented interactive buttons synced to custom primary theme) */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
@@ -3487,7 +3538,7 @@ export default function App() {
         </section>
 
         {/* Video Grid Section */}
-        <section className="space-y-4">
+        <section className="relative z-10 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white truncate">
@@ -3678,7 +3729,7 @@ export default function App() {
         </section>
 
         {/* Feature Explanatory Banner */}
-        <section className="mt-16 p-6 sm:p-8 rounded-3xl bg-white/80 dark:bg-slate-900/75 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 shadow-sm">
+        <section className="relative z-10 mt-16 p-6 sm:p-8 rounded-3xl bg-white/80 dark:bg-slate-900/75 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
             <div className="flex gap-3">
               <div className="p-2.5 rounded-2xl casttube-gradient-btn shrink-0 h-fit">
@@ -3734,7 +3785,7 @@ export default function App() {
             bgAudioSettings.enabled &&
             isPlaying &&
             !useNativeAudio &&
-            (playerMode === 'audio' || currentAudioStatus === 'checking')
+            currentAudioStatus === 'checking'
         )}
         currentVideo={currentVideo}
         isPlaying={isPlaying}
@@ -3776,6 +3827,7 @@ export default function App() {
           floatingMiniPlayer.isOpen &&
           (floatingMiniPlayer.mode === 'inapp' || floatingMiniPlayer.mode === 'video')
         }
+        openNonce={floatingMiniPlayer.openNonce}
         isOsPipActive={floatingMiniPlayer.mode === 'video'}
         currentVideo={currentVideo}
         isPlaying={isPlaying}

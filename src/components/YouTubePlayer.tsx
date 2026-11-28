@@ -29,6 +29,7 @@ interface YouTubePlayerProps {
   onStateChange: (isPlaying: boolean) => void;
   onEnded: () => void;
   onError?: (err: any) => void;
+  onAutoplayBlocked?: () => void;
   onOpenExtractorAuth?: () => void;
   seekCommand: number | null;
   onSeekHandled: () => void;
@@ -48,6 +49,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       onStateChange,
       onEnded,
       onError,
+      onAutoplayBlocked,
       onOpenExtractorAuth,
       seekCommand,
       onSeekHandled,
@@ -75,7 +77,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const onStateChangeRef = useRef(onStateChange);
   const onEndedRef = useRef(onEnded);
   const onErrorRef = useRef(onError);
+  const onAutoplayBlockedRef = useRef(onAutoplayBlocked);
   const onSeekHandledRef = useRef(onSeekHandled);
+  const pendingPlayRef = useRef<{ videoId: string; startSeconds: number } | null>(null);
   const [playerErrorCode, setPlayerErrorCode] = useState<string | number | null>(null);
   const [embedHost, setEmbedHost] = useState<EmbedHost>('https://www.youtube-nocookie.com');
   const embedHostRef = useRef<EmbedHost>(embedHost);
@@ -91,6 +95,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   onStateChangeRef.current = onStateChange;
   onEndedRef.current = onEnded;
   onErrorRef.current = onError;
+  onAutoplayBlockedRef.current = onAutoplayBlocked;
   onSeekHandledRef.current = onSeekHandled;
 
   useEffect(() => {
@@ -128,11 +133,24 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       playNow(videoId?: string, startSeconds?: number) {
         intendedPlayingRef.current = true;
         isPlayingRef.current = true;
-        const player = playerRef.current;
-        if (!player || !isReadyRef.current) return;
         const targetId = videoId || currentVideoRef.current?.id;
+        const player = playerRef.current;
+        if (!player || !isReadyRef.current) {
+          if (targetId) {
+            pendingPlayRef.current = {
+              videoId: targetId,
+              startSeconds: Math.max(0, Math.floor(startSeconds || 0)),
+            };
+          }
+          return;
+        }
         if (!targetId) return;
+        pendingPlayRef.current = null;
         try {
+          if (!isMutedRef.current) {
+            player.unMute?.();
+            player.setVolume?.(volumeRef.current);
+          }
           if (loadedVideoIdRef.current !== targetId) {
             loadedVideoIdRef.current = targetId;
             skipNextPlayVideoRef.current = targetId;
@@ -153,6 +171,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
         intendedPlayingRef.current = false;
         isPlayingRef.current = false;
         skipNextPlayVideoRef.current = null;
+        pendingPlayRef.current = null;
         try {
           playerRef.current?.pauseVideo?.();
         } catch {
@@ -227,20 +246,26 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
             }
             event.target.setPlaybackRate?.(playbackRateRef.current);
 
+            const pendingPlay = pendingPlayRef.current;
+            pendingPlayRef.current = null;
             const latestVid = currentVideoRef.current;
+            const targetPlayId = pendingPlay?.videoId || latestVid?.id || null;
             const snap = getPlaybackClockSnapshot();
             const clockSec =
-              latestVid && snap.videoId === latestVid.id && snap.currentTime > 0
+              targetPlayId && snap.videoId === targetPlayId && snap.currentTime > 0
                 ? Math.floor(snap.currentTime)
                 : 0;
-            const startSeconds = Math.max(clockSec, Math.floor(initialSeekSecondsRef.current || 0));
-            if (latestVid && loadedVideoIdRef.current !== latestVid.id) {
-              loadedVideoIdRef.current = latestVid.id;
+            const startSeconds = pendingPlay
+              ? Math.max(clockSec, pendingPlay.startSeconds)
+              : Math.max(clockSec, Math.floor(initialSeekSecondsRef.current || 0));
+
+            if (targetPlayId && loadedVideoIdRef.current !== targetPlayId) {
+              loadedVideoIdRef.current = targetPlayId;
               if (isPlayingRef.current) {
-                event.target.loadVideoById?.({ videoId: latestVid.id, startSeconds });
+                event.target.loadVideoById?.({ videoId: targetPlayId, startSeconds });
                 startTimePolling();
               } else {
-                event.target.cueVideoById?.({ videoId: latestVid.id, startSeconds });
+                event.target.cueVideoById?.({ videoId: targetPlayId, startSeconds });
               }
               return;
             }
@@ -252,7 +277,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
                 // ignore
               }
             }
-            if (isPlayingRef.current && latestVid) {
+            if (isPlayingRef.current && targetPlayId) {
               event.target.playVideo();
               startTimePolling();
             }
@@ -329,6 +354,22 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           },
         },
       });
+
+      // Set Permissions-Policy & inline playback attributes immediately when YT creates the iframe DOM node
+      // rather than waiting for onReady (mobile browsers evaluate allow="autoplay" when the iframe loads).
+      try {
+        const earlyIframe = playerRef.current?.getIframe?.() as HTMLIFrameElement | undefined;
+        if (earlyIframe) {
+          earlyIframe.setAttribute(
+            'allow',
+            'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
+          );
+          earlyIframe.setAttribute('playsinline', '1');
+          earlyIframe.referrerPolicy = 'strict-origin-when-cross-origin';
+        }
+      } catch {
+        // ignore if getIframe not ready yet; onReady applies them as well
+      }
     };
 
     if (window.YT && window.YT.Player) {
@@ -349,11 +390,15 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
         firstScriptTag?.parentNode?.insertBefore(tag, firstScriptTag);
       }
 
-      const prevReady = window.onYouTubeIframeAPIReady;
-      window.onYouTubeIframeAPIReady = () => {
-        if (prevReady) prevReady();
-        initPlayer();
-      };
+      if (window.YT && typeof window.YT.ready === 'function') {
+        window.YT.ready(initPlayer);
+      } else {
+        const prevReady = window.onYouTubeIframeAPIReady;
+        window.onYouTubeIframeAPIReady = () => {
+          if (prevReady) prevReady();
+          initPlayer();
+        };
+      }
     }
 
     return () => {
@@ -479,11 +524,12 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
             if (intendedPlayingRef.current && (state === -1 || state === 5)) {
               onStateChangeRef.current(false);
               stopTimePolling();
+              onAutoplayBlockedRef.current?.();
             }
           } catch {
             // ignore
           }
-        }, 3800);
+        }, 5200);
       } else {
         skipNextPlayVideoRef.current = null;
         playerRef.current.pauseVideo();

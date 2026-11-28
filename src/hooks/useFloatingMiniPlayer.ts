@@ -72,6 +72,7 @@ export function useFloatingMiniPlayer({
 }: UseFloatingMiniPlayerOptions) {
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<FloatingPopupMode>(null);
+  const [openNonce, setOpenNonce] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [supportsAutoPip, setSupportsAutoPip] = useState(false);
 
@@ -583,9 +584,16 @@ export function useFloatingMiniPlayer({
   }, [supportsVideoPip, supportsCanvasCapture, isTopWindow, drawAudioPipFrame]);
 
   // Synchronously warm up muted canvas <video> inside mobile user-tap gestures
-  // so Android/iOS OS Picture-in-Picture & background enterpictureinpicture succeed cleanly.
+  // only on Chromium browsers with standard Picture-in-Picture enabled so Android
+  // background enterpictureinpicture succeeds without competing with iOS Safari audio focus.
   const primeOsPip = useCallback(() => {
-    if (supportsDocumentPip) return;
+    if (
+      supportsDocumentPip ||
+      typeof document === 'undefined' ||
+      !document.pictureInPictureEnabled
+    ) {
+      return;
+    }
     const videoEl = ensurePrimedVideoPip();
     if (!videoEl) return;
     try {
@@ -894,10 +902,25 @@ export function useFloatingMiniPlayer({
         document.visibilityState === 'hidden' &&
         !options?.manual;
 
-      if ((modeRef.current === 'inapp' || modeRef.current === 'video') && isOpenRef.current) {
+      const vp = videoPipStateRef.current;
+      const isActuallyInOsVideoPip = Boolean(
+        vp.videoEl &&
+          ((typeof document !== 'undefined' && document.pictureInPictureElement === vp.videoEl) ||
+            vp.videoEl.webkitPresentationMode === 'picture-in-picture')
+      );
+
+      if (modeRef.current === 'video' && isOpenRef.current && isActuallyInOsVideoPip) {
         if (options?.manual) {
           openedByMinimizeRef.current = false;
         }
+        return true;
+      }
+
+      if (modeRef.current === 'inapp' && isOpenRef.current) {
+        if (options?.manual) {
+          openedByMinimizeRef.current = false;
+        }
+        setOpenNonce((n) => n + 1);
         return true;
       }
 
@@ -907,16 +930,33 @@ export function useFloatingMiniPlayer({
         return true;
       }
 
-      cleanupResources();
+      // Clean up any stale Document PiP or actively presenting OS PiP without pausing a primed idle <video>
+      if (clockUnsubRef.current) {
+        clockUnsubRef.current();
+        clockUnsubRef.current = null;
+      }
+      if (pipWindowRef.current && !pipWindowRef.current.closed) {
+        try {
+          pipWindowRef.current.close();
+        } catch {
+          // ignore
+        }
+      }
+      pipWindowRef.current = null;
+      if (isActuallyInOsVideoPip) {
+        exitActiveOsPip();
+      }
+
       isOpenRef.current = true;
       modeRef.current = 'inapp';
       setIsOpen(true);
       setMode('inapp');
+      setOpenNonce((n) => n + 1);
       openedByMinimizeRef.current = isMinimizeContext;
       wasHiddenSinceOpenRef.current = isMinimizeContext;
       return true;
     },
-    [cleanupResources, renderDocumentPipContents]
+    [exitActiveOsPip, renderDocumentPipContents]
   );
 
   const closePopup = useCallback(() => {
@@ -1032,6 +1072,7 @@ export function useFloatingMiniPlayer({
     canOpenOsPip,
     isOpen,
     mode,
+    openNonce,
     error,
     primeOsPip,
     openPopup,

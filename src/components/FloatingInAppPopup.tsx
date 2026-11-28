@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   motion,
   AnimatePresence,
@@ -106,6 +106,7 @@ function clampPopupOffset(
 
 interface FloatingInAppPopupProps {
   isOpen: boolean;
+  openNonce?: number;
   isOsPipActive?: boolean;
   currentVideo: Video | null;
   isPlaying: boolean;
@@ -253,6 +254,7 @@ const PopupProgressSection: React.FC<{
 
 export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = React.memo(({
   isOpen,
+  openNonce = 0,
   isOsPipActive = false,
   currentVideo,
   isPlaying,
@@ -297,11 +299,11 @@ export const FloatingInAppPopup: React.FC<FloatingInAppPopupProps> = React.memo(
   } | null>(null);
   const closeHandledAtRef = useRef<number>(0);
 
-  // Reset internal touch-close state whenever popup opens/closes or track changes
-  useEffect(() => {
+  // Reset internal touch-close state synchronously before paint whenever popup opens/closes/re-triggers
+  useLayoutEffect(() => {
     setTouchCloseState('idle');
     touchCloseSessionRef.current = null;
-  }, [isOpen, currentVideo?.id]);
+  }, [isOpen, openNonce, currentVideo?.id]);
 
   const triggerCloseAction = useCallback(() => {
     const now = Date.now();
